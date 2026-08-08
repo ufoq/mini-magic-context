@@ -6,7 +6,7 @@
 set -euo pipefail
 
 TAG="${1:?Usage: wait-release.sh <tag>}"
-REPO="cortexkit/magic-context"
+REPO="ufoq/mini-magic-context"
 INTERVAL=5
 
 echo "⏳ Waiting for release workflow on ${TAG}..."

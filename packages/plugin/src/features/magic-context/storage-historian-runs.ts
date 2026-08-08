@@ -65,45 +65,9 @@ export interface HistorianRunInput {
  * failure.
  */
 export function recordHistorianRun(db: Database, input: HistorianRunInput): number | null {
-    try {
-        const result = db
-            .prepare(
-                `INSERT INTO historian_runs (
-                    session_id, harness, subagent_invocation_id, run_kind, status,
-                    failure_reason, chunk_start_ordinal, chunk_end_ordinal, unprocessed_from,
-                    compartments_produced, compartment_id_min, compartment_id_max,
-                    facts_emitted, facts_by_category_json, events_emitted,
-                    importance_min, importance_max, importance_avg,
-                    discarded_last, legacy, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .run(
-                input.sessionId,
-                input.harness,
-                input.subagentInvocationId ?? null,
-                input.runKind,
-                input.status,
-                input.failureReason ?? null,
-                input.chunkStartOrdinal ?? null,
-                input.chunkEndOrdinal ?? null,
-                input.unprocessedFrom ?? null,
-                input.compartmentsProduced ?? 0,
-                input.compartmentIdMin ?? null,
-                input.compartmentIdMax ?? null,
-                input.factsEmitted ?? 0,
-                input.factsByCategory ? JSON.stringify(input.factsByCategory) : null,
-                input.eventsEmitted ?? 0,
-                input.importanceMin ?? null,
-                input.importanceMax ?? null,
-                input.importanceAvg ?? null,
-                input.discardedLast ? 1 : 0,
-                input.legacy ? 1 : 0,
-                Date.now(),
-            );
-        return Number(result.lastInsertRowid);
-    } catch {
-        return null;
-    }
+    void db;
+    void input;
+    return null;
 }
 
 /** Summarize a list of importance values into min/max/avg (null on empty). */

@@ -140,10 +140,10 @@ export function planDueTasks(
     tasks: readonly DreamTaskRuntimeConfig[],
     now: number,
 ): DueTask[] {
-    // GC retired task rows: improve, consolidate, and archive-stale were replaced
-    // by verify/curate, while render-mural was removed when the scheduler switched
-    // to its deterministic task set. Since `tasks` contains the full canonical set,
-    // any stored row outside it is obsolete. Cheap and idempotent.
+    // GC retired task rows: improve, consolidate, archive-stale, and compress-cues
+    // were replaced by verify/curate, while render-mural was removed when the
+    // scheduler switched to its deterministic task set. Since `tasks` contains the
+    // full canonical set, any stored row outside it is obsolete. Cheap and idempotent.
     const pruned = pruneNonCanonicalTaskRows(
         db,
         projectIdentity,

@@ -2,13 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { Compartment } from "../../features/magic-context/compartment-storage";
 import {
     buildReferenceBlocks,
-    renderSeedExamplesBlock,
     renderSessionReferencesBlock,
-    SEED_FLOOR,
     SESSION_REF_WINDOW,
-    selectSeeds,
 } from "./reference-retrieval";
-import { REFERENCE_SEEDS } from "./reference-seeds.generated";
 
 function makeCompartment(over: Partial<Compartment> & { sequence: number }): Compartment {
     return {
@@ -31,97 +27,6 @@ function makeCompartment(over: Partial<Compartment> & { sequence: number }): Com
         createdAt: 1000 + over.sequence,
     };
 }
-
-describe("reference seed corpus", () => {
-    it("ships exactly 60 seeds spanning all 5 importance bands", () => {
-        expect(REFERENCE_SEEDS.length).toBe(60);
-        const imps = REFERENCE_SEEDS.map((s) => s.importance);
-        expect(Math.min(...imps)).toBeLessThanOrEqual(9);
-        expect(Math.max(...imps)).toBeGreaterThanOrEqual(85);
-        // every block is a real compartment unit
-        for (const s of REFERENCE_SEEDS) {
-            expect(s.block.startsWith("<compartment")).toBe(true);
-            expect(s.block).toContain("</compartment>");
-        }
-    });
-});
-
-describe("selectSeeds", () => {
-    it("returns exactly SEED_FLOOR seeds by default", () => {
-        expect(selectSeeds("ses_a", 1).length).toBe(SEED_FLOOR);
-    });
-
-    it("is deterministic for the same (sessionId, chunkStart)", () => {
-        const a = selectSeeds("ses_a", 42).map((s) => s.importance);
-        const b = selectSeeds("ses_a", 42).map((s) => s.importance);
-        expect(a).toEqual(b);
-    });
-
-    it("rotates: different chunkStart yields a different combination (usually)", () => {
-        // Across many chunk starts we should see more than one distinct combo.
-        const combos = new Set<string>();
-        for (let chunk = 1; chunk <= 30; chunk++) {
-            combos.add(
-                selectSeeds("ses_a", chunk)
-                    .map((s) => s.importance)
-                    .sort((x, y) => x - y)
-                    .join(","),
-            );
-        }
-        expect(combos.size).toBeGreaterThan(1);
-    });
-
-    it("spans the importance range every run (not 4 clustered scores)", () => {
-        // Each pick comes from a distinct band, so the spread (max-min) is wide.
-        for (let chunk = 1; chunk <= 20; chunk++) {
-            const imps = selectSeeds("ses_x", chunk).map((s) => s.importance);
-            const spread = Math.max(...imps) - Math.min(...imps);
-            expect(spread).toBeGreaterThanOrEqual(40);
-        }
-    });
-
-    it("never returns duplicate seeds within one selection", () => {
-        for (let chunk = 1; chunk <= 20; chunk++) {
-            const picks = selectSeeds("ses_dup", chunk);
-            expect(new Set(picks).size).toBe(picks.length);
-        }
-    });
-
-    it("different sessionIds can produce different combinations", () => {
-        const a = selectSeeds("ses_aaaa", 1)
-            .map((s) => s.importance)
-            .join(",");
-        const b = selectSeeds("ses_zzzz", 1)
-            .map((s) => s.importance)
-            .join(",");
-        // not asserting inequality strictly (hash collisions possible), but the
-        // mechanism must consider sessionId — verify by sampling several.
-        const distinct = new Set<string>();
-        for (const sid of ["s1", "s2", "s3", "s4", "s5", "s6"]) {
-            distinct.add(
-                selectSeeds(sid, 1)
-                    .map((s) => s.importance)
-                    .join(","),
-            );
-        }
-        expect(distinct.size).toBeGreaterThan(1);
-        void a;
-        void b;
-    });
-});
-
-describe("renderSeedExamplesBlock", () => {
-    it("wraps seeds in the exact tag the prompt expects", () => {
-        const block = renderSeedExamplesBlock(selectSeeds("ses_a", 1));
-        expect(block.startsWith("<compartment_examples_from_other_projects>")).toBe(true);
-        expect(block.endsWith("</compartment_examples_from_other_projects>")).toBe(true);
-        expect(block).toContain("<compartment ");
-    });
-
-    it("returns empty string for zero seeds", () => {
-        expect(renderSeedExamplesBlock([])).toBe("");
-    });
-});
 
 describe("renderSessionReferencesBlock", () => {
     it("returns empty string for a young session (no compartments)", () => {
@@ -192,37 +97,27 @@ describe("renderSessionReferencesBlock", () => {
 });
 
 describe("buildReferenceBlocks", () => {
-    it("always produces seed examples; session refs empty when young", () => {
+    it("produces empty session refs when young", () => {
         const blocks = buildReferenceBlocks({
-            sessionId: "ses_a",
-            chunkStart: 1,
             sessionCompartments: [],
         });
-        expect(blocks.seedExamples).toContain("<compartment_examples_from_other_projects>");
         expect(blocks.sessionReferences).toBe("");
     });
 
-    it("produces both blocks for a mature session", () => {
+    it("produces the session references block for a mature session", () => {
         const comps = [makeCompartment({ sequence: 0, p1: "a", p2: "b", p3: "c", p4: "" })];
         const blocks = buildReferenceBlocks({
-            sessionId: "ses_a",
-            chunkStart: 200,
             sessionCompartments: comps,
         });
-        expect(blocks.seedExamples).toContain("<compartment_examples_from_other_projects>");
         expect(blocks.sessionReferences).toContain("<session_references>");
     });
 
     it("is fully deterministic (no embedding/clock/db)", () => {
         const comps = [makeCompartment({ sequence: 0, p1: "a", p2: "b", p3: "c", p4: "d" })];
         const a = buildReferenceBlocks({
-            sessionId: "ses_z",
-            chunkStart: 5,
             sessionCompartments: comps,
         });
         const b = buildReferenceBlocks({
-            sessionId: "ses_z",
-            chunkStart: 5,
             sessionCompartments: comps,
         });
         expect(a).toEqual(b);

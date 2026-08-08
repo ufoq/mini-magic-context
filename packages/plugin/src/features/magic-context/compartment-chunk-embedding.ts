@@ -30,10 +30,6 @@ interface ExistingChunkHashRow {
     chunkHash: string;
 }
 
-interface StoredModelIdRow {
-    modelId: string | null;
-}
-
 interface SearchChunkRow {
     compartmentId: number;
     sessionId: string;
@@ -189,7 +185,7 @@ function getInsertEmbeddingStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getDistinctModelStatement(db: Database): PreparedStatement {
+function _getDistinctModelStatement(db: Database): PreparedStatement {
     let stmt = distinctModelStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(
@@ -202,7 +198,7 @@ function getDistinctModelStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getClearProjectStatement(db: Database): PreparedStatement {
+function _getClearProjectStatement(db: Database): PreparedStatement {
     let stmt = clearProjectStatements.get(db);
     if (!stmt) {
         stmt = db.prepare("DELETE FROM compartment_chunk_embeddings WHERE project_path = ?");
@@ -211,7 +207,7 @@ function getClearProjectStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getClearProjectModelStatement(db: Database): PreparedStatement {
+function _getClearProjectModelStatement(db: Database): PreparedStatement {
     let stmt = clearProjectModelStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(

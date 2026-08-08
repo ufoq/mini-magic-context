@@ -3,11 +3,11 @@
 # Magic Context — Pi E2E test runner (runs inside Docker).
 #
 # Two scenarios:
-#   SETUP_SMOKE    — fresh-install path via `magic-context doctor --harness pi --force`
+#   SETUP_SMOKE    — fresh-install path via `mini-magic-context doctor --harness pi --force`
 #   SESSION_SMOKE  — single-turn `pi --print --mode json` against aimock
 #
 # Both assertions check the shared SQLite DB at
-#   ~/.local/share/cortexkit/magic-context/context.db
+#   ~/.local/share/cortexkit/mini-magic-context/context.db
 # rather than scraping logs, so failures are unambiguous.
 # ----------------------------------------------------------------------
 
@@ -20,7 +20,7 @@ NC='\033[0m'
 
 PASS=0
 FAIL=0
-DB_PATH="$HOME/.local/share/cortexkit/magic-context/context.db"
+DB_PATH="$HOME/.local/share/cortexkit/mini-magic-context/context.db"
 PLUGIN_LOG="$(node -e 'console.log(require("os").tmpdir())')/pi/magic-context/magic-context.log"
 
 check() {
@@ -53,27 +53,27 @@ check "pi --version returns a value" "test -n \"$PI_VERSION\""
 
 # ----------------------------------------------------------------------
 # Phase 1: SETUP_SMOKE — non-interactive doctor --force.
-# Since v0.16.1 the CLI is unified into @cortexkit/magic-context with
+# The CLI is unified into @ufoq/mini-magic-context with
 # `--harness pi` selecting the Pi-specific doctor pipeline. The
-# `magic-context` binary was symlinked into /usr/local/bin in the
+# `mini-magic-context` binary was symlinked into /usr/local/bin in the
 # Dockerfile.
 # ----------------------------------------------------------------------
-section "Phase 1: SETUP_SMOKE — magic-context doctor --harness pi --force on a clean machine"
+section "Phase 1: SETUP_SMOKE — mini-magic-context doctor --harness pi --force on a clean machine"
 
 # Pre-condition: no Magic Context state exists.
 rm -rf "$HOME/.local/share/cortexkit" "$PLUGIN_LOG"
 
-DOCTOR_OUT=$(magic-context doctor --harness pi --force 2>&1 || true)
+DOCTOR_OUT=$(mini-magic-context doctor --harness pi --force 2>&1 || true)
 echo "$DOCTOR_OUT" | tail -40
 
-check "magic-context doctor --harness pi --force exits with a Doctor summary" \
+check "mini-magic-context doctor --harness pi --force exits with a Doctor summary" \
     "echo \"\$DOCTOR_OUT\" | grep -qE 'Doctor (complete|repair complete|found failures)'"
 
-check "Pi user config created at ~/.config/cortexkit/magic-context.jsonc" \
-    "test -f $HOME/.config/cortexkit/magic-context.jsonc"
+check "Pi user config created at ~/.config/cortexkit/mini-magic-context.jsonc" \
+    "test -f $HOME/.config/cortexkit/mini-magic-context.jsonc"
 
 check "Pi settings.json registered the magic-context package" \
-    "grep -q 'pi-magic-context' $HOME/.pi/agent/settings.json"
+    "grep -q 'pi-mini-magic-context' $HOME/.pi/agent/settings.json"
 
 # Doctor should report Pi version meets the 0.71.0 floor (we installed
 # >= 0.71.0 in the Dockerfile).
@@ -103,7 +103,7 @@ node -e '
   const settings = JSON.parse(fs.readFileSync(path, "utf-8"));
   if (Array.isArray(settings.packages)) {
     settings.packages = settings.packages
-      .filter((p) => !String(p).includes("npm:") || !String(p).includes("pi-magic-context"))
+      .filter((p) => !String(p).includes("npm:") || !String(p).includes("pi-mini-magic-context"))
       .concat(["file:/test/mc-pi"]);
     settings.packages = [...new Set(settings.packages)];
     fs.writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
@@ -116,7 +116,7 @@ node -e '
 # cutover target the Pi extension now reads); overwrite-in-place is fine
 # since Phase 1's doctor already created this same file.
 mkdir -p "$HOME/.config/cortexkit"
-cat > "$HOME/.config/cortexkit/magic-context.jsonc" <<'JSON'
+cat > "$HOME/.config/cortexkit/mini-magic-context.jsonc" <<'JSON'
 {
   "enabled": true,
   "dreamer": { "enabled": false },

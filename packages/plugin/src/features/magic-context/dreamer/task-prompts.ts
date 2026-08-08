@@ -1,4 +1,4 @@
-import type { DreamingTask } from "../../../config/schema/magic-context";
+import type { DreamTaskName } from "./task-registry";
 
 /** Memory shape the curate prompt renders (verify now has its own runner/prompt). */
 export interface CuratePromptMemory {
@@ -377,7 +377,7 @@ const STRUCTURE_TEMPLATE = `
 // ── Dispatcher ─────────────────────────────────────────────────────────────
 
 export function buildDreamTaskPrompt(
-    task: DreamingTask,
+    task: DreamTaskName,
     args: {
         projectPath: string;
         lastDreamAt?: string | null;
@@ -401,5 +401,7 @@ export function buildDreamTaskPrompt(
                 args.lastDreamAt ?? null,
                 args.existingDocs ?? { architecture: false, structure: false },
             );
+        default:
+            return "";
     }
 }

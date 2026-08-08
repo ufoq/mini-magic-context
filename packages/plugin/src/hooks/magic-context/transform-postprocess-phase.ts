@@ -9,7 +9,6 @@ import {
     getActiveTagsBySession,
     getAutoSearchHintDecisions,
     getMaxM0MutationId,
-    getNoteNudgeAnchors,
     getPendingCompactionMarkerState,
     getPendingOps,
     getPersistedTodoSyntheticAnchor,
@@ -19,7 +18,6 @@ import {
     type PendingCompactionMarker,
     peekDeferredExecutePending,
     pruneAutoSearchHintDecisions,
-    pruneNoteNudgeAnchors,
     setPersistedTodoSyntheticAnchor,
     updateSessionMeta,
 } from "../../features/magic-context/storage";
@@ -48,7 +46,6 @@ import { dropStaleReduceCalls } from "./drop-stale-reduce-calls";
 import { applyHeuristicCleanup } from "./heuristic-cleanup";
 import {
     clearInjectionCache,
-    getVisibleMemoryIds,
     injectM0M1,
     type M0HardSignals,
     type M0M1State,
@@ -56,8 +53,6 @@ import {
     type PreparedCompartmentInjection,
     renderCompartmentInjection,
 } from "./inject-compartments";
-import { markNoteNudgeDelivered, peekNoteNudgeText } from "./note-nudger";
-import { hasVisibleNoteReadCall } from "./note-visibility";
 import type { PassOutcome } from "./pass-outcome";
 import { estimateTokens } from "./read-session-formatting";
 import { modelAcceptsEmptyContent, replaySentinelByMessageIds } from "./sentinel";
@@ -78,7 +73,6 @@ import {
 } from "./tool-reclaim";
 import {
     appendReminderToUserMessageById,
-    findLastUserMessageId,
     injectToolPartIntoAssistantById,
     injectToolPartIntoLatestAssistant,
 } from "./transform-message-helpers";
@@ -201,32 +195,10 @@ export function runRustModePostprocess(args: {
     ) {
         return;
     }
-    for (const anchor of getNoteNudgeAnchors(args.db, args.sessionId)) {
-        appendReminderToUserMessageById(args.messages, anchor.messageId, anchor.text);
-    }
     for (const decision of getAutoSearchHintDecisions(args.db, args.sessionId)) {
         if (decision.decision === "hint") {
             appendReminderToUserMessageById(args.messages, decision.messageId, decision.text);
         }
-    }
-
-    const currentUserMessageId = findLastUserMessageId(args.messages);
-    const noteReadStillVisible = hasVisibleNoteReadCall(args.messages);
-    const deferredNoteText = peekNoteNudgeText(
-        args.db,
-        args.sessionId,
-        currentUserMessageId,
-        args.projectPath,
-        noteReadStillVisible,
-    );
-    if (!deferredNoteText) return;
-    const instruction = `\n\n<instruction name="deferred_notes">${deferredNoteText}</instruction>`;
-    const anchoredMessageId = findLastUserMessageId(args.messages);
-    const outcome = markNoteNudgeDelivered(args.db, args.sessionId, instruction, anchoredMessageId);
-    if (anchoredMessageId && outcome.ok) {
-        appendReminderToUserMessageById(args.messages, anchoredMessageId, instruction);
-    } else if (anchoredMessageId && !outcome.ok) {
-        sessionLog(args.sessionId, `rust note-nudge delivery skipped wire append: ${outcome.kind}`);
     }
 }
 
@@ -1380,9 +1352,6 @@ export async function runPostTransformPhase(
     // so cached user-message bytes remain identical until that message leaves
     // the visible window. Prune happens later, only on cache-busting passes.
     if (args.fullFeatureMode) {
-        for (const anchor of getNoteNudgeAnchors(args.db, args.sessionId)) {
-            appendReminderToUserMessageById(args.messages, anchor.messageId, anchor.text);
-        }
         for (const decision of getAutoSearchHintDecisions(args.db, args.sessionId)) {
             if (decision.decision === "hint") {
                 appendReminderToUserMessageById(args.messages, decision.messageId, decision.text);
@@ -1390,11 +1359,6 @@ export async function runPostTransformPhase(
         }
     }
 
-    // Visibility check: scan the post-drop messages array for a non-stripped
-    // ctx_note(action="read") tool call. This decides whether the suppression
-    // path inside `peekNoteNudgeText` should fire — see the comment block
-    // there for the full rationale. Only computed when nudges can actually
-    // fire (fullFeatureMode), so we skip the scan in subagent sessions.
     logTransformTiming(args.sessionId, "pp.nudgeAndSticky", tNudgeBlock);
 
     const explicitRebuildHappened =
@@ -1486,34 +1450,6 @@ export async function runPostTransformPhase(
     }
 
     const tNoteAndTodo = performance.now();
-    const noteReadStillVisible = args.fullFeatureMode
-        ? hasVisibleNoteReadCall(args.messages)
-        : false;
-    const deferredNoteText = args.fullFeatureMode
-        ? peekNoteNudgeText(
-              args.db,
-              args.sessionId,
-              args.currentTurnId,
-              args.projectPath,
-              noteReadStillVisible,
-          )
-        : null;
-    if (deferredNoteText) {
-        const noteInstruction = `\n\n<instruction name="deferred_notes">${deferredNoteText}</instruction>`;
-        const anchoredMessageId = findLastUserMessageId(args.messages);
-        const outcome = markNoteNudgeDelivered(
-            args.db,
-            args.sessionId,
-            noteInstruction,
-            anchoredMessageId,
-        );
-        if (anchoredMessageId && outcome.ok) {
-            appendReminderToUserMessageById(args.messages, anchoredMessageId, noteInstruction);
-        } else if (anchoredMessageId && !outcome.ok) {
-            args.passOutcome?.record("note-nudge-cas-failure");
-            sessionLog(args.sessionId, `note-nudge delivery skipped wire append: ${outcome.kind}`);
-        }
-    }
 
     // Todo state synthesis: inject a synthetic `todowrite` tool part into the
     // latest eligible assistant so the agent reads current todos through its
@@ -1657,7 +1593,7 @@ export async function runPostTransformPhase(
     // Auto-search hint — append a vague-recall fragment hint to the latest
     // user message when experimental.auto_search is enabled and search
     // returns a high-confidence match. Gated behind fullFeatureMode: subagent
-    // sessions (historian, compressor, dreamer child tasks, council members,
+    // sessions (historian, compressor, council members,
     // etc.) are driven by the main agent via prompt injection, not by the
     // user. There is no user prompt to semantically ground against, and
     // running embedding on subagent input wastes cycles + saturates the
@@ -1729,12 +1665,7 @@ export async function runPostTransformPhase(
     }
 
     if (args.fullFeatureMode && args.autoSearch?.enabled && args.projectPath) {
-        // Resolve memory ids currently rendered in the <session-history>
-        // block. The auto-search runner drops hint fragments for memories the
-        // agent already sees in message[0] so the hint stays "vague recall"
-        // for content not already in context.
         const tAutoSearch = performance.now();
-        const visibleMemoryIds = getVisibleMemoryIds(args.db, args.sessionId) ?? undefined;
 
         try {
             const autoSearchOutcome = await runAutoSearchHint({
@@ -1748,7 +1679,6 @@ export async function runPostTransformPhase(
                     directory: args.autoSearch.directory ?? args.sessionDirectory,
                     projectPath: args.projectPath,
                     ensureProjectRegistered: args.autoSearch.ensureProjectRegistered,
-                    visibleMemoryIds,
                 },
             });
             if (!autoSearchOutcome.ok) {
@@ -1768,12 +1698,11 @@ export async function runPostTransformPhase(
                 visibleIds.add(message.info.id);
             }
         }
-        const prunedAnchors = pruneNoteNudgeAnchors(args.db, args.sessionId, visibleIds);
         const prunedDecisions = pruneAutoSearchHintDecisions(args.db, args.sessionId, visibleIds);
-        if (prunedAnchors > 0 || prunedDecisions > 0) {
+        if (prunedDecisions > 0) {
             sessionLog(
                 args.sessionId,
-                `sticky-injection GC: pruned ${prunedAnchors} note-nudge anchor(s), ${prunedDecisions} auto-search decision(s)`,
+                `sticky-injection GC: pruned ${prunedDecisions} auto-search decision(s)`,
             );
         }
     }

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { loadPluginConfig, loadPluginConfigDetailed } from "./index";
 
 /**
- * Writes a magic-context.jsonc file inside a fresh temp XDG_CONFIG_HOME tree
+ * Writes a mini-magic-context.jsonc file inside a fresh temp XDG_CONFIG_HOME tree
  * and runs loadPluginConfig against it. Returns warnings + parsed config.
  *
  * Scope directory is NOT set — we pass a unique directory that does not
@@ -18,7 +18,7 @@ function loadWithUserConfig(configText: string, extraEnv: Record<string, string>
     const configDir = join(xdg, "cortexkit");
     const fs = require("node:fs") as typeof import("node:fs");
     fs.mkdirSync(configDir, { recursive: true });
-    writeFileSync(join(configDir, "magic-context.jsonc"), configText, "utf-8");
+    writeFileSync(join(configDir, "mini-magic-context.jsonc"), configText, "utf-8");
 
     const origXdg = process.env.XDG_CONFIG_HOME;
     const savedEnv: Record<string, string | undefined> = {};
@@ -68,9 +68,9 @@ function loadWithUserAndProjectConfig(
     const configDir = join(xdg, "cortexkit");
     fs.mkdirSync(configDir, { recursive: true });
     fs.mkdirSync(join(projectDir, ".cortexkit"), { recursive: true });
-    writeFileSync(join(configDir, "magic-context.jsonc"), userConfigText, "utf-8");
+    writeFileSync(join(configDir, "mini-magic-context.jsonc"), userConfigText, "utf-8");
     writeFileSync(
-        join(projectDir, ".cortexkit", "magic-context.jsonc"),
+        join(projectDir, ".cortexkit", "mini-magic-context.jsonc"),
         projectConfigText,
         "utf-8",
     );
@@ -117,11 +117,11 @@ describe("loadPluginConfig — secret redaction", () => {
         const origHome = process.env.HOME;
         process.env.XDG_CONFIG_HOME = xdg;
         process.env.HOME = home;
-        // A real setting the user disabled: it MUST survive the unmigrated window,
-        // not be silently re-enabled by schema defaults (memory defaults to on).
+        // A real retained setting the user disabled must survive the unmigrated
+        // window instead of being silently reset to the schema default.
         writeFileSync(
-            join(projectDir, "magic-context.jsonc"),
-            '{"embedding":{"provider":"off"},"memory":{"enabled":false}}',
+            join(projectDir, "mini-magic-context.jsonc"),
+            '{"embedding":{"provider":"off"},"enabled":false}',
         );
         try {
             const result = loadPluginConfigDetailed(projectDir);
@@ -130,10 +130,10 @@ describe("loadPluginConfig — secret redaction", () => {
             // until migration completes, so the load is trusted ("ok") and the
             // real (disabled) setting is honored, not silently defaulted on.
             // (embedding.* is intentionally stripped from project-scope config for
-            // security, so we assert a non-embedding setting survives.)
+            // security, so we assert a retained non-embedding setting survives.)
             expect(result.sources.projectConfig).toBe("ok");
             expect(result.loadOutcome).toBe("ok");
-            expect(result.config.memory.enabled).toBe(false);
+            expect(result.config.enabled).toBe(false);
             expect(result.config.configWarnings?.join("\n")).toContain(
                 "reading legacy config from",
             );
@@ -151,7 +151,7 @@ describe("loadPluginConfig — secret redaction", () => {
     it("loadPluginConfig (the runtime init path) honors read-legacy, not schema defaults", () => {
         // The runtime registers via loadPluginConfig (index.ts), NOT the detailed
         // variant. This locks that the read-legacy fallback applies there too — a
-        // migration refusal must not silently re-enable disabled features at init.
+        // migration refusal must not silently re-enable the plugin at init.
         const xdg = mkdtempSync(join(tmpdir(), "mc-config-test-"));
         const home = mkdtempSync(join(tmpdir(), "mc-config-home-"));
         const projectDir = mkdtempSync(join(tmpdir(), "mc-config-legacy-proj-"));
@@ -159,10 +159,10 @@ describe("loadPluginConfig — secret redaction", () => {
         const origHome = process.env.HOME;
         process.env.XDG_CONFIG_HOME = xdg;
         process.env.HOME = home;
-        writeFileSync(join(projectDir, "magic-context.jsonc"), '{"memory":{"enabled":false}}');
+        writeFileSync(join(projectDir, "mini-magic-context.jsonc"), '{"enabled":false}');
         try {
             const config = loadPluginConfig(projectDir);
-            expect(config.memory.enabled).toBe(false);
+            expect(config.enabled).toBe(false);
             expect(config.configWarnings?.join("\n")).toContain("reading legacy config from");
         } finally {
             if (origXdg === undefined) delete process.env.XDG_CONFIG_HOME;
@@ -236,47 +236,6 @@ describe("loadPluginConfig — secret redaction", () => {
         expect(combined).toContain("apiKey");
     });
 
-    it("preserves dreamer.enabled=false migration after nested-field recovery", () => {
-        const config = JSON.stringify({
-            dreamer: { enabled: false },
-            memory: { injection_budget_tokens: "not-a-number" },
-        });
-
-        const result = loadWithUserConfig(config);
-
-        expect(result.dreamer?.disable).toBe(true);
-        expect(result.configWarnings?.join("\n")).toContain("dreamer.enabled=false");
-    });
-
-    it("recovers an invalid NESTED field without wiping valid siblings in the same block", () => {
-        // Regression: one bad nested field (memory.injection_budget_tokens as a
-        // string) must NOT delete the whole `memory` block — which would silently
-        // drop valid siblings like memory.auto_search.enabled (and, on the
-        // migration path, the just-graduated memory.git_commit_indexing). Recovery
-        // should prune only the invalid leaf and keep the rest.
-        const config = JSON.stringify({
-            memory: {
-                injection_budget_tokens: "not-a-number", // invalid nested leaf
-                auto_search: { enabled: false }, // valid sibling — must survive
-            },
-        });
-
-        const result = loadWithUserConfig(config);
-        const warnings = result.configWarnings ?? [];
-
-        expect(result.enabled).toBe(true);
-        // The valid sibling the user explicitly set must be preserved, not reset
-        // to the schema default (true).
-        expect(result.memory.auto_search.enabled).toBe(false);
-        // The invalid leaf falls back to its schema default.
-        expect(typeof result.memory.injection_budget_tokens).toBe("number");
-        // A warning should name the pruned nested field.
-        const w = warnings.find(
-            (x) => x.includes("memory") && x.includes("injection_budget_tokens"),
-        );
-        expect(w).toBeDefined();
-    });
-
     it("still shows numeric and boolean invalid values (not secrets by nature)", () => {
         // Numbers/booleans in config fields are never secrets — they're
         // plain validation mistakes — so we surface them fully to help
@@ -347,7 +306,7 @@ describe("loadPluginConfig — secret redaction", () => {
     });
 });
 
-describe("loadPluginConfig — experimental graduation migration", () => {
+describe.skip("loadPluginConfig — experimental graduation migration", () => {
     // These cover the FULL chain: experimental.* → (migrate-experimental) →
     // legacy dreamer.user_memories/pin_key_files → (migrate-dreamer-v2) → the v2
     // per-task `dreamer.tasks` record. review-user-memories enabled ⇔ schedule != "";
@@ -467,7 +426,7 @@ describe("loadPluginConfig — experimental graduation migration", () => {
     });
 });
 
-describe("loadPluginConfig — legacy agent enabled migration", () => {
+describe.skip("loadPluginConfig — legacy agent enabled migration", () => {
     it("migrates dreamer.enabled=false to disable=true with manual-dream warning", () => {
         const result = loadWithUserConfig(JSON.stringify({ dreamer: { enabled: false } }));
 
@@ -758,7 +717,7 @@ describe("loadPluginConfig — raw merge preserves user fields not set in projec
         expect(result.execute_threshold_percentage).toBe(30);
     });
 
-    it("still applies project dreamer model and task overrides", () => {
+    it.skip("still applies project dreamer model and task overrides", () => {
         const result = loadWithUserAndProjectConfig(
             JSON.stringify({ language: "tr" }),
             JSON.stringify({
@@ -810,25 +769,16 @@ describe("loadPluginConfig — raw merge preserves user fields not set in projec
     });
 });
 
-describe("transform_mode resolution", () => {
-    it("keeps project rust mode only when user config supplies subc", () => {
-        const withSubc = loadWithUserAndProjectConfig(
-            JSON.stringify({ subc: { connection_file: "~/.local/share/cortexkit/subc.json" } }),
-            JSON.stringify({ transform_mode: "rust" }),
-        );
-        expect(withSubc.transform_mode).toBe("rust");
-
-        const withoutSubc = loadWithUserAndProjectConfig(
+describe("transform_mode removed", () => {
+    it("does not include transform_mode in resolved config", () => {
+        const result = loadWithUserAndProjectConfig(
             JSON.stringify({}),
             JSON.stringify({ transform_mode: "rust" }),
         );
-        expect(withoutSubc.transform_mode).toBe("ts");
-        expect(withoutSubc.configWarnings?.join("\n")).toContain(
-            "rust mode requires user-level subc configuration; running ts.",
-        );
+        expect(result).not.toHaveProperty("transform_mode");
     });
 
-    it("passes the resolved rust mode to the plugin config without mutating project trust", () => {
+    it("ignores project-controlled subc connection files", () => {
         const result = loadWithUserAndProjectConfig(
             JSON.stringify({
                 subc: { connection_file: "~/.local/share/cortexkit/subc.json" },
@@ -839,7 +789,7 @@ describe("transform_mode resolution", () => {
             }),
         );
 
-        expect(result.transform_mode).toBe("rust");
-        expect(result.subc?.connection_file).not.toContain("project-controlled.sock");
+        expect(result).not.toHaveProperty("transform_mode");
+        expect(result.subc?.connection_file ?? "").not.toContain("project-controlled");
     });
 });

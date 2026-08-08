@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * @cortexkit/magic-context — unified CLI for Magic Context.
+ * @ufoq/mini-magic-context — unified CLI for Mini Magic Context.
  *
  * Subcommands:
  *   setup           Interactive setup wizard for OpenCode and/or Pi.
@@ -8,9 +8,6 @@
  *     --force         Force-clear plugin cache.
  *     --issue         Bundle a sanitized issue report and submit/open.
  *     --clear         Interactive picker to clear plugin caches.
- *   doctor migrate  Migrate OpenCode session content to Pi JSONL.
- *   doctor migrate-session  Re-home an OpenCode session to another directory/project.
- *   doctor merge-identity   Merge all project-scoped rows between identities.
  *
  * Common flags:
  *   --harness opencode|pi   Target one harness (default: auto-detect / prompt)
@@ -19,6 +16,16 @@
  */
 import { createRequire } from "node:module";
 import { isPromptCancelledError } from "./lib/prompts";
+
+const REMOVED_DOCTOR_ARGUMENTS = new Set([
+    "--check-v22-backfill",
+    "--retry-v22-backfill",
+    "--rekey-v22-dir-identity",
+    "drain-authority",
+    "merge-identity",
+    "migrate-session",
+    "migrate",
+]);
 
 function getVersion(): string {
     const req = createRequire(import.meta.url);
@@ -38,20 +45,10 @@ function getVersion(): string {
     return "0.0.0";
 }
 
-function valueAfter(args: string[], flag: string): string | null {
-    const index = args.indexOf(flag);
-    if (index === -1) return null;
-    // Reject a flag-shaped value so `--rekey-v22-dir-identity --force` doesn't
-    // consume `--force` as the project path (see doctor-pi.ts valueAfter).
-    const next = args[index + 1];
-    if (next === undefined || next.startsWith("--")) return null;
-    return next;
-}
-
 function printUsage(): void {
     console.log("");
-    console.log("  Magic Context CLI");
-    console.log("  ─────────────────");
+    console.log("  Mini Magic Context CLI");
+    console.log("  ──────────────────────");
     console.log("");
     console.log("  Commands:");
     console.log("    setup            Interactive setup wizard");
@@ -59,17 +56,6 @@ function printUsage(): void {
     console.log("    doctor --force   Force-clear plugin cache");
     console.log("    doctor --issue   Collect diagnostics and open a GitHub issue");
     console.log("    doctor --clear   Interactive cache cleanup picker");
-    console.log("    doctor --check-v22-backfill       Show v22 memory backfill status");
-    console.log("    doctor --retry-v22-backfill       Retry failed v22 memory backfill rows");
-    console.log("    doctor --rekey-v22-dir-identity <path>  Re-key legacy dir identity rows");
-    console.log(
-        "    doctor drain-authority <project>  Drain module memory/note authority back to TypeScript",
-    );
-    console.log("    doctor migrate   Migrate OpenCode session to Pi JSONL");
-    console.log("    doctor migrate-session   Re-home an OpenCode session to another directory");
-    console.log(
-        "    doctor merge-identity   Merge project rows (--from ID --to ID [--dry-run] [--yes])",
-    );
     console.log("");
     console.log("  Harness selection:");
     console.log("    --harness opencode    Target OpenCode only");
@@ -77,12 +63,10 @@ function printUsage(): void {
     console.log("    (default: auto-detect, prompt if multiple installed)");
     console.log("");
     console.log("  Usage:");
-    console.log("    npx @cortexkit/magic-context@latest setup");
+    console.log("    npx @ufoq/mini-magic-context@latest setup");
     console.log("        # add --dry-run to preview the wizard without writing any files");
-    console.log("    npx @cortexkit/magic-context@latest doctor");
-    console.log("    npx @cortexkit/magic-context@latest doctor --issue");
-    console.log("    npx @cortexkit/magic-context@latest doctor migrate \\");
-    console.log("        --from opencode --to pi --session ses_xxx --dry-run");
+    console.log("    npx @ufoq/mini-magic-context@latest doctor");
+    console.log("    npx @ufoq/mini-magic-context@latest doctor --issue");
     console.log("");
 }
 
@@ -107,44 +91,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         }
 
         if (command === "doctor") {
-            if (rest[0] === "drain-authority") {
-                const projectRoot = rest[1];
-                if (!projectRoot || projectRoot.startsWith("-")) {
-                    console.error("Usage: magic-context doctor drain-authority <project>");
-                    return 1;
-                }
-                const [{ runDoctorDrainAuthority }, { getMagicContextStorageDir }, { join }] =
-                    await Promise.all([
-                        import("./commands/doctor-authority"),
-                        import("@magic-context/core/shared/data-path"),
-                        import("node:path"),
-                    ]);
-                return runDoctorDrainAuthority(
-                    projectRoot,
-                    join(getMagicContextStorageDir(), "context.db"),
-                );
-            }
-            if (rest[0] === "merge-identity") {
-                const { runMergeIdentityCli } = await import("./commands/doctor-merge-identity");
-                return runMergeIdentityCli(rest.slice(1));
-            }
-            if (rest[0] === "migrate") {
-                const { runMigrateCli } = await import("./commands/migrate");
-                return runMigrateCli(rest.slice(1));
-            }
-            if (rest[0] === "migrate-session") {
-                const { runMigrateSessionCli } = await import("./commands/migrate-session");
-                return runMigrateSessionCli(rest.slice(1));
+            if (rest.some((argument) => REMOVED_DOCTOR_ARGUMENTS.has(argument))) {
+                console.error(`Unknown doctor command: ${rest[0]}`);
+                return 1;
             }
             const { runDoctor } = await import("./commands/doctor");
-            const rekeyV22DirIdentity = valueAfter(rest, "--rekey-v22-dir-identity");
             return runDoctor({
                 force: rest.includes("--force"),
                 issue: rest.includes("--issue"),
                 clear: rest.includes("--clear"),
-                checkV22Backfill: rest.includes("--check-v22-backfill"),
-                retryV22Backfill: rest.includes("--retry-v22-backfill"),
-                ...(rekeyV22DirIdentity !== null ? { rekeyV22DirIdentity } : {}),
                 argv: rest,
             });
         }

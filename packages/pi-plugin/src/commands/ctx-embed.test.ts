@@ -144,4 +144,29 @@ describe("Pi /ctx-embed progress", () => {
 			closeQuietly(db);
 		}
 	});
+
+	it("reports disabled when the provider is 'off'", async () => {
+		const db = createTestDb();
+		try {
+			const project = "pi-embed-off";
+			const sessionId = "pi-embed-off-session";
+			registerProjectEmbedding(
+				db,
+				project,
+				{ provider: "off" },
+				{ memoryEnabled: false, gitCommitEnabled: false },
+				"/tmp/pi-embed-off",
+			);
+			seedCompartments(db, sessionId, 3);
+
+			const terminal = await runEmbedDrain(db, project, sessionId);
+
+			expect(terminal).toEqual({
+				text: "## /ctx-embed\n\nNo embedding provider is configured, so there is nothing to embed.",
+				level: "info",
+			});
+		} finally {
+			closeQuietly(db);
+		}
+	});
 });

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Magic Context — Interactive Setup
-# Usage: curl -fsSL https://raw.githubusercontent.com/cortexkit/magic-context/master/scripts/install.sh | bash
+# Mini Magic Context — Interactive Setup
+# Usage: curl -fsSL https://raw.githubusercontent.com/ufoq/mini-magic-context/master/scripts/install.sh | bash
 
-PACKAGE="@cortexkit/magic-context"
+PACKAGE="@ufoq/mini-magic-context"
 MIN_NODE_MAJOR=20
 MIN_NODE_MINOR=12
 

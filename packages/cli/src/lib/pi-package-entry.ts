@@ -1,4 +1,4 @@
-export const PI_MAGIC_CONTEXT_PACKAGE_NAME = "@cortexkit/pi-magic-context";
+export const PI_MAGIC_CONTEXT_PACKAGE_NAME = "@ufoq/pi-mini-magic-context";
 
 function stripNpmPrefix(value: string): string {
     return value.startsWith("npm:") ? value.slice("npm:".length) : value;

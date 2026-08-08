@@ -29,7 +29,7 @@ describe("models-dev-cache (SDK-only)", () => {
     beforeEach(() => {
         tempDir = mkdtempSync(join(tmpdir(), "mc-models-dev-"));
         // Isolate the persisted-cache file under a temp data dir so tests never
-        // touch the real ~/.local/share/cortexkit/magic-context cache.
+        // touch the real ~/.local/share/cortexkit/mini-magic-context cache.
         originalXdgData = process.env.XDG_DATA_HOME;
         process.env.XDG_DATA_HOME = tempDir;
         clearModelsDevCache();

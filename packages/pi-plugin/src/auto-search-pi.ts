@@ -90,7 +90,6 @@ export interface PiAutoSearchOptions {
 	scoreThreshold: number;
 	minPromptChars: number;
 	projectPath: string;
-	visibleMemoryIds?: Set<number> | null;
 }
 
 const AUTO_SEARCH_TIMEOUT_MS = 3_000;
@@ -119,9 +118,6 @@ async function unifiedSearchWithTimeout(
 			unifiedSearch(db, sessionId, projectPath, prompt, {
 				...options,
 				signal: controller.signal,
-				// Auto hints are plugin-internal surfacing, not explicit agent
-				// retrievals; match OpenCode lines 69-73 and search.ts lines 77-84.
-				countRetrievals: false,
 			}),
 			timeoutPromise,
 		]);
@@ -145,7 +141,6 @@ function collectUserPromptParts(message: UserMessage): string {
 
 function hasStackedAugmentation(rawText: string): boolean {
 	return (
-		rawText.includes("<sidekick-augmentation>") ||
 		rawText.includes("<ctx-search-hint>") ||
 		rawText.includes("<ctx-search-auto>")
 	);
@@ -188,7 +183,6 @@ function extractUserPromptText(message: UserMessage): string {
 			.replace(/<ctx-search-hint>[\s\S]*?<\/ctx-search-hint>/g, "")
 			.replace(/<ctx-search-auto>[\s\S]*?<\/ctx-search-auto>/g, "")
 			.replace(/<instruction[^>]*>[\s\S]*?<\/instruction>/g, "")
-			.replace(/<sidekick-augmentation>[\s\S]*?<\/sidekick-augmentation>/g, "")
 			// Generic XML/HTML tags — opening, closing, and self-closing.
 			// Preserve text between paired tags so pasted content still embeds.
 			.replace(/<\/?[a-zA-Z][^<>]*>/g, "")
@@ -369,16 +363,12 @@ export async function runAutoSearchHintForPi(args: {
 	let results: UnifiedSearchResult[] | null;
 	try {
 		const snapshot = getProjectEmbeddingSnapshot(options.projectPath);
-		const memoryEnabled = snapshot?.features.memoryEnabled ?? true;
 		const embeddingEnabled = snapshot
 			? snapshot.enabled || snapshot.gitCommitEnabled
 			: true;
-		const gitCommitsEnabled = snapshot?.gitCommitEnabled ?? false;
 		const searchOptions: UnifiedSearchOptions = {
 			limit: 10,
-			memoryEnabled,
 			embeddingEnabled,
-			gitCommitsEnabled,
 			embedQuery: async (text, signal) => {
 				const result = await embedTextForProject(
 					options.projectPath,
@@ -386,13 +376,10 @@ export async function runAutoSearchHintForPi(args: {
 					signal,
 					"query",
 				);
-				return result?.vector ?? null;
+				return result;
 			},
 			isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
-			visibleMemoryIds: options.visibleMemoryIds ?? null,
-			// Primers v1 are cache-neutral: explicit ctx_search/dashboard only,
-			// never transform-time auto-search prompt hints.
-			sources: ["memory", "message", "git_commit"],
+			sources: ["message"],
 		};
 		results = await unifiedSearchWithTimeout(
 			db,

@@ -1,5 +1,4 @@
 import type { Database, Statement as PreparedStatement } from "../../../shared/sqlite";
-import { hasMuralCueColumns } from "../mural/storage-mural-cues";
 import { MEMORY_CATEGORY_ORDER_SQL } from "./constants";
 import { invalidateMemory, invalidateProject } from "./embedding-cache";
 import { computeNormalizedHash } from "./normalize-hash";
@@ -73,7 +72,6 @@ const MEMORY_SCOPE_LOOKUP = {
 const MEMORY_SOURCE_TYPE_LOOKUP = {
     historian: true,
     agent: true,
-    dreamer: true,
     user: true,
 } satisfies Record<MemorySourceType, true>;
 
@@ -583,7 +581,7 @@ export class ModuleMemoryAuthorityError extends Error {
 
     constructor(readonly projectPath: string) {
         super(
-            `memory writes for module-managed project ${projectPath} must use the Rust ctx_memory module facade`,
+            `memory writes for module-managed project ${projectPath} are not permitted from this build`,
         );
         this.name = "ModuleMemoryAuthorityError";
     }
@@ -1025,17 +1023,6 @@ export function updateMemoryContent(
         // run (importance/scope were judged against the old content).
         if (hasMemoryClassifiedAtColumn(db)) {
             db.prepare("UPDATE memories SET classified_at = NULL WHERE id = ?").run(id);
-        }
-
-        // Drop the stale mural cue: it was compressed from the OLD content, so its
-        // hash no longer matches. Clearing it here means resolveMural won't render
-        // the stale cue even for the brief window before compress-cues recomputes
-        // it, and the compress-cues gate re-selects this memory (NULL cue).
-        // Column-guarded for pre-v65 DBs.
-        if (hasMuralCueColumns(db)) {
-            db.prepare(
-                "UPDATE memories SET mural_cue = NULL, mural_cue_hash = NULL, mural_cue_at = NULL WHERE id = ?",
-            ).run(id);
         }
 
         // Invalidate stale embedding — backfill will regenerate with new content.

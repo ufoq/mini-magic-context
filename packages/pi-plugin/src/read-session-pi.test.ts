@@ -121,7 +121,7 @@ describe("isMidTurnPi", () => {
 });
 
 describe("convertEntriesToRawMessages: synthetic-user entry-id propagation", () => {
-	// Regression coverage for the cortexkit/magic-context X1+X2 production
+	// Regression coverage for the cortexkit/mini-magic-context X1+X2 production
 	// bugs. Pi sessions with many `toolResult → assistant` transitions emit
 	// synthetic user RawMessages. The original implementation set those
 	// synthetic users' `id` to `""`, which broke two downstream consumers:

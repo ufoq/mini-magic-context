@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { connectionFileExists, SubcCallError, SubcClient } from "@cortexkit/subc-client";
 import { getHarness } from "../../../shared/harness";
 import { log } from "../../../shared/logger";
+import {
+    connectionFileExists,
+    SubcCallError,
+    SubcClient,
+} from "../../../shared/subc-client-disabled";
 import type { EmbeddingProvider } from "./embedding-provider";
 
 export const SYNAPSE_DEFAULT_MODEL = "gte-modernbert-base-f16";

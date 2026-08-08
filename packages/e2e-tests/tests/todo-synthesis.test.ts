@@ -134,7 +134,7 @@ function readTodoMeta(sessionId: string): SessionMetaTodoRow | null {
 }
 
 function contextDbPath(): string {
-    return join(h.opencode.env.dataDir, "cortexkit", "magic-context", "context.db");
+    return join(h.opencode.env.dataDir, "cortexkit", "mini-magic-context", "context.db");
 }
 
 function updateTodoMeta(sessionId: string, sql: string): void {

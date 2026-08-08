@@ -1,73 +1,55 @@
-# Magic Context — Pi extension
+# Mini Magic Context — Pi extension
 
-Cross-session memory and context management for [Pi coding agent](https://github.com/earendil-works/pi-mono). Shares the same SQLite database as the [OpenCode plugin](https://www.npmjs.com/package/@cortexkit/opencode-magic-context), so memories, embeddings, dreamer state, and project knowledge follow you across both harnesses.
+Historian-backed context management and journal search for [Pi coding agent](https://github.com/earendil-works/pi-mono). Compartments, embeddings, and indexed journal history are shared with the [OpenCode plugin](https://www.npmjs.com/package/@ufoq/opencode-mini-magic-context) via a single SQLite database.
 
-Requires `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `>= 0.74.0`.
+Requires `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `>= 0.80.2`.
 
 ---
 
 ## What it does
 
-Magic Context is a context engine that keeps long Pi sessions productive by:
-
 | Feature | What it does |
 |---|---|
-| **Tagging + drops** | Tags every assistant/user/tool message with `§N§ ` so you can drop specific turns later via `ctx_reduce` |
-| **Historian** | Background subagent compresses old conversation into compartments + facts at threshold pressure or commit boundaries |
+| **Historian** | Background subagent compresses old conversation into cache-stable chronological compartments |
 | **`<session-history>` injection** | Prepends compressed history into the system prompt every turn so the agent never loses context |
-| **Project memories** | Persistent cross-session knowledge store with embedding-based semantic search |
-| **Dreamer** | Scheduled background subagent that consolidates, verifies, archives, and improves stored memories |
-| **`/ctx-aug`** | On-demand sidekick that augments the next turn with relevant memories |
-| **Auto-search hint** | When user prompts mention previously-discussed topics, appends a compact memory hint |
-| **Note nudges** | Surface deferred intentions at natural work boundaries (commit, todo completion, historian publication) |
-| **Cross-harness sharing** | Memories written from OpenCode appear in Pi (and vice versa) for the same project |
+| **Journal search (`ctx_search`)** | Queries compressed session history with optional semantic ranking |
+| **History expansion (`ctx_expand`)** | Recovers the original transcript from any compressed compartment range |
+| **Optional embeddings** | Semantic search over compartments using local `all-MiniLM-L6-v2` or any OpenAI-compatible endpoint |
+| **Legacy import** | Imports compartments from a previous full Magic Context installation, per session |
+| **Cross-harness sharing** | The same database is shared with the OpenCode plugin for the same project |
 
 ---
 
 ## Installation
 
-The fastest path is the unified Magic Context CLI — `--harness pi` selects the Pi-specific setup pipeline (registers the extension with Pi, writes a sensible `magic-context.jsonc`, and verifies your model picks):
-
 ```bash
-npx @cortexkit/magic-context@latest setup --harness pi
+npx @ufoq/mini-magic-context@latest setup --harness pi
 ```
 
-This handles everything for you:
-1. Adds `npm:@cortexkit/pi-magic-context` to Pi's `packages` array in `~/.pi/agent/settings.json` (the same place `pi install` writes to)
-2. Creates `~/.pi/agent/magic-context.jsonc` with defaults
-3. Prompts you for historian, dreamer, sidekick, and embedding model choices
-4. Warns about provider-specific gotchas (e.g. GitHub Copilot reasoning models need an explicit `thinking_level`)
-
-If you'd rather register the Pi extension package directly with Pi (skipping the wizard), use Pi's own installer:
+This registers the extension with Pi's package list and writes a default `mini-magic-context.jsonc`. Run `doctor` afterward to verify the installation:
 
 ```bash
-pi install npm:@cortexkit/pi-magic-context
-```
-
-This adds the extension to `~/.pi/agent/settings.json` but won't write `magic-context.jsonc` for you — you'll need to create it manually (see Configuration below).
-
-To check installation health later:
-
-```bash
-npx @cortexkit/magic-context@latest doctor --harness pi
+npx @ufoq/mini-magic-context@latest doctor --harness pi
 ```
 
 ---
 
 ## Configuration
 
-Magic Context reads two config files (in this priority order):
+Two config files (merged, project overrides user):
 
-1. `$cwd/.pi/magic-context.jsonc` (project-level overrides)
-2. `~/.pi/agent/magic-context.jsonc` (user-level defaults)
+| Location | Scope |
+|---|---|
+| `<project>/.cortexkit/mini-magic-context.jsonc` | Project |
+| `~/.config/cortexkit/mini-magic-context.jsonc` | User-wide |
 
-Both are merged through a Zod schema. Invalid fields fall back to defaults — bad config never disables the plugin entirely.
+Both are validated against a Zod schema. Invalid fields fall back to defaults; bad config never disables the plugin.
 
 ### Minimal config
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/cortexkit/magic-context/master/assets/magic-context.schema.json",
+  "$schema": "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
   "enabled": true,
   "historian": {
     "model": "anthropic/claude-haiku-4-5"
@@ -78,89 +60,57 @@ Both are merged through a Zod schema. Invalid fields fall back to defaults — b
 }
 ```
 
-For the full configuration reference (including dreamer, sidekick, auto-search, and experimental features), see [CONFIGURATION.md](https://github.com/cortexkit/magic-context/blob/master/CONFIGURATION.md) in the main repository — the schema is shared between both plugins.
-
 ---
 
-## Slash commands
+## Commands
 
-All commands trigger `triggerTurn: false` (never sent to the LLM):
-
-| Command | What it does |
+| Command | Description |
 |---|---|
-| `/ctx-status` | Live token breakdown + queued ops + cache state |
-| `/ctx-flush` | Force-process pending ops queue |
-| `/ctx-recomp` | Rebuild compartments from raw history (heavy operation) |
-| `/ctx-wrapup [messages_to_keep]` | Compact older live history while keeping the newest N messages raw |
-| `/ctx-dream` | Trigger a dream run on demand |
-| `/ctx-aug` | Augment your next prompt with sidekick-retrieved memories |
-
----
-
-## Storage
-
-Magic Context stores everything in a single shared SQLite database at:
-
-```
-~/.local/share/cortexkit/magic-context/context.db
-```
-
-This is the **same database** the OpenCode plugin uses. Tables are scoped by:
-- `harness` column (`'pi'` or `'opencode'`) for session-scoped data (tags, compartments, facts, notes)
-- `project_path` (resolved git root) for project-scoped data (memories, embeddings, dreamer runs)
-
-So memories and dreamer state are shared across both harnesses for the same project; per-session tagging stays correctly attributed.
-
-Storage failures are fatal — Magic Context will refuse to register hooks rather than run with ephemeral state, since that would let context grow unbounded across restarts.
-
----
-
-## Cross-harness coherence
-
-For semantic search to work across harnesses, both plugins must use the **same embedding model**. Magic Context detects mismatch on Pi startup and warns:
-
-```
-WARN embedding model mismatch detected for project ...:
-stored vectors use "openai-compatible:Qwen/Qwen3-Embedding-8B" but Pi is configured with "local:Xenova/all-MiniLM-L6-v2".
-Cross-harness search will return zero results until vectors are re-embedded.
-```
-
-Easiest fix: configure `embedding` once in `~/.pi/agent/magic-context.jsonc` (Pi) and `~/.config/opencode/magic-context.jsonc` (OpenCode) with identical settings.
+| `/ctx-status` | Live token breakdown, pending queue, cache state |
+| `/ctx-flush` | Force-process pending operations |
+| `/ctx-recomp` | Rebuild compartments from raw history |
+| `/ctx-wrapup [N]` | Compact older live history, keeping newest N messages raw |
+| `/mc-import-context [path]` | Import legacy Magic Context compartments |
+| `/ctx-embed` | Embedding status; start or pause compartment embedding |
 
 ---
 
 ## Tools available to the agent
 
-| Tool | Action set | Purpose |
-|---|---|---|
-| `ctx_search` | n/a | Search memories + raw session history; returns ranked results with previews |
-| `ctx_memory` | `write`, `delete` | Manage project memories explicitly (most writes happen via dreamer instead) |
-| `ctx_note` | `read`, `write`, `update`, `dismiss` | Defer intentions for later — surfaced via note nudges at work boundaries |
-
-`ctx_expand` and `ctx_reduce` from the OpenCode plugin are **intentionally not exposed on Pi** — they depend on raw OpenCode message ordinals, while Pi has its own message identity model. Drops still happen automatically via threshold-driven historian; you don't need an explicit `ctx_reduce` to trigger reduction.
+| Tool | Purpose |
+|---|---|
+| `ctx_search` | Search compartments and raw session history; returns ranked results with previews |
+| `ctx_expand` | Recover the original transcript from a compressed compartment range |
+| `todowrite` | Manage structured task lists surfaced in the session view |
 
 ---
 
-## Architecture & implementation
+## Storage
 
-This package is part of the [magic-context monorepo](https://github.com/cortexkit/magic-context). The Pi extension shares the core implementation with the OpenCode plugin via the `@magic-context/core` workspace dependency, exposing only the Pi-specific adapter layer:
+Everything lives in a single SQLite database:
 
-| Pi-specific module | Responsibility |
-|---|---|
-| `context-handler.ts` | Pi `pi.on("context", ...)` adapter — tags, drops, runs nudges and auto-search |
-| `subagent-runner.ts` | Spawns `pi --print --mode json --no-session ...` for historian/sidekick/dreamer subagents, keeps extension discovery on for provider/AFT extensions, sets `MAGIC_CONTEXT_PI_SUBAGENT=1` so the full Magic Context entry no-ops, and applies a per-agent `--tools`/`--no-tools` allow-list plus a 2-second terminal drain |
-| `tools/` | Pi `pi.registerTool` wrappers around the shared tool implementations |
-| `commands/` | Pi `pi.registerCommand` wrappers for the five `/ctx-*` slash commands |
-| `dreamer/` | Pi-side adapter for the shared dreamer scheduler |
-| `system-prompt.ts` | Pi `before_agent_start` injector for `<session-history>`, `<project-memory>`, `<project-docs>` |
-| `config/` | Pi-convention config loader (`$cwd/.pi/magic-context.jsonc` + `~/.pi/agent/magic-context.jsonc`) |
+```
+~/.local/share/cortexkit/mini-magic-context/context.db
+```
 
-The CLI lives in the unified [`@cortexkit/magic-context`](https://www.npmjs.com/package/@cortexkit/magic-context) package — `setup --harness pi` and `doctor --harness pi` route to the Pi-specific code paths in `packages/cli/src/commands/`.
+This is the same database the OpenCode plugin uses. Session-scoped data is keyed by `harness` (`'pi'` or `'opencode'`), so per-session tagging stays correctly attributed while compartments and embeddings are shared across harnesses.
 
-For deeper architectural detail, see the main repo's [ARCHITECTURE.md](https://github.com/cortexkit/magic-context/blob/master/ARCHITECTURE.md).
+Storage failures are fatal. The plugin refuses to register hooks rather than run with ephemeral state, since that would let context grow unbounded across restarts.
+
+---
+
+## Cross-harness coherence
+
+Both plugins must use the same embedding model for semantic search to work across harnesses. A mismatch is detected on startup and warned.
+
+---
+
+## Architecture
+
+This package is part of the [mini-magic-context monorepo](https://github.com/ufoq/mini-magic-context). The Pi extension shares core storage and tool implementations with the OpenCode plugin, exposing a Pi-specific adapter layer for session management, subprocess subagents, and config loading.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](https://github.com/cortexkit/magic-context/blob/master/LICENSE).
+MIT — see [LICENSE](https://github.com/ufoq/mini-magic-context/blob/master/LICENSE).

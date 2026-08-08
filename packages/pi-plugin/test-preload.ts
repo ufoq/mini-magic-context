@@ -1,7 +1,7 @@
 // Test-isolation guard — runs ONCE before any test file is imported (wired via
 // bunfig.toml `[test] preload`). Forces XDG_DATA_HOME to a throwaway temp dir
 // for the whole test process so NO test can read or migrate the user's real
-// shared cortexkit DB (~/.local/share/cortexkit/magic-context/context.db),
+// shared cortexkit DB (~/.local/share/cortexkit/mini-magic-context/context.db),
 // which pi-plugin shares with OpenCode via @magic-context/core's
 // `getDataDir()` = `XDG_DATA_HOME ?? ~/.local/share`. See the OpenCode plugin's
 // test-preload.ts for the full rationale (2026-06-01 incident: a dormant

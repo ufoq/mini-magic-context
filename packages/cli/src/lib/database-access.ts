@@ -38,7 +38,7 @@ export class OutdatedSchemaVersionError extends Error {
 
     constructor(path: string, persistedVersion: number, minimumSupportedVersion: number) {
         super(
-            `Refusing to mutate ${path}: database schema v${persistedVersion} is behind this CLI's schema floor v${minimumSupportedVersion}. Run a session or doctor migrate first so the plugin can upgrade it, then retry.`,
+            `Refusing to mutate ${path}: database schema v${persistedVersion} is behind this CLI's schema floor v${minimumSupportedVersion}. Run a session so the plugin can upgrade it, then retry.`,
         );
         this.name = "OutdatedSchemaVersionError";
         this.path = path;

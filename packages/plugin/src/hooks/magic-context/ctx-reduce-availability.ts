@@ -144,13 +144,15 @@ export function clearToolAvailability(sessionId: string, toolName: string): void
 
 export function resolveCtxReduceAvailabilityFromMessages(
     sessionId: string,
-    messages: ReadonlyArray<{ info?: { role?: string; tools?: unknown } }>,
+    _messages: ReadonlyArray<{ info?: { role?: string; tools?: unknown } }>,
 ): CtxReduceAvailabilityVerdict {
-    return resolveToolAvailabilityFromMessages(sessionId, CTX_REDUCE_TOOL, messages);
+    availabilityBySession.set(cacheKey(CTX_REDUCE_TOOL, sessionId), false);
+    return { callable: false, frozen: true };
 }
 
 export function resolveCtxReduceAvailability(sessionId: string): CtxReduceAvailabilityVerdict {
-    return resolveToolAvailability(sessionId, CTX_REDUCE_TOOL);
+    availabilityBySession.set(cacheKey(CTX_REDUCE_TOOL, sessionId), false);
+    return { callable: false, frozen: true };
 }
 
 export function clearCtxReduceAvailability(sessionId: string): void {

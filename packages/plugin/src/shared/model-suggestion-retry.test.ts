@@ -68,7 +68,7 @@ describe("promptSyncWithModelSuggestionRetry", () => {
         });
 
         expect(prompt).toHaveBeenCalledTimes(2);
-        expect((prompt.mock.calls[1]?.[0] as PromptCall).body.model).toEqual({
+        expect((prompt.mock.calls[1][0] as PromptCall).body.model).toEqual({
             providerID: "anthropic",
             modelID: "claude-sonnet-4-6",
         });
@@ -87,7 +87,7 @@ describe("promptSyncWithModelSuggestionRetry", () => {
         });
 
         expect(prompt).toHaveBeenCalledTimes(3);
-        expect((prompt.mock.calls[2]?.[0] as PromptCall).body.model).toEqual({
+        expect((prompt.mock.calls[2][0] as PromptCall).body.model).toEqual({
             providerID: "google",
             modelID: "gemini-3-flash",
         });
@@ -195,7 +195,7 @@ describe("promptSyncWithModelSuggestionRetry", () => {
             promptSyncWithModelSuggestionRetry(client, createArgs(), { timeoutMs: 20 }),
         ).rejects.toThrow(/timed out/);
         expect(abort).toHaveBeenCalledTimes(1);
-        expect((abort.mock.calls[0]?.[0] as { path: { id: string } }).path.id).toBe("ses-test");
+        expect((abort.mock.calls[0][0] as { path: { id: string } }).path.id).toBe("ses-test");
     });
 
     // External abort (e.g. dreamer lease loss) mid-flight must also stop the
@@ -215,7 +215,7 @@ describe("promptSyncWithModelSuggestionRetry", () => {
             promptSyncWithModelSuggestionRetry(client, createArgs(), { signal: controller.signal }),
         ).rejects.toThrow(/aborted by external signal/);
         expect(abort).toHaveBeenCalledTimes(1);
-        expect((abort.mock.calls[0]?.[0] as { path: { id: string } }).path.id).toBe("ses-test");
+        expect((abort.mock.calls[0][0] as { path: { id: string } }).path.id).toBe("ses-test");
     });
 
     // A failing session.abort must not mask the original timeout/abort error.
@@ -259,7 +259,7 @@ describe("promptSyncWithModelSuggestionRetry", () => {
         );
 
         expect(prompt).toHaveBeenCalledTimes(2);
-        expect((prompt.mock.calls[1]?.[0] as PromptCall).body.model).toEqual({
+        expect((prompt.mock.calls[1][0] as PromptCall).body.model).toEqual({
             providerID: "anthropic",
             modelID: "claude-sonnet-4-7",
         });
@@ -277,7 +277,7 @@ describe("promptSyncWithModelSuggestionRetry", () => {
         });
 
         expect(prompt).toHaveBeenCalledTimes(2);
-        expect((prompt.mock.calls[1]?.[0] as PromptCall).body.model).toEqual({
+        expect((prompt.mock.calls[1][0] as PromptCall).body.model).toEqual({
             providerID: "valid",
             modelID: "model",
         });
@@ -374,8 +374,8 @@ describe("promptSyncWithValidatedOutputRetry", () => {
         );
 
         expect(prompt).toHaveBeenCalledTimes(2);
-        expect((prompt.mock.calls[0]?.[0] as PromptCall).body.system).toBeUndefined();
-        expect((prompt.mock.calls[1]?.[0] as PromptCall).body.system).toBe(systemPrompt);
+        expect((prompt.mock.calls[0][0] as PromptCall).body.system).toBeUndefined();
+        expect((prompt.mock.calls[1][0] as PromptCall).body.system).toBe(systemPrompt);
     });
 
     test("empty first model tries the next fallback", async () => {
@@ -398,7 +398,7 @@ describe("promptSyncWithValidatedOutputRetry", () => {
         expect(result.validated).toBe("fallback-output");
         expect(prompt).toHaveBeenCalledTimes(2);
         expect(messages).toHaveBeenCalledTimes(2);
-        expect((prompt.mock.calls[1]?.[0] as PromptCall).body.model).toEqual({
+        expect((prompt.mock.calls[1][0] as PromptCall).body.model).toEqual({
             providerID: "anthropic",
             modelID: "claude-sonnet-4-6",
         });

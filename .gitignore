@@ -23,17 +23,15 @@ tmp/
 
 .sisyphus/
 .opencode/
+.omo/
 .claude/
 local-ignore/
 .planning/
 
-# Dashboard build artifacts
-packages/dashboard/dist/
-packages/dashboard/node_modules/
-packages/dashboard/src-tauri/target/
-
 # Plugin README is copied from root at release time
 packages/plugin/README.md
+packages/plugin/meta.json
+packages/pi-plugin/meta.json
 .bg-shell/
 
 # Keep only the final animation; iteration folders stay local
@@ -76,9 +74,6 @@ packages/plugin/scripts/test-historian-prompt.ts
 # Internal SUBC-migration design docs / specs (not public)
 docs/cache-policy/
 docs/specs/
-
-# Rust workspace build output
-/target
 
 # Keep the reproducible visual-memory v3 inputs and latest report while leaving
 # generated model responses and PNG trial artifacts local.

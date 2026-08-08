@@ -65,12 +65,12 @@ export async function resolveAdaptersForCommand(
             {
                 label: "OpenCode",
                 value: "opencode",
-                hint: "@cortexkit/opencode-magic-context",
+                hint: "@ufoq/opencode-mini-magic-context",
             },
             {
                 label: "Pi",
                 value: "pi",
-                hint: "@cortexkit/pi-magic-context",
+                hint: "@ufoq/pi-mini-magic-context",
             },
         ]);
         return [getAdapter(pick as HarnessKind)];

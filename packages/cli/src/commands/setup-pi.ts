@@ -7,7 +7,6 @@ import {
     hasUserConfigLocationMigrationRefusal,
     migrateConfigLocationsForCli,
 } from "../lib/config-location-migration";
-import { runDreamerSetup } from "../lib/dreamer-setup";
 import { assertJsoncConfigsParseable, readJsoncConfigForUpdate } from "../lib/jsonc-config";
 import { pickModel } from "../lib/model-picker";
 import { getPiAgentConfigDir, getPiUserConfigPath, getPiUserExtensionsPath } from "../lib/paths";
@@ -121,12 +120,6 @@ export function writeMagicContextConfig(
     options: {
         historianModel: string;
         historianThinkingLevel?: string;
-        dreamerEnabled: boolean;
-        dreamerModel?: string;
-        /** Per-task schedule overrides (Dreamer v2); undefined keeps schema defaults. */
-        dreamerTasks?: Record<string, { schedule: string }>;
-        sidekickEnabled: boolean;
-        sidekickModel?: string;
         embedding: EmbeddingChoice;
     },
 ): void {
@@ -135,7 +128,7 @@ export function writeMagicContextConfig(
 
     if (!config.$schema) {
         config.$schema =
-            "https://raw.githubusercontent.com/cortexkit/magic-context/master/assets/magic-context.schema.json";
+            "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json";
     }
 
     // The Pi model picker yields Pi-native provider ids (openai-codex/...,
@@ -146,27 +139,8 @@ export function writeMagicContextConfig(
         model: piModelRefToCanonical(options.historianModel),
         thinking_level: options.historianThinkingLevel,
     });
-    const dreamer = {
-        ...((config.dreamer as Record<string, unknown> | undefined) ?? {}),
-        model: options.dreamerModel ? piModelRefToCanonical(options.dreamerModel) : undefined,
-        disable: options.dreamerEnabled ? undefined : true,
-        enabled: undefined,
-        // Dreamer v2 per-task schedules — only set when the user declined the
-        // recommended defaults; otherwise leave unset so schema defaults apply.
-        tasks: options.dreamerEnabled ? options.dreamerTasks : undefined,
-    };
-    config.dreamer = compactObject(dreamer);
-
-    const sidekick = {
-        ...((config.sidekick as Record<string, unknown> | undefined) ?? {}),
-        model:
-            options.sidekickEnabled && options.sidekickModel
-                ? piModelRefToCanonical(options.sidekickModel)
-                : undefined,
-        disable: options.sidekickEnabled ? undefined : true,
-        enabled: undefined,
-    };
-    config.sidekick = compactObject(sidekick);
+    delete config.dreamer;
+    delete config.sidekick;
 
     config.embedding = {
         ...((config.embedding as Record<string, unknown> | undefined) ?? {}),
@@ -291,7 +265,7 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
         }
     } else {
         prompts.log.warn(
-            "Skipped Pi package registration; install manually with `pi install npm:@cortexkit/pi-magic-context`.",
+            "Skipped Pi package registration; install manually with `pi install npm:@ufoq/pi-mini-magic-context`.",
         );
     }
 
@@ -320,24 +294,6 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
         ]);
     }
 
-    const dreamerEnabled = await prompts.confirm(
-        "Enable dreamer for overnight memory maintenance?",
-        true,
-    );
-    // Only run the dreamer flow when enabled — asking after the user declined
-    // (the prior behavior) was the #144 "still wanted a model after I said no"
-    // complaint.
-    let dreamerModel: string | undefined;
-    let dreamerTasks: Record<string, { schedule: string }> | undefined;
-    if (dreamerEnabled) {
-        const result = await runDreamerSetup(prompts, allModels);
-        dreamerModel = result.model;
-        dreamerTasks = result.tasks;
-    }
-    const sidekickEnabled = await prompts.confirm("Enable sidekick for /ctx-aug?", false);
-    const sidekickModel = sidekickEnabled
-        ? await pickModel(prompts, allModels, "sidekick")
-        : undefined;
     const embedding = await chooseEmbedding(prompts);
 
     if (dryRun) {
@@ -351,17 +307,12 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
                     : `Magic Context package already present in ${settingsPath}`,
             );
             prompts.log.message(
-                "This mirrors `pi install npm:@cortexkit/pi-magic-context` without running installs during setup verification.",
+                "This mirrors `pi install npm:@ufoq/pi-mini-magic-context` without running installs during setup verification.",
             );
         }
         writeMagicContextConfig(configPath, {
             historianModel,
             historianThinkingLevel,
-            dreamerEnabled,
-            dreamerModel,
-            dreamerTasks,
-            sidekickEnabled,
-            sidekickModel,
             embedding,
         });
         prompts.log.success(`Config written to ${configPath}`);
@@ -374,14 +325,12 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
         `Pi settings: ${configurePi ? settingsPath : "skipped"}`,
         `Magic Context config: ${configPath}`,
         `Historian: ${historianModel}${thinkingLevelSuffix}`,
-        `Dreamer: ${dreamerEnabled ? dreamerModel : "disabled"}`,
-        sidekickEnabled ? `Sidekick: ${sidekickModel}` : "Sidekick: disabled",
         `Embedding: ${embedding.provider}${"model" in embedding ? ` (${embedding.model})` : ""}`,
     ].join("\n");
 
     prompts.note(summary, dryRun ? "Configuration (dry run — not written)" : "Configuration");
     prompts.outro(
-        dryRun ? "Dry run complete — nothing was written." : "Start a Pi session and try /ctx-aug",
+        dryRun ? "Dry run complete — nothing was written." : "Start a Pi session and try /ctx-status",
     );
     return 0;
 }

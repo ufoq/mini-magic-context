@@ -3,51 +3,19 @@ import {
     buildCompartmentBlock,
     type Compartment,
     type CompartmentDateRanges,
-    escapeXmlAttr,
-    escapeXmlContent,
     getCompartments,
     getLastCompartmentEndMessageId,
     type SessionFact,
 } from "../../features/magic-context/compartment-storage";
-import {
-    MEMORY_CATEGORY_ORDER_SQL,
-    V2_MEMORY_CATEGORIES,
-} from "../../features/magic-context/memory/constants";
-import {
-    getMaxMemoryIdForProjects,
-    getMemoriesByProject,
-    getMemoriesByProjects,
-    getMemorySelectColumns,
-    isMemoryRow,
-} from "../../features/magic-context/memory/storage-memory";
 import type { Memory } from "../../features/magic-context/memory/types";
-import { resolveMuralWire } from "../../features/magic-context/mural/render-trigger";
-import type { MuralWireOptions } from "../../features/magic-context/mural/resolve-mural";
 import {
     computeProjectDocsHash,
-    GLOBAL_USER_PROFILE_PROJECT_PATH,
     getMaxM0MutationId,
-    getMaxMemoryMutationId,
-    getMaxMemoryMutationIdForProjects,
-    getMemoryMutationsForRender,
-    getMemoryMutationsForRenderByProjects,
-    getProjectState,
     persistCachedM0,
     readProjectDocsCanonical,
 } from "../../features/magic-context/storage";
-import {
-    getActiveUserMemories,
-    type UserMemory,
-} from "../../features/magic-context/user-memory/storage-user-memory";
-import {
-    computeWorkspaceEpochFingerprint,
-    expandWorkspaceIdentitySetWithAliases,
-    resolveStoredPathWorkspaceIdentity,
-    resolveWorkspaceIdentitySet,
-    resolveWorkspaceShareCategories,
-    sourceNameForMemory,
-    type WorkspaceIdentitySet,
-} from "../../features/magic-context/workspaces";
+import type { UserMemory } from "../../features/magic-context/user-memory/storage-user-memory";
+import type { WorkspaceIdentitySet } from "../../features/magic-context/workspaces";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
 import { sessionLog } from "../../shared/logger";
 import type { Database, Statement as PreparedStatement } from "../../shared/sqlite";
@@ -193,37 +161,6 @@ function findVisibleReanchorIndex(
     return -1;
 }
 
-/**
- * Return the set of memory ids currently rendered in the cached
- * <session-history> block for this session, if any. Used by ctx_search
- * to hard-filter memories the agent already sees in context — retrieving
- * them from search wastes tokens and pushes high-signal raw-history hits
- * further down the ranking.
- *
- * Returns null when no cache exists or the JSON payload is malformed
- * (callers should treat null as "don't filter" — the worst case is a
- * redundant memory result, not a correctness issue).
- */
-export function getVisibleMemoryIds(db: Database, sessionId: string): Set<number> | null {
-    try {
-        const row = db
-            .prepare("SELECT memory_block_ids FROM session_meta WHERE session_id = ?")
-            .get(sessionId) as { memory_block_ids: string | null } | null;
-        if (!row?.memory_block_ids) return null;
-        const parsed = JSON.parse(row.memory_block_ids) as unknown;
-        if (!Array.isArray(parsed)) return null;
-        const ids = new Set<number>();
-        for (const value of parsed) {
-            if (typeof value === "number" && Number.isFinite(value)) {
-                ids.add(value);
-            }
-        }
-        return ids.size > 0 ? ids : null;
-    } catch {
-        return null;
-    }
-}
-
 export interface CompartmentInjectionResult {
     injected: boolean;
     prependedMessageCount: number;
@@ -232,93 +169,13 @@ export interface CompartmentInjectionResult {
     skippedVisibleMessages: number;
 }
 
-export function renderMemoryBlock(memories: Memory[]): string | null {
-    return renderMemoryBlockV2(memories) || null;
-}
-
-/** Constraint keywords that signal a memory encodes a rule rather than a description. */
-const CONSTRAINT_KEYWORDS = /\b(must|never|always|cannot|should not|must not)\b/i;
-
-/**
- * Assign a utility tier to a memory for injection priority.
- * Lower tier = higher priority (packed first).
- *
- * Tier 0: Agent actually searched for and found this memory.
- * Tier 1: Contains constraint/rule keywords — likely guards against a real bug.
- * Tier 2: Everything else.
- */
-function utilityTier(m: Memory): number {
-    if (m.retrievalCount > 0) return 0;
-    if (CONSTRAINT_KEYWORDS.test(m.content)) return 1;
-    return 2;
-}
-
-/**
- * Sort memories by priority and trim to budget.
- *
- * Priority order:
- *   1. permanent status first
- *   2. utility tier (retrieved > constraint > other)
- *   3. seen count descending
- *   4. shorter content first (fit more memories in budget)
- *   5. deterministic id tiebreaker for cache stability
- *
- * Uses the real Claude tokenizer (via estimateTokens) so the trim stays
- * consistent with the rest of the plugin's token math — mismatching units
- * (chars/4 here vs real tokens elsewhere) caused either under- or
- * over-injection of memories, depending on memory content shape.
- */
-export function trimMemoriesToBudget(
-    sessionId: string,
-    memories: Memory[],
-    budgetTokens: number,
-): Memory[] {
-    const sorted = [...memories].sort((a, b) => {
-        // Permanent memories first
-        if (a.status === "permanent" && b.status !== "permanent") return -1;
-        if (b.status === "permanent" && a.status !== "permanent") return 1;
-        // Then by utility tier (lower = higher priority)
-        const tierDiff = utilityTier(a) - utilityTier(b);
-        if (tierDiff !== 0) return tierDiff;
-        // Then by seen count descending (more frequently seen = higher priority)
-        const seenDiff = b.seenCount - a.seenCount;
-        if (seenDiff !== 0) return seenDiff;
-        // Prefer shorter memories so more fit in budget
-        const lenDiff = a.content.length - b.content.length;
-        if (lenDiff !== 0) return lenDiff;
-        // Deterministic tiebreaker by id to ensure stable ordering for cache safety
-        return a.id - b.id;
-    });
-
-    const result: Memory[] = [];
-
-    for (const memory of sorted) {
-        // Render the candidate block so legacy callers measure the same grouped
-        // bytes they inject, including a category's tags only when it survives.
-        const candidate = [...result, memory];
-        if (estimateTokens(renderMemoryBlockV2(candidate)) > budgetTokens) {
-            break;
-        }
-        result.push(memory);
-    }
-
-    if (result.length < memories.length) {
-        sessionLog(
-            sessionId,
-            `trimmed memories from ${memories.length} to ${result.length} to fit injection budget of ${budgetTokens} tokens`,
-        );
-    }
-
-    return result;
-}
-
 export function prepareCompartmentInjection(
     db: Database,
     sessionId: string,
     messages: MessageLike[],
     isCacheBusting: boolean,
-    projectPath?: string,
-    injectionBudgetTokens?: number,
+    _projectPath?: string,
+    _injectionBudgetTokens?: number,
     temporalAwareness?: boolean,
 ): PreparedCompartmentInjection | null {
     // On defer (cache-safe) passes, replay the cached injection result so that
@@ -366,59 +223,8 @@ export function prepareCompartmentInjection(
     // side); legacy pre-v2 rows are left un-rendered until /ctx-session-upgrade.
     const facts: SessionFact[] = [];
 
-    let memoryBlock: string | undefined;
-    let memoryCount = 0;
-    if (projectPath) {
-        // Use cached memory block to avoid cache busting on background changes (ctx_memory write, promotion).
-        // Cache is cleared by replaceSessionFacts/replaceAllCompartmentState after historian/compressor/recomp.
-        // Audit note: `as` cast is safe here — session_meta schema is owned by this plugin and the two
-        // columns are guaranteed present after initializeDatabase(). A type guard would add overhead on a
-        // hot path (every transform) for a table we fully control.
-        const cachedMemory = db
-            .prepare(
-                "SELECT memory_block_cache, memory_block_count FROM session_meta WHERE session_id = ?",
-            )
-            .get(sessionId) as { memory_block_cache: string; memory_block_count: number } | null;
-
-        if (cachedMemory?.memory_block_cache) {
-            memoryBlock = cachedMemory.memory_block_cache;
-            memoryCount = cachedMemory.memory_block_count;
-        } else {
-            let memories = getMemoriesByProject(db, projectPath, ["active", "permanent"]);
-            if (injectionBudgetTokens && memories.length > 0) {
-                memories = trimMemoriesToBudget(sessionId, memories, injectionBudgetTokens);
-            }
-            memoryCount = memories.length;
-            memoryBlock = renderMemoryBlock(memories) ?? undefined;
-            // Capture ids of memories actually rendered in the block. Stored in
-            // session_meta.memory_block_ids as JSON so ctx_search can hard-filter
-            // them out of search results (the agent already sees them in <session-history>).
-            const renderedIds = memories.map((m) => m.id);
-
-            // Snapshot so subsequent turns reuse the same block without cache bust.
-            // Swallow SQLITE_BUSY: the cache is a pure optimization (the block itself
-            // is already computed and returned below). If another writer holds the DB
-            // past busy_timeout=5s — typically a concurrent dreamer/historian child
-            // session or a second OpenCode process — we'd rather let the transform
-            // proceed with a one-turn cache miss than crash the user's prompt.
-            // Issue: https://github.com/cortexkit/magic-context/issues/23
-            try {
-                db.prepare(
-                    "UPDATE session_meta SET memory_block_cache = ?, memory_block_count = ?, memory_block_ids = ? WHERE session_id = ?",
-                ).run(memoryBlock ?? "", memoryCount, JSON.stringify(renderedIds), sessionId);
-            } catch (error) {
-                const code = (error as { code?: string } | null)?.code;
-                if (code === "SQLITE_BUSY") {
-                    sessionLog(
-                        sessionId,
-                        "memory_block_cache UPDATE hit SQLITE_BUSY, skipping snapshot for this turn",
-                    );
-                } else {
-                    throw error;
-                }
-            }
-        }
-    }
+    const memoryBlock = undefined;
+    const memoryCount = 0;
 
     // Nothing to inject if we have no compartments, no facts, and no memories
     if (compartments.length === 0 && facts.length === 0 && !memoryBlock) {
@@ -882,7 +688,6 @@ const DEFAULT_HISTORY_BUDGET_TOKENS = 60_000;
 export const DEFAULT_MEMORY_BUDGET_TOKENS = 8_000;
 
 export const DEFAULT_USER_PROFILE_BUDGET_TOKENS = 4_000;
-const MAX_FORCED_MEMORIES_PER_DELTA = 10;
 const M0_EMPTY_BODY = "<session-history></session-history>";
 const M1_EMPTY_PLACEHOLDER =
     "<session-history-since>(no new content since last materialization)</session-history-since>";
@@ -915,101 +720,22 @@ function resolveWorkspaceRenderContext(args: {
     projectPath?: string;
     workspaceIdentitySet?: WorkspaceIdentitySet;
 }): WorkspaceRenderContext {
-    if (!args.projectPath) {
-        return {
-            identities: [],
-            expandedIdentities: [],
-            ownIdentities: [],
-            shareCategories: null,
-            namesByIdentity: new Map(),
-            canonicalIdentityByStoredPath: new Map(),
-            isWorkspaced: false,
-        };
-    }
-    const identitySet =
-        args.workspaceIdentitySet ?? resolveWorkspaceIdentitySet(args.db, args.projectPath);
-    const isWorkspaced = identitySet.identities.length > 1;
-    const expanded = expandWorkspaceIdentitySetWithAliases(args.db, identitySet.identities);
-    const expandedIdentities = isWorkspaced ? expanded.expandedIdentities : identitySet.identities;
-    const canonicalIdentityByStoredPath = isWorkspaced
-        ? expanded.canonicalIdentityByStoredPath
-        : new Map(identitySet.identities.map((identity) => [identity, identity]));
-    let ownIdentities = expandedIdentities.filter(
-        (identity) => canonicalIdentityByStoredPath.get(identity) === args.projectPath,
-    );
-    if (ownIdentities.length === 0 && expandedIdentities.includes(args.projectPath)) {
-        ownIdentities = [args.projectPath];
-    }
+    void args.db;
+    void args.projectPath;
+    void args.workspaceIdentitySet;
     return {
-        identities: identitySet.identities,
-        expandedIdentities,
-        ownIdentities,
-        shareCategories: isWorkspaced
-            ? resolveWorkspaceShareCategories(args.db, args.projectPath)
-            : null,
-        namesByIdentity: identitySet.namesByIdentity,
-        canonicalIdentityByStoredPath,
-        isWorkspaced,
+        identities: [],
+        expandedIdentities: [],
+        ownIdentities: [],
+        shareCategories: null,
+        namesByIdentity: new Map(),
+        canonicalIdentityByStoredPath: new Map(),
+        isWorkspaced: false,
     };
 }
 
-function sourceNamesForMemories(args: {
-    memories: readonly Memory[];
-    projectPath?: string;
-    workspace: WorkspaceRenderContext;
-}): Map<number, string> | undefined {
-    if (!args.projectPath || !args.workspace.isWorkspaced) return undefined;
-    const names = new Map<number, string>();
-    for (const memory of args.memories) {
-        const source = sourceNameForMemory(
-            memory.projectPath,
-            args.projectPath,
-            args.workspace.identities,
-            args.workspace.namesByIdentity,
-            args.workspace.canonicalIdentityByStoredPath,
-        );
-        if (source) names.set(memory.id, source);
-    }
-    return names.size > 0 ? names : undefined;
-}
-
-function memoryCanonicalIdentity(memory: Memory, workspace: WorkspaceRenderContext): string | null {
-    return resolveStoredPathWorkspaceIdentity(
-        memory.projectPath,
-        workspace.identities,
-        workspace.canonicalIdentityByStoredPath,
-    );
-}
-
-function memorySelectionOrder(left: Memory, right: Memory): number {
-    if (left.status === "permanent" && right.status !== "permanent") return -1;
-    if (right.status === "permanent" && left.status !== "permanent") return 1;
-    const leftImportance = left.importance ?? Number.NEGATIVE_INFINITY;
-    const rightImportance = right.importance ?? Number.NEGATIVE_INFINITY;
-    const importanceDiff = rightImportance - leftImportance;
-    if (importanceDiff !== 0) return importanceDiff;
-    return left.id - right.id;
-}
-
-function memoryRenderOrder(left: Memory, right: Memory): number {
-    const leftPriority = V2_MEMORY_CATEGORIES.indexOf(
-        left.category as (typeof V2_MEMORY_CATEGORIES)[number],
-    );
-    const rightPriority = V2_MEMORY_CATEGORIES.indexOf(
-        right.category as (typeof V2_MEMORY_CATEGORIES)[number],
-    );
-    if (leftPriority >= 0 || rightPriority >= 0) {
-        if (leftPriority < 0) return 1;
-        if (rightPriority < 0) return -1;
-        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
-    } else if (left.category !== right.category) {
-        return left.category < right.category ? -1 : 1;
-    }
-    return left.id - right.id;
-}
-
 const maxCompartmentSeqStatements = new WeakMap<Database, PreparedStatement>();
-const maxMemoryIdStatements = new WeakMap<Database, PreparedStatement>();
+const _maxMemoryIdStatements = new WeakMap<Database, PreparedStatement>();
 const legacyCompartmentCountStatements = new WeakMap<Database, PreparedStatement>();
 const markerChangeProbeStatements = new WeakMap<Database, PreparedStatement>();
 const markerReadCaches = new WeakMap<Database, BoundedSessionMap<MarkerReadCacheEntry>>();
@@ -1049,22 +775,104 @@ function getMaxCompartmentSeq(db: Database, sessionId: string): number {
     return numberFromRow(row, "s");
 }
 
-function getMaxMemoryId(
+function readM0Compartments(db: Database, sessionId: string): M0Compartment[] {
+    const rows = cachedStatement(
+        m0CompartmentStatements,
+        db,
+        `SELECT id, session_id, sequence, start_message, end_message, start_message_id,
+                end_message_id, title, content, p1, p2, p3, p4, episode_type,
+                created_at, importance, legacy
+           FROM compartments
+          WHERE session_id = ?
+          ORDER BY sequence ASC`,
+    ).all(sessionId) as Array<Record<string, unknown>>;
+
+    return rows.map(rowToM0Compartment);
+}
+
+function nullableString(value: unknown): string | null {
+    return typeof value === "string" ? value : null;
+}
+
+/**
+ * Resolve every boundary in one OpenCode DB query for a fresh m[0] or m[1] render.
+ * Callers invoke this only on existing materialize/refresh paths; defer passes replay
+ * persisted bytes without consulting live timestamps.
+ */
+function withCompartmentDates(
+    sessionId: string,
+    compartments: M0Compartment[],
+    temporalAwareness: boolean | undefined,
+): M0Compartment[] {
+    if (!temporalAwareness || compartments.length === 0) return compartments;
+
+    const messageIds = new Set<string>();
+    for (const compartment of compartments) {
+        if (compartment.startMessageId) messageIds.add(compartment.startMessageId);
+        if (compartment.endMessageId) messageIds.add(compartment.endMessageId);
+    }
+    const times = getMessageTimesFromOpenCodeDb(sessionId, Array.from(messageIds));
+    return compartments.map((compartment) => {
+        const startMs = times.get(compartment.startMessageId);
+        const endMs = times.get(compartment.endMessageId);
+        if (startMs === undefined || endMs === undefined) return compartment;
+        return {
+            ...compartment,
+            startDate: formatDate(startMs),
+            endDate: formatDate(endMs),
+        };
+    });
+}
+
+function rowToM0Compartment(row: Record<string, unknown>): M0Compartment {
+    return {
+        id: Number(row.id ?? 0),
+        sessionId: String(row.session_id ?? ""),
+        sequence: Number(row.sequence ?? 0),
+        startMessage: Number(row.start_message ?? 0),
+        endMessage: Number(row.end_message ?? 0),
+        startMessageId: String(row.start_message_id ?? ""),
+        endMessageId: String(row.end_message_id ?? ""),
+        title: String(row.title ?? ""),
+        content: String(row.content ?? ""),
+        p1: nullableString(row.p1),
+        p2: nullableString(row.p2),
+        p3: nullableString(row.p3),
+        p4: nullableString(row.p4),
+        importance: Number(row.importance ?? 50),
+        episodeType: nullableString(row.episode_type),
+        legacy: Number(row.legacy ?? 0),
+        createdAt: Number(row.created_at ?? 0),
+    };
+}
+
+function readNewCompartments(
+    db: Database,
+    sessionId: string,
+    afterSequence: number,
+): M0Compartment[] {
+    const rows = cachedStatement(
+        newCompartmentStatements,
+        db,
+        `SELECT id, session_id, sequence, start_message, end_message, start_message_id,
+                end_message_id, title, content, p1, p2, p3, p4, episode_type,
+                created_at, importance, legacy
+           FROM compartments
+          WHERE session_id = ? AND sequence > ?
+          ORDER BY sequence ASC`,
+    ).all(sessionId, afterSequence) as Array<Record<string, unknown>>;
+    return rows.map(rowToM0Compartment);
+}
+
+function _getMaxMemoryId(
     db: Database,
     projectPath: string | undefined,
     expiryCutoff: number = Date.now(),
 ): number {
-    if (!projectPath) return 0;
-    const row = cachedStatement(
-        maxMemoryIdStatements,
-        db,
-        `SELECT COALESCE(MAX(id), 0) AS max_id
-           FROM memories
-          WHERE project_path = ?
-            AND status IN ('active', 'permanent')
-            AND (expires_at IS NULL OR expires_at > ?)`,
-    ).get(projectPath, expiryCutoff);
-    return numberFromRow(row, "max_id");
+    void db;
+    void projectPath;
+    void expiryCutoff;
+    return 0;
 }
 
 // v2: session_facts is retired as a render source (facts = promoted memories).
@@ -1088,12 +896,14 @@ function getUpgradeState(db: Database, sessionId: string): string | null {
 }
 
 function getProjectMemoryEpoch(db: Database, projectPath: string | undefined): number {
-    if (!projectPath) return 0;
-    return getProjectState(db, projectPath)?.projectMemoryEpoch ?? 0;
+    void db;
+    void projectPath;
+    return 0;
 }
 
 function getGlobalUserProfileVersion(db: Database): number {
-    return getProjectState(db, GLOBAL_USER_PROFILE_PROJECT_PATH)?.projectUserProfileVersion ?? 0;
+    void db;
+    return 0;
 }
 
 interface M0SnapshotMarkerReadArgs {
@@ -1140,79 +950,23 @@ interface MarkerChangeProbeRow {
 }
 
 const MARKER_CHANGE_PROBE_SQL = `
-    WITH
-      expanded(project_path) AS (SELECT CAST(value AS TEXT) FROM json_each(?)),
-      own(project_path) AS (SELECT CAST(value AS TEXT) FROM json_each(?)),
-      shared(category) AS (SELECT CAST(value AS TEXT) FROM json_each(?)),
-      canonical(project_path) AS (SELECT CAST(value AS TEXT) FROM json_each(?))
     SELECT
-      COALESCE((
-        SELECT project_memory_epoch FROM project_state WHERE project_path = ?
-      ), 0) AS project_memory_epoch,
-      COALESCE((
-        SELECT project_user_profile_version FROM project_state WHERE project_path = ?
-      ), 0) AS project_user_profile_version,
+      0 AS project_memory_epoch,
+      0 AS project_user_profile_version,
       COALESCE((
         SELECT MAX(sequence) FROM compartments WHERE session_id = ?
       ), -1) AS max_compartment_seq,
       (
         SELECT COUNT(*) FROM compartments WHERE session_id = ? AND legacy = 1
       ) AS legacy_compartment_count,
-      COALESCE((
-        SELECT MAX(memory.id)
-          FROM memories AS memory
-         WHERE memory.project_path IN (SELECT project_path FROM expanded)
-           AND memory.status IN ('active', 'permanent')
-           AND (memory.expires_at IS NULL OR memory.expires_at > ?)
-           AND (
-             memory.project_path IN (SELECT project_path FROM own)
-             OR (
-               memory.shareable = 1
-               AND memory.scope IN ('project', 'ecosystem', 'universe')
-               AND memory.category IN (SELECT category FROM shared)
-             )
-           )
-      ), 0) AS max_memory_id,
+      0 AS max_memory_id,
       COALESCE((
         SELECT MAX(id) FROM m0_mutation_log WHERE session_id = ?
       ), 0) AS max_mutation_id,
-      COALESCE((
-        SELECT MAX(id)
-          FROM memory_mutation_log
-         WHERE project_path IN (SELECT project_path FROM expanded)
-      ), 0) AS max_memory_mutation_id,
-      COALESCE((
-        SELECT GROUP_CONCAT(signature, char(30))
-          FROM (
-            SELECT member.workspace_id || char(31) || member.project_path || char(31) ||
-                   member.display_name || char(31) || member.display_path || char(31) ||
-                   workspace.share_categories AS signature
-              FROM workspace_members AS anchor
-              JOIN workspace_members AS member ON member.workspace_id = anchor.workspace_id
-              JOIN workspaces AS workspace ON workspace.id = member.workspace_id
-             WHERE anchor.project_path = ?
-             ORDER BY member.workspace_id, member.project_path
-          )
-      ), '') AS workspace_signature,
-      COALESCE((
-        SELECT GROUP_CONCAT(signature, char(30))
-          FROM (
-            SELECT canonical.project_path || char(31) ||
-                   COALESCE(state.project_memory_epoch, 0) AS signature
-              FROM canonical
-              LEFT JOIN project_state AS state ON state.project_path = canonical.project_path
-             ORDER BY canonical.project_path
-          )
-      ), '') AS workspace_epoch_signature,
-      COALESCE((
-        SELECT GROUP_CONCAT(signature, char(30))
-          FROM (
-            SELECT alias.old_project_path || char(31) || alias.new_project_path AS signature
-              FROM v22_identity_rekey_map AS alias
-             WHERE alias.new_project_path IN (SELECT project_path FROM canonical)
-             ORDER BY alias.old_project_path, alias.new_project_path
-          )
-      ), '') AS alias_signature`;
+      0 AS max_memory_mutation_id,
+      '' AS workspace_signature,
+      '' AS workspace_epoch_signature,
+      '' AS alias_signature`;
 
 function workspaceIdentity(workspace: WorkspaceRenderContext): string {
     return JSON.stringify({
@@ -1247,7 +1001,7 @@ function getMarkerReadCache(db: Database): BoundedSessionMap<MarkerReadCacheEntr
 
 function readMarkerChangeProbe(
     args: M0SnapshotMarkerReadArgs,
-    workspace: WorkspaceRenderContext,
+    _workspace: WorkspaceRenderContext,
 ): MarkerChangeProbe {
     const statement = cachedStatement(
         markerChangeProbeStatements,
@@ -1255,17 +1009,9 @@ function readMarkerChangeProbe(
         MARKER_CHANGE_PROBE_SQL,
     );
     const row = statement.get(
-        JSON.stringify(workspace.expandedIdentities),
-        JSON.stringify(workspace.ownIdentities),
-        JSON.stringify(workspace.shareCategories ?? []),
-        JSON.stringify(workspace.identities),
-        args.projectPath ?? "",
-        GLOBAL_USER_PROFILE_PROJECT_PATH,
         args.sessionId,
         args.sessionId,
-        Date.now(),
         args.sessionId,
-        args.projectPath ?? "",
     ) as MarkerChangeProbeRow;
     return {
         projectMemoryEpoch: row.project_memory_epoch,
@@ -1305,33 +1051,19 @@ function readCurrentM0SnapshotMarkersUncached(args: M0SnapshotMarkerReadArgs): {
     const materializedAt = Date.now();
     const workspace = resolveWorkspaceRenderContext({
         db: args.db,
-        projectPath: args.projectPath,
-        workspaceIdentitySet: args.workspaceIdentitySet,
+        projectPath: undefined,
+        workspaceIdentitySet: undefined,
     });
     return {
         workspace,
         markers: {
             projectMemoryEpoch: getProjectMemoryEpoch(args.db, args.projectPath),
-            workspaceFingerprint: workspace.isWorkspaced
-                ? computeWorkspaceEpochFingerprint(args.db, workspace.identities)
-                : null,
+            workspaceFingerprint: null,
             projectUserProfileVersion: getGlobalUserProfileVersion(args.db),
             maxCompartmentSeq: getMaxCompartmentSeq(args.db, args.sessionId),
-            maxMemoryId: workspace.isWorkspaced
-                ? getMaxMemoryIdForProjects(
-                      args.db,
-                      workspace.expandedIdentities,
-                      workspace.ownIdentities,
-                      workspace.shareCategories,
-                      materializedAt,
-                  )
-                : getMaxMemoryId(args.db, args.projectPath, materializedAt),
+            maxMemoryId: 0,
             maxMutationId: getMaxM0MutationId(args.db, args.sessionId) ?? 0,
-            maxMemoryMutationId: workspace.isWorkspaced
-                ? (getMaxMemoryMutationIdForProjects(args.db, workspace.expandedIdentities) ?? 0)
-                : args.projectPath
-                  ? (getMaxMemoryMutationId(args.db, args.projectPath) ?? 0)
-                  : 0,
+            maxMemoryMutationId: 0,
             projectDocsHash:
                 projectDirectory && args.injectDocs !== false
                     ? computeProjectDocsHash(projectDirectory)
@@ -1575,325 +1307,21 @@ export function mustMaterialize(args: {
     return { value: false, reason: null };
 }
 
-export interface TrimMemoriesResultV2 {
-    selected: Memory[];
-    renderOrder: Memory[];
-}
-
-export function trimMemoriesToBudgetV2(
-    sessionId: string,
-    memories: Memory[],
-    budgetTokens: number,
-    renderOptions: MemoryRenderOptions = {},
-): TrimMemoriesResultV2 {
-    const selectionOrder = [...memories].sort(memorySelectionOrder);
-    const selected: Memory[] = [];
-    const accounting = createMemoryBlockAccounting(renderOptions);
-
-    for (const memory of selectionOrder) {
-        const cost = accounting.candidateCost(memory);
-        if (accounting.usedTokens + cost > budgetTokens) continue;
-        accounting.admit(memory, cost);
-        selected.push(memory);
-    }
-
-    if (selected.length < memories.length) {
-        sessionLog(
-            sessionId,
-            `v2 trimmed memories from ${memories.length} to ${selected.length} to fit injection budget of ${budgetTokens} tokens`,
-        );
-    }
-
-    const renderOrder = [...selected].sort(memoryRenderOrder);
-
-    return { selected, renderOrder };
-}
-
-export function trimWorkspaceMemoriesToBudgetV2(
-    sessionId: string,
-    memories: Memory[],
-    budgetTokens: number,
-    workspace: WorkspaceRenderContext,
-    renderOptions: MemoryRenderOptions = {},
-): TrimMemoriesResultV2 {
-    if (!workspace.isWorkspaced) {
-        return trimMemoriesToBudgetV2(sessionId, memories, budgetTokens, renderOptions);
-    }
-
-    const selected: Memory[] = [];
-    const selectedIds = new Set<number>();
-    const accounting = createMemoryBlockAccounting(renderOptions);
-    const trySelect = (memory: Memory): boolean => {
-        if (selectedIds.has(memory.id)) return false;
-        const cost = accounting.candidateCost(memory);
-        if (accounting.usedTokens + cost > budgetTokens) return false;
-        selected.push(memory);
-        selectedIds.add(memory.id);
-        accounting.admit(memory, cost);
-        return true;
-    };
-
-    for (const memory of memories
-        .filter((candidate) => candidate.status === "permanent")
-        .sort(memorySelectionOrder)) {
-        trySelect(memory);
-    }
-
-    const remainingAfterPermanent = Math.max(0, budgetTokens - accounting.usedTokens);
-    const floorTokens = remainingAfterPermanent / Math.max(1, workspace.identities.length);
-    const byIdentity = new Map<string, Memory[]>();
-    for (const memory of memories) {
-        if (memory.status === "permanent") continue;
-        const identity = memoryCanonicalIdentity(memory, workspace);
-        if (!identity) continue;
-        const list = byIdentity.get(identity) ?? [];
-        list.push(memory);
-        byIdentity.set(identity, list);
-    }
-
-    for (const identity of workspace.identities) {
-        let memberTokens = 0;
-        const candidates = (byIdentity.get(identity) ?? []).sort(memorySelectionOrder);
-        for (const memory of candidates) {
-            if (selectedIds.has(memory.id)) continue;
-            const cost = accounting.candidateCost(memory);
-            if (memberTokens + cost > floorTokens) continue;
-            if (accounting.usedTokens + cost > budgetTokens) continue;
-            selected.push(memory);
-            selectedIds.add(memory.id);
-            accounting.admit(memory, cost);
-            memberTokens += cost;
-        }
-    }
-
-    const remaining = memories
-        .filter((memory) => !selectedIds.has(memory.id))
-        .sort(memorySelectionOrder);
-    for (const memory of remaining) {
-        trySelect(memory);
-    }
-
-    if (selected.length < memories.length) {
-        sessionLog(
-            sessionId,
-            `v2 trimmed memories from ${memories.length} to ${selected.length} to fit injection budget of ${budgetTokens} tokens`,
-        );
-    }
-
-    return { selected, renderOrder: [...selected].sort(memoryRenderOrder) };
-}
-
-function safeGetActiveUserMemories(db: Database): UserMemory[] {
-    try {
-        return getActiveUserMemories(db);
-    } catch (error) {
-        if (String(error).includes("no such table: user_memories")) return [];
-        throw error;
-    }
-}
-
-export function trimUserMemoriesToBudget(
-    memories: UserMemory[],
-    budgetTokens: number,
-): UserMemory[] {
-    const selected: UserMemory[] = [];
-    let usedTokens = 0;
-    for (const memory of memories) {
-        const tokens = estimateTokens(`- ${memory.content}`) + 4;
-        if (usedTokens + tokens > budgetTokens) continue;
-        selected.push(memory);
-        usedTokens += tokens;
-    }
-    return selected;
-}
-
-function readM0Compartments(db: Database, sessionId: string): M0Compartment[] {
-    const rows = cachedStatement(
-        m0CompartmentStatements,
-        db,
-        `SELECT id, session_id, sequence, start_message, end_message, start_message_id,
-                end_message_id, title, content, p1, p2, p3, p4, episode_type,
-                created_at, importance, legacy
-           FROM compartments
-          WHERE session_id = ?
-          ORDER BY sequence ASC`,
-    ).all(sessionId) as Array<Record<string, unknown>>;
-
-    return rows.map(rowToM0Compartment);
-}
-
-function nullableString(value: unknown): string | null {
-    return typeof value === "string" ? value : null;
-}
-
-/**
- * Resolve every boundary in one OpenCode DB query for a fresh m[0] or m[1] render.
- * Callers invoke this only on existing materialize/refresh paths; defer passes replay
- * persisted bytes without consulting live timestamps.
- */
-function withCompartmentDates(
-    sessionId: string,
-    compartments: M0Compartment[],
-    temporalAwareness: boolean | undefined,
-): M0Compartment[] {
-    if (!temporalAwareness || compartments.length === 0) return compartments;
-
-    const messageIds = new Set<string>();
-    for (const compartment of compartments) {
-        if (compartment.startMessageId) messageIds.add(compartment.startMessageId);
-        if (compartment.endMessageId) messageIds.add(compartment.endMessageId);
-    }
-    const times = getMessageTimesFromOpenCodeDb(sessionId, Array.from(messageIds));
-    return compartments.map((compartment) => {
-        const startMs = times.get(compartment.startMessageId);
-        const endMs = times.get(compartment.endMessageId);
-        if (startMs === undefined || endMs === undefined) return compartment;
-        return {
-            ...compartment,
-            startDate: formatDate(startMs),
-            endDate: formatDate(endMs),
-        };
-    });
-}
-
-function rowToM0Compartment(row: Record<string, unknown>): M0Compartment {
-    return {
-        id: Number(row.id ?? 0),
-        sessionId: String(row.session_id ?? ""),
-        sequence: Number(row.sequence ?? 0),
-        startMessage: Number(row.start_message ?? 0),
-        endMessage: Number(row.end_message ?? 0),
-        startMessageId: String(row.start_message_id ?? ""),
-        endMessageId: String(row.end_message_id ?? ""),
-        title: String(row.title ?? ""),
-        content: String(row.content ?? ""),
-        p1: nullableString(row.p1),
-        p2: nullableString(row.p2),
-        p3: nullableString(row.p3),
-        p4: nullableString(row.p4),
-        importance: Number(row.importance ?? 50),
-        episodeType: nullableString(row.episode_type),
-        legacy: Number(row.legacy ?? 0),
-        createdAt: Number(row.created_at ?? 0),
-    };
-}
-
-function readNewCompartments(
-    db: Database,
-    sessionId: string,
-    afterSequence: number,
-): M0Compartment[] {
-    const rows = cachedStatement(
-        newCompartmentStatements,
-        db,
-        `SELECT id, session_id, sequence, start_message, end_message, start_message_id,
-                end_message_id, title, content, p1, p2, p3, p4, episode_type,
-                created_at, importance, legacy
-           FROM compartments
-          WHERE session_id = ? AND sequence > ?
-          ORDER BY sequence ASC`,
-    ).all(sessionId, afterSequence) as Array<Record<string, unknown>>;
-    return rows.map(rowToM0Compartment);
-}
-
-/**
- * Incremental token accounting for the grouped memory block. Trimming probes
- * hundreds of candidates against the budget; re-rendering and re-tokenizing the
- * whole block per probe is O(n²) in tokenizer passes (~250ms at a 260-memory
- * pool — a hot-path stall on materialize and the sidebar RPC). Instead: measure
- * the wrapper once, each candidate line once, and each category's open/close
- * tags once when that category first appears. BPE merges across the newline
- * joins can only shrink the whole relative to the sum of its parts, so this
- * additive account is a slight UPPER bound on the rendered block — trims stay
- * conservative and the injected block can only land under the budget, never
- * over it.
- */
-function createMemoryBlockAccounting(renderOptions: MemoryRenderOptions) {
-    const seenCategories = new Set<string>();
-    const categoryCost = new Map<string, number>();
-    return {
-        usedTokens: estimateTokens("<project-memory>\n</project-memory>"),
-        candidateCost(memory: Memory): number {
-            const line = renderMemoryLineV2(
-                memory,
-                renderOptions.sourceNameByMemoryId?.get(memory.id),
-            );
-            let cost = estimateTokens(`${line}\n`);
-            if (!seenCategories.has(memory.category)) {
-                let tags = categoryCost.get(memory.category);
-                if (tags === undefined) {
-                    tags = estimateTokens(
-                        `<${escapeXmlAttr(memory.category)}>\n</${escapeXmlAttr(memory.category)}>\n`,
-                    );
-                    categoryCost.set(memory.category, tags);
-                }
-                cost += tags;
-            }
-            return cost;
-        },
-        admit(memory: Memory, cost: number): void {
-            this.usedTokens += cost;
-            seenCategories.add(memory.category);
-        },
-    };
-}
-
-/** Render one compact memory fact line. Importance still controls selection, but
- * is deliberately absent from the wire so classification-only updates do not change bytes. */
-export function renderMemoryLineV2(memory: Memory, sourceName?: string): string {
-    const source = sourceName ? ` [${escapeXmlContent(sourceName)}]` : "";
-    return `#${memory.id}${source}: ${escapeXmlContent(memory.content)}`;
-}
-
-export function renderMemoryBlockV2(
-    memories: Memory[],
-    wrapper = "project-memory",
-    renderOptions: MemoryRenderOptions = {},
-): string {
-    if (memories.length === 0) return "";
-    const ordered = [...memories].sort(memoryRenderOrder);
-    const lines = [`<${wrapper}>`];
-    let openCategory: string | undefined;
-    for (const memory of ordered) {
-        if (memory.category !== openCategory) {
-            if (openCategory !== undefined) lines.push(`</${escapeXmlAttr(openCategory)}>`);
-            openCategory = memory.category;
-            lines.push(`<${escapeXmlAttr(openCategory)}>`);
-        }
-        lines.push(renderMemoryLineV2(memory, renderOptions.sourceNameByMemoryId?.get(memory.id)));
-    }
-    if (openCategory !== undefined) lines.push(`</${escapeXmlAttr(openCategory)}>`);
-    lines.push(`</${wrapper}>`);
-    return lines.join("\n");
-}
-
-function renderUserProfileBlock(memories: UserMemory[], wrapper = "user-profile"): string {
-    if (memories.length === 0) return "";
-    const lines = [`<${wrapper}>`];
-    for (const memory of memories) {
-        lines.push(`- ${escapeXmlContent(memory.content)}`);
-    }
-    lines.push(`</${wrapper}>`);
-    return lines.join("\n");
-}
-
-/**
- * v2 decayed session-history rendering delegates entirely to the shared
- * `decay-render` module (which uses the validated `decay-curve` formula). This
- * keeps OpenCode and Pi byte-identical and ensures the council-validated decay
- * math is the single source of truth — no local approximation lives here.
- *
- * Facts are NOT a render input (v2 faithful: facts = promoted memories).
- */
-function renderSessionHistoryWithDecay(args: {
-    compartments: M0Compartment[];
-    historyBudgetTokens: number;
-}): string {
-    return renderDecayedCompartments({
-        compartments: args.compartments,
-        historyBudgetTokens: args.historyBudgetTokens,
-    });
-}
+// Mini: project-memory / user-profile / workspace / mural rendering is removed
+// from the live injection path. The legacy memory renderers live in
+// ./memory-render (imported only by production-dead modules and tests); we
+// re-export them here so those callers keep compiling.
+export {
+    createMemoryBlockAccounting,
+    memoryRenderOrder,
+    memorySelectionOrder,
+    renderMemoryBlockV2,
+    renderMemoryLineV2,
+    type TrimMemoriesResultV2,
+    trimMemoriesToBudgetV2,
+    trimUserMemoriesToBudget,
+    trimWorkspaceMemoriesToBudgetV2,
+} from "./memory-render";
 
 const MEMORY_MURAL_BLOCK =
     "<memory-mural>\nThe project memory mural image follows.\n</memory-mural>";
@@ -1907,6 +1335,28 @@ export function stripMemoryMuralBlock(m0Text: string): string {
         .trim();
 }
 
+/**
+ * v2 decayed session-history rendering delegates entirely to the shared
+ * `decay-render` module. Facts are NOT a render input (v2 faithful: facts =
+ * promoted memories).
+ */
+function renderSessionHistoryWithDecay(args: {
+    compartments: M0Compartment[];
+    historyBudgetTokens: number;
+}): string {
+    return renderDecayedCompartments({
+        compartments: args.compartments,
+        historyBudgetTokens: args.historyBudgetTokens,
+    });
+}
+
+/**
+ * Compartment-only m[0] render: project docs + decayed compartments. Mini
+ * removes the <user-profile>, <project-memory>, and <memory-mural> sibling
+ * blocks from m[0] (see project decision). The signature keeps the legacy
+ * memory/user-profile/mural params for test/typecheck compatibility but they
+ * are ignored.
+ */
 export function renderM0(args: {
     projectDocs: string;
     userProfileBaseline: UserMemory[];
@@ -1919,19 +1369,14 @@ export function renderM0(args: {
     userProfileBudgetTokens?: number;
     decayPressureMultiplier?: number;
 }): string {
+    void args.userProfileBaseline;
+    void args.memories;
+    void args.mural;
+    void args.memoryRenderOptions;
+    void args.userProfileBudgetTokens;
     const sections: string[] = [];
     if (args.projectDocs.length > 0) sections.push(args.projectDocs);
-    const userProfile = renderUserProfileBlock(
-        trimUserMemoriesToBudget(
-            args.userProfileBaseline,
-            args.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS,
-        ),
-    );
-    if (userProfile) sections.push(userProfile);
 
-    // The +15% drift "pressure multiplier" maps to a proportionally tighter
-    // effective budget (lower budget → higher curve pressure → more demotion),
-    // keeping decay-curve.ts the single source of pressure math.
     const baseBudget = args.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
     const effectiveBudget = baseBudget / Math.max(1, args.decayPressureMultiplier ?? 1);
     const sessionHistory = renderSessionHistoryWithDecay({
@@ -1944,15 +1389,6 @@ export function renderM0(args: {
             : M0_EMPTY_BODY,
     );
 
-    const memoriesBlock = renderMemoryBlockV2(
-        args.memories,
-        "project-memory",
-        args.memoryRenderOptions,
-    );
-    if (memoriesBlock) sections.push(memoriesBlock);
-    if (args.mural?.enabled && args.mural.supportsVision && args.mural.dataUrl) {
-        sections.push(MEMORY_MURAL_BLOCK);
-    }
     return sections.join("\n\n").trim();
 }
 
@@ -2013,28 +1449,18 @@ function historySliceTokens(m0Text: string): number {
  * deterministic mural on demand (cheap change-detection; PNG only on change).
  * Returns undefined when the feature is off so renderM0 skips the block cleanly.
  */
-function resolveMuralForM0(
-    options: M0M1RenderOptions,
-    projectPath: string | undefined,
-    modelKey: string,
-    budgetTokens: number,
-): MuralWireOptions | undefined {
-    if (!options.muralEnabled) return undefined;
-    return resolveMuralWire(options.db, projectPath, modelKey, true, budgetTokens);
-}
-
 export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
     const projectPath = options.projectPath;
     const projectDirectory = options.projectDirectory ?? projectPath ?? "";
     let snapshotMarkers: M0SnapshotMarkers;
     let compartments: M0Compartment[] = [];
     let facts: SessionFact[] = [];
-    let memories: Memory[] = [];
-    let userMemories: UserMemory[] = [];
-    let workspace = resolveWorkspaceRenderContext({
+    const _memories: Memory[] = [];
+    const userMemories: UserMemory[] = [];
+    const workspace = resolveWorkspaceRenderContext({
         db: options.db,
-        projectPath,
-        workspaceIdentitySet: options.workspaceIdentitySet,
+        projectPath: undefined,
+        workspaceIdentitySet: undefined,
     });
     let docs: { renderedBlock: string; canonicalHash: string } = {
         renderedBlock: "",
@@ -2048,11 +1474,6 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
 
     options.db.exec("BEGIN");
     try {
-        workspace = resolveWorkspaceRenderContext({
-            db: options.db,
-            projectPath,
-            workspaceIdentitySet: options.workspaceIdentitySet,
-        });
         snapshotMarkers = readCurrentM0SnapshotMarkers({
             db: options.db,
             sessionId: options.sessionId,
@@ -2060,10 +1481,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             projectDirectory,
             injectDocs: options.injectDocs,
             hardSignals: options.hardSignals,
-            workspaceIdentitySet: {
-                identities: workspace.identities,
-                namesByIdentity: workspace.namesByIdentity,
-            },
+            workspaceIdentitySet: undefined,
         });
         docs = readProjectDocsForM0(projectDirectory, options.injectDocs);
         snapshotMarkers.projectDocsHash = docs.canonicalHash;
@@ -2073,24 +1491,6 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
         // empty so renderSessionHistoryWithDecay never emits a <session_facts>
         // block and no stale pre-v2 rows leak into m[0].
         facts = [];
-        memories = projectPath
-            ? workspace.isWorkspaced
-                ? getMemoriesByProjects(
-                      options.db,
-                      workspace.expandedIdentities,
-                      ["active", "permanent"],
-                      foldMaterializedAt,
-                      workspace.ownIdentities,
-                      workspace.shareCategories,
-                  )
-                : getMemoriesByProject(
-                      options.db,
-                      projectPath,
-                      ["active", "permanent"],
-                      foldMaterializedAt,
-                  )
-            : [];
-        userMemories = safeGetActiveUserMemories(options.db);
         options.db.exec("COMMIT");
     } catch (error) {
         try {
@@ -2103,42 +1503,16 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
 
     compartments = withCompartmentDates(options.sessionId, compartments, options.temporalAwareness);
 
-    const memoryBudget = options.memoryInjectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
-    const memoryRenderOptions: MemoryRenderOptions = {
-        sourceNameByMemoryId: sourceNamesForMemories({
-            memories,
-            projectPath,
-            workspace,
-        }),
-    };
-    const trimmed = workspace.isWorkspaced
-        ? trimWorkspaceMemoriesToBudgetV2(
-              options.sessionId,
-              memories,
-              memoryBudget,
-              workspace,
-              memoryRenderOptions,
-          )
-        : trimMemoriesToBudgetV2(options.sessionId, memories, memoryBudget);
-    // On-demand mural: an explicit test-supplied `mural` wins; otherwise resolve
-    // it from the feature flag + this fold's model key. Runs INSIDE the HARD fold
-    // (not on defers), so the injected image only swaps on a natural fold — the
-    // baked-in cachedM0MuralDataUrl replays on defer passes.
-    const mural =
-        options.mural ??
-        resolveMuralForM0(options, projectPath, snapshotMarkers.modelKey, memoryBudget);
     let decayPressureMultiplier = 1;
     let m0Text = renderM0({
         projectDocs: docs.renderedBlock,
         userProfileBaseline: userMemories,
         compartments,
-        memories: trimmed.renderOrder,
+        memories: [],
         facts,
-        memoryRenderOptions,
         historyBudgetTokens: options.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS,
         userProfileBudgetTokens: options.userProfileBudgetTokens,
         decayPressureMultiplier,
-        mural,
     });
 
     let attempts = 0;
@@ -2149,26 +1523,22 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             projectDocs: docs.renderedBlock,
             userProfileBaseline: userMemories,
             compartments,
-            memories: trimmed.renderOrder,
+            memories: [],
             facts,
-            memoryRenderOptions,
             historyBudgetTokens: budget,
             userProfileBudgetTokens: options.userProfileBudgetTokens,
             decayPressureMultiplier,
-            mural,
         });
         attempts += 1;
     }
 
     if (m0Text.length === 0) m0Text = M0_EMPTY_BODY;
     const m0Bytes = Buffer.from(m0Text, "utf8");
-    const frozenMuralDataUrl =
-        mural?.enabled && mural.supportsVision ? (mural.dataUrl ?? null) : null;
-    const frozenMuralHash =
-        mural?.enabled && mural.supportsVision ? (mural.contentHash ?? null) : null;
+    const frozenMuralDataUrl = null;
+    const frozenMuralHash = null;
     snapshotMarkers.muralHash = frozenMuralHash;
     snapshotMarkers.materializedAt = foldMaterializedAt;
-    const renderedMemoryIds = trimmed.renderOrder.map((m) => m.id);
+    const renderedMemoryIds: number[] = [];
     const phase3ProjectDocsHash = readProjectDocsForM0(
         projectDirectory,
         options.injectDocs,
@@ -2180,36 +1550,14 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
     let m1Bytes = Buffer.from(m1Text, "utf8");
     options.db.exec("BEGIN IMMEDIATE");
     try {
-        const currentWorkspace = resolveWorkspaceRenderContext({
-            db: options.db,
-            projectPath,
-            workspaceIdentitySet: options.workspaceIdentitySet,
-        });
         const current: M0SnapshotMarkers = {
-            projectMemoryEpoch: getProjectMemoryEpoch(options.db, projectPath),
-            workspaceFingerprint: currentWorkspace.isWorkspaced
-                ? computeWorkspaceEpochFingerprint(options.db, currentWorkspace.identities)
-                : null,
-            projectUserProfileVersion: getGlobalUserProfileVersion(options.db),
+            projectMemoryEpoch: 0,
+            workspaceFingerprint: null,
+            projectUserProfileVersion: 0,
             maxCompartmentSeq: getMaxCompartmentSeq(options.db, options.sessionId),
-            maxMemoryId: currentWorkspace.isWorkspaced
-                ? getMaxMemoryIdForProjects(
-                      options.db,
-                      currentWorkspace.expandedIdentities,
-                      currentWorkspace.ownIdentities,
-                      currentWorkspace.shareCategories,
-                      foldMaterializedAt,
-                  )
-                : getMaxMemoryId(options.db, projectPath, foldMaterializedAt),
+            maxMemoryId: 0,
             maxMutationId: getMaxM0MutationId(options.db, options.sessionId) ?? 0,
-            maxMemoryMutationId: currentWorkspace.isWorkspaced
-                ? (getMaxMemoryMutationIdForProjects(
-                      options.db,
-                      currentWorkspace.expandedIdentities,
-                  ) ?? 0)
-                : projectPath
-                  ? (getMaxMemoryMutationId(options.db, projectPath) ?? 0)
-                  : 0,
+            maxMemoryMutationId: 0,
             projectDocsHash: phase3ProjectDocsHash,
             materializedAt: foldMaterializedAt,
             sessionFactsVersion: getSessionFactsVersion(options.db, options.sessionId),
@@ -2227,16 +1575,9 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
         // m[0]; they surface in m[1] via the maxMemoryId watermark. The memory
         // mutation cursor IS included here because a materialization pass must
         // reconcile every non-additive memory change up to its persisted cursor.
-        const memoryEpochStale =
-            current.workspaceFingerprint !== null || snapshotMarkers.workspaceFingerprint !== null
-                ? current.workspaceFingerprint !== snapshotMarkers.workspaceFingerprint
-                : current.projectMemoryEpoch !== snapshotMarkers.projectMemoryEpoch;
         const stale =
-            memoryEpochStale ||
-            current.projectUserProfileVersion !== snapshotMarkers.projectUserProfileVersion ||
             current.maxCompartmentSeq !== snapshotMarkers.maxCompartmentSeq ||
             current.maxMutationId !== snapshotMarkers.maxMutationId ||
-            current.maxMemoryMutationId !== snapshotMarkers.maxMemoryMutationId ||
             current.sessionFactsVersion !== snapshotMarkers.sessionFactsVersion ||
             current.upgradeState !== snapshotMarkers.upgradeState ||
             (current.projectIdentity ?? null) !== (snapshotMarkers.projectIdentity ?? null);
@@ -2258,9 +1599,6 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
         );
         m1Text = m1Render.text;
         m1Bytes = Buffer.from(m1Text, "utf8");
-        const visibleMemoryIds = [
-            ...new Set([...renderedMemoryIds, ...m1Render.renderedMemoryIds]),
-        ];
 
         persistCachedM0(options.db, options.sessionId, {
             m0Bytes,
@@ -2285,21 +1623,6 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             modelKey: snapshotMarkers.modelKey,
             projectIdentity: snapshotMarkers.projectIdentity,
         });
-
-        // v2 path persists the rendered-memory identity itself. `memory_block_ids`
-        // / `memory_block_count` are otherwise written ONLY by the dead legacy v1
-        // render path, so without this they stay frozen at whatever the last legacy
-        // render wrote — wrong sidebar "Injected" count AND a stale ctx_search
-        // hide-already-visible filter after any memory change (e.g. the migration
-        // delete+reinserts memories with NEW ids; the old ids linger here).
-        // dogfood 2026-05-30: AFT showed "Injected 256" against 124 live memories,
-        // all 256 ids deleted. Same transaction as the m[0] snapshot so the cached
-        // bytes and their id manifest never diverge.
-        options.db
-            .prepare(
-                "UPDATE session_meta SET memory_block_count = ?, memory_block_ids = ? WHERE session_id = ?",
-            )
-            .run(visibleMemoryIds.length, JSON.stringify(visibleMemoryIds), options.sessionId);
 
         // Persist the boundary the freshly-rendered m[0]+m[1] cover (the latest
         // compartment's end message id). A cold post-restart pass reads this to
@@ -2348,86 +1671,6 @@ export function materializeWithRetry(
     });
 }
 
-function renderMemoryUpdatesBlock(args: {
-    db: Database;
-    projectPath?: string;
-    workspace: WorkspaceRenderContext;
-    afterId: number;
-    renderedMemoryIds: readonly number[];
-    eligibleMemoryIds: ReadonlySet<number>;
-}): { block: string; count: number; forcedMemoryIds: number[] } {
-    if (!args.projectPath) {
-        return { block: "", count: 0, forcedMemoryIds: [] };
-    }
-
-    const baselineIds = new Set(args.renderedMemoryIds);
-    const mutations = args.workspace.isWorkspaced
-        ? getMemoryMutationsForRenderByProjects(
-              args.db,
-              args.workspace.expandedIdentities,
-              args.afterId,
-              args.renderedMemoryIds,
-          )
-        : getMemoryMutationsForRender(
-              args.db,
-              args.projectPath,
-              args.afterId,
-              args.renderedMemoryIds,
-          );
-    if (mutations.length === 0) return { block: "", count: 0, forcedMemoryIds: [] };
-
-    const forcedIds = new Set<number>();
-    const lines = ["These memories changed since the snapshot below — trust these:"];
-    for (const mutation of mutations) {
-        if (mutation.mutationType === "superseded") {
-            const replacementId = mutation.supersededById;
-            if (
-                replacementId !== null &&
-                !baselineIds.has(replacementId) &&
-                args.eligibleMemoryIds.has(replacementId)
-            ) {
-                forcedIds.add(replacementId);
-            }
-            if (!baselineIds.has(mutation.targetMemoryId)) continue;
-            if (replacementId !== null && args.eligibleMemoryIds.has(replacementId)) {
-                lines.push(`  <superseded id="${mutation.targetMemoryId}" by="${replacementId}"/>`);
-            } else {
-                lines.push(`  <removed id="${mutation.targetMemoryId}"/>`);
-            }
-            continue;
-        }
-
-        if (!baselineIds.has(mutation.targetMemoryId)) {
-            if (mutation.visibilityChanged && args.eligibleMemoryIds.has(mutation.targetMemoryId)) {
-                forcedIds.add(mutation.targetMemoryId);
-            }
-            continue;
-        }
-        if (!args.eligibleMemoryIds.has(mutation.targetMemoryId)) {
-            lines.push(`  <removed id="${mutation.targetMemoryId}"/>`);
-            continue;
-        }
-        if (mutation.visibilityChanged && mutation.newContent === null) continue;
-        if (mutation.mutationType === "update") {
-            lines.push(
-                `  <updated id="${mutation.targetMemoryId}">${escapeXmlContent(mutation.newContent ?? "")}</updated>`,
-            );
-            continue;
-        }
-        lines.push(`  <removed id="${mutation.targetMemoryId}"/>`);
-    }
-
-    const forcedMemoryIds = [...forcedIds]
-        .sort((left, right) => left - right)
-        .slice(0, MAX_FORCED_MEMORIES_PER_DELTA);
-    if (lines.length === 1) return { block: "", count: 0, forcedMemoryIds };
-    return {
-        block: `<memory-updates>\n${lines.join("\n")}\n</memory-updates>`,
-        count: lines.length - 1,
-        forcedMemoryIds,
-    };
-}
-
 interface RenderM1Result {
     text: string;
     memoryUpdateCount: number;
@@ -2437,46 +1680,13 @@ interface RenderM1Result {
 function renderM1WithMetadata(
     options: M0M1RenderOptions,
     markers: M0SnapshotMarkers,
-    renderedMemoryIds: readonly number[],
+    _renderedMemoryIds: readonly number[],
 ): RenderM1Result {
     if (!markers || markers.maxCompartmentSeq === undefined) {
         throw new RenderM1InvalidMarkersError(options.sessionId);
     }
 
     const blocks: string[] = [];
-    const workspace = resolveWorkspaceRenderContext({
-        db: options.db,
-        projectPath: options.projectPath,
-        workspaceIdentitySet: options.workspaceIdentitySet,
-    });
-
-    const eligibleMemories = options.projectPath
-        ? workspace.isWorkspaced
-            ? getMemoriesByProjects(
-                  options.db,
-                  workspace.expandedIdentities,
-                  ["active", "permanent"],
-                  markers.materializedAt,
-                  workspace.ownIdentities,
-                  workspace.shareCategories,
-              )
-            : getMemoriesByProject(
-                  options.db,
-                  options.projectPath,
-                  ["active", "permanent"],
-                  markers.materializedAt,
-              )
-        : [];
-    const eligibleMemoryIds = new Set(eligibleMemories.map((memory) => memory.id));
-    const memoryUpdates = renderMemoryUpdatesBlock({
-        db: options.db,
-        projectPath: options.projectPath,
-        workspace,
-        afterId: markers.maxMemoryMutationId,
-        renderedMemoryIds,
-        eligibleMemoryIds,
-    });
-    if (memoryUpdates.block) blocks.push(memoryUpdates.block);
 
     const newCompartments = withCompartmentDates(
         options.sessionId,
@@ -2491,75 +1701,17 @@ function renderM1WithMetadata(
         );
     }
 
-    const forcedMemoryIds = new Set(memoryUpdates.forcedMemoryIds);
-    const newMemories = eligibleMemories.filter(
-        (memory) => memory.id > markers.maxMemoryId && !forcedMemoryIds.has(memory.id),
-    );
-    const newMemoryRenderOptions: MemoryRenderOptions = {
-        sourceNameByMemoryId: sourceNamesForMemories({
-            memories: eligibleMemories,
-            projectPath: options.projectPath,
-            workspace,
-        }),
-    };
-    const trimmedNewMemories = trimMemoriesToBudgetV2(
-        options.sessionId,
-        newMemories,
-        Math.max(
-            1,
-            Math.floor(
-                (options.memoryInjectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS) * 0.25,
-            ),
-        ),
-        newMemoryRenderOptions,
-    ).renderOrder;
-    const deltaMemories = [
-        ...trimmedNewMemories,
-        ...eligibleMemories.filter((memory) => forcedMemoryIds.has(memory.id)),
-    ];
-    const newMemoriesBlock = renderMemoryBlockV2(
-        deltaMemories,
-        "new-memories",
-        newMemoryRenderOptions,
-    );
-    if (newMemoriesBlock) blocks.push(newMemoriesBlock);
-
-    const currentUserProfileVersion = getGlobalUserProfileVersion(options.db);
-    if (currentUserProfileVersion !== markers.projectUserProfileVersion) {
-        const profileBlock = renderUserProfileBlock(
-            trimUserMemoriesToBudget(
-                safeGetActiveUserMemories(options.db),
-                Math.max(
-                    1,
-                    Math.floor(
-                        (options.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS) *
-                            0.25,
-                    ),
-                ),
-            ),
-            "new-user-profile",
-        );
-        if (profileBlock) blocks.push(profileBlock);
-    }
-
-    // v2 faithful facts: session_facts is retired as a render source. Fresh
-    // facts reach the agent as promoted memories via the new-memories block
-    // above (maxMemoryId watermark), not via a <session_facts> delta here.
-
-    const renderedNewMemoryIds = newMemoriesBlock
-        ? trimmedNewMemories.map((memory) => memory.id)
-        : [];
     if (blocks.length === 0) {
         return {
             text: M1_EMPTY_PLACEHOLDER,
-            memoryUpdateCount: memoryUpdates.count,
-            renderedMemoryIds: renderedNewMemoryIds,
+            memoryUpdateCount: 0,
+            renderedMemoryIds: [],
         };
     }
     return {
         text: `<session-history-since>\n${blocks.join("\n")}\n</session-history-since>`,
-        memoryUpdateCount: memoryUpdates.count,
-        renderedMemoryIds: renderedNewMemoryIds,
+        memoryUpdateCount: 0,
+        renderedMemoryIds: [],
     };
 }
 
@@ -2595,7 +1747,6 @@ interface CachedM0M1Row {
     cached_m0_system_hash: string | null;
     cached_m0_model_key: string | null;
     cached_m0_project_identity: string | null;
-    memory_block_ids: string | null;
 }
 
 function toBuffer(value: Buffer | Uint8Array): Buffer {
@@ -2610,17 +1761,6 @@ function bufferEqualsNullable(
 ): boolean {
     if (left === null || right === null) return left === right;
     return toBuffer(left).equals(toBuffer(right));
-}
-
-function parseMemoryBlockIds(raw: string | null): number[] {
-    if (!raw) return [];
-    try {
-        const parsed = JSON.parse(raw) as unknown;
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter((value): value is number => typeof value === "number");
-    } catch {
-        return [];
-    }
 }
 
 function readCachedM0M1Row(db: Database, sessionId: string): CachedM0M1Row | null {
@@ -2641,8 +1781,7 @@ function readCachedM0M1Row(db: Database, sessionId: string): CachedM0M1Row | nul
                     cached_m0_upgrade_state,
                     cached_m0_system_hash,
                     cached_m0_model_key,
-                    cached_m0_project_identity,
-                    memory_block_ids
+                    cached_m0_project_identity
                FROM session_meta
               WHERE session_id = ?`,
         )
@@ -2766,12 +1905,10 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
 
         const markers = markersFromCachedRow(row);
         if (!markers) throw new RenderM1InvalidMarkersError(options.sessionId);
-        const persistedVisibleIds = parseMemoryBlockIds(row.memory_block_ids);
         // The snapshot watermark separates m[0] ids from post-snapshot m[1] ids,
         // allowing each soft refresh to replace (rather than accumulate) m[1].
-        const renderedM0Ids = persistedVisibleIds.filter((id) => id <= markers.maxMemoryId);
+        const renderedM0Ids: number[] = [];
         const rendered = renderM1WithMetadata({ ...options }, markers, renderedM0Ids);
-        const visibleMemoryIds = [...new Set([...renderedM0Ids, ...rendered.renderedMemoryIds])];
         const m1Bytes = Buffer.from(rendered.text, "utf8");
         // Advance the persisted baseline boundary too: soft-refresh re-renders
         // m[1] to cover every compartment up to the latest, so the boundary the
@@ -2782,18 +1919,10 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
             .prepare(
                 `UPDATE session_meta
                     SET cached_m1_bytes = ?,
-                        cached_m0_last_baseline_end_message_id = ?,
-                        memory_block_count = ?,
-                        memory_block_ids = ?
+                        cached_m0_last_baseline_end_message_id = ?
                   WHERE session_id = ?`,
             )
-            .run(
-                m1Bytes,
-                baselineEndMessageId,
-                visibleMemoryIds.length,
-                JSON.stringify(visibleMemoryIds),
-                options.sessionId,
-            );
+            .run(m1Bytes, baselineEndMessageId, options.sessionId);
         options.db.exec("COMMIT");
         options.state.cachedM1Bytes = m1Bytes;
         options.state.snapshotMarkers = markers;
@@ -2868,21 +1997,12 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
 } {
     const projectPath = options.projectPath;
     const projectDirectory = options.projectDirectory;
-    const workspace = resolveWorkspaceRenderContext({
-        db: options.db,
-        projectPath,
-        workspaceIdentitySet: options.workspaceIdentitySet,
-    });
     const snapshotMarkers = readCurrentM0SnapshotMarkers({
         db: options.db,
         sessionId: options.sessionId,
         projectPath,
         projectDirectory,
         injectDocs: options.injectDocs,
-        workspaceIdentitySet: {
-            identities: workspace.identities,
-            namesByIdentity: workspace.namesByIdentity,
-        },
     });
     const docs = readProjectDocsForM0(projectDirectory ?? "", options.injectDocs);
     snapshotMarkers.projectDocsHash = docs.canonicalHash;
@@ -2899,88 +2019,41 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
         readM0Compartments(options.db, options.sessionId),
         options.temporalAwareness,
     );
-    // Use the SAME frozen cutoff for the baseline memory read as m[1] does, so a
-    // memory crossing expires_at between two fallback passes can't shift the m[0]
-    // baseline bytes either (live Date.now() default would reintroduce drift).
-    const memories = projectPath
-        ? workspace.isWorkspaced
-            ? getMemoriesByProjects(
-                  options.db,
-                  workspace.expandedIdentities,
-                  ["active", "permanent"],
-                  snapshotMarkers.materializedAt,
-                  workspace.ownIdentities,
-                  workspace.shareCategories,
-              )
-            : getMemoriesByProject(
-                  options.db,
-                  projectPath,
-                  ["active", "permanent"],
-                  snapshotMarkers.materializedAt,
-              )
-        : [];
-    const userMemories = safeGetActiveUserMemories(options.db);
-    const memoryBudget = options.memoryInjectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
-    const memoryRenderOptions: MemoryRenderOptions = {
-        sourceNameByMemoryId: sourceNamesForMemories({
-            memories,
-            projectPath,
-            workspace,
-        }),
-    };
-    const trimmed = workspace.isWorkspaced
-        ? trimWorkspaceMemoriesToBudgetV2(
-              options.sessionId,
-              memories,
-              memoryBudget,
-              workspace,
-              memoryRenderOptions,
-          )
-        : trimMemoriesToBudgetV2(options.sessionId, memories, memoryBudget);
     const budget = options.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
-    const mural =
-        options.mural ??
-        resolveMuralForM0(options, projectPath, snapshotMarkers.modelKey, memoryBudget);
     let decayPressureMultiplier = 1;
     let m0Text = renderM0({
         projectDocs: docs.renderedBlock,
-        userProfileBaseline: userMemories,
+        userProfileBaseline: [],
         compartments,
-        memories: trimmed.renderOrder,
+        memories: [],
         facts: [],
-        memoryRenderOptions,
         historyBudgetTokens: budget,
         userProfileBudgetTokens: options.userProfileBudgetTokens,
         decayPressureMultiplier,
-        mural,
     });
     let attempts = 0;
     while (budget > 0 && historySliceTokens(m0Text) > budget * 1.05 && attempts < 3) {
         decayPressureMultiplier *= 1.15;
         m0Text = renderM0({
             projectDocs: docs.renderedBlock,
-            userProfileBaseline: userMemories,
+            userProfileBaseline: [],
             compartments,
-            memories: trimmed.renderOrder,
+            memories: [],
             facts: [],
-            memoryRenderOptions,
             historyBudgetTokens: budget,
             userProfileBudgetTokens: options.userProfileBudgetTokens,
             decayPressureMultiplier,
-            mural,
         });
         attempts += 1;
     }
     if (m0Text.length === 0) m0Text = M0_EMPTY_BODY;
-    options.state.cachedM0MuralDataUrl =
-        mural?.enabled && mural.supportsVision ? (mural.dataUrl ?? null) : null;
-    options.state.cachedM0MuralHash =
-        mural?.enabled && mural.supportsVision ? (mural.contentHash ?? null) : null;
+    options.state.cachedM0MuralDataUrl = null;
+    options.state.cachedM0MuralHash = null;
     snapshotMarkers.muralHash = options.state.cachedM0MuralHash;
     return {
         m0Bytes: Buffer.from(m0Text, "utf8"),
         snapshotMarkers,
-        renderedMemoryIds: trimmed.renderOrder.map((memory) => memory.id),
+        renderedMemoryIds: [],
     };
 }
 
@@ -2994,12 +2067,6 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
             options.state.cachedM0MuralDataUrl = row.cached_m0_mural_data_url ?? null;
             options.state.cachedM0MuralHash = row.cached_m0_mural_hash ?? null;
         }
-    }
-    if (!options.workspaceIdentitySet && options.projectPath) {
-        options = {
-            ...options,
-            workspaceIdentitySet: resolveWorkspaceIdentitySet(options.db, options.projectPath),
-        };
     }
     const skipped: InjectM0M1Result = {
         injected: false,

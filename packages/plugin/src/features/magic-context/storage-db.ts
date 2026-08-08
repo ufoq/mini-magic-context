@@ -1,7 +1,6 @@
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bootQuietRemainingMs, scheduleAfterBootQuiet } from "../../plugin/boot-quiet";
 import {
     getLegacyOpenCodeMagicContextStorageDir,
     getMagicContextStorageDir,
@@ -10,14 +9,11 @@ import { getErrorMessage } from "../../shared/error-message";
 import { log } from "../../shared/logger";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { ensureContextStoreUuid } from "./context-authority";
-import { runMigrations, runMigrationsWithRetry } from "./migrations";
-import { ensureColumn, healAllNullColumns } from "./storage-schema-helpers";
 import {
-    loadToolDefinitionMeasurements,
-    setDatabase as setToolDefinitionDatabase,
-} from "./tool-definition-tokens";
-import { runToolOwnerBackfill } from "./tool-owner-backfill";
+    classifyMiniDatabase,
+    initializeMiniDatabase as initializeDedicatedMiniDatabase,
+} from "./storage-mini-schema";
+import { ensureColumn, healAllNullColumns } from "./storage-schema-helpers";
 
 // Re-exported so existing `from "./storage-db"` importers (and tests) keep
 // resolving these; the definitions live in the leaf module to break the
@@ -121,7 +117,7 @@ export function resolveDatabasePath(dbPathOverride?: string): { dbDir: string; d
     // is never set in production.
     const testDataDir = process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
     if (testDataDir && !process.env.XDG_DATA_HOME) {
-        const dbDir = join(testDataDir, "cortexkit", "magic-context");
+        const dbDir = join(testDataDir, "cortexkit", "mini-magic-context");
         return { dbDir, dbPath: join(dbDir, "context.db") };
     }
     // CWD-INDEPENDENT TEST BACKSTOP. The MAGIC_CONTEXT_TEST_DATA_DIR / XDG guard
@@ -172,7 +168,7 @@ function getTestBackstopDbDir(): string {
         testBackstopDbDir = join(
             mkdtempSync(join(tmpdir(), "mc-test-db-backstop-")),
             "cortexkit",
-            "magic-context",
+            "mini-magic-context",
         );
     }
     return testBackstopDbDir;
@@ -184,7 +180,7 @@ export function getDatabasePath(db: Database): string | null {
 
 /**
  * One-time migration of pre-cortexkit OpenCode plugin data into the shared
- * cortexkit/magic-context location. Runs lazily on first openDatabase() call.
+ * cortexkit/mini-magic-context location. Runs lazily on first openDatabase() call.
  *
  * Safety guarantees:
  *   - Only runs when target DB does not yet exist (idempotent on subsequent
@@ -197,7 +193,7 @@ export function getDatabasePath(db: Database): string | null {
  *   - Leaves legacy files in place as a manual rollback path. Manual cleanup
  *     is safe after one stable release.
  */
-function migrateLegacyStorageIfNeeded(targetDbPath: string, targetDbDir: string): void {
+function _migrateLegacyStorageIfNeeded(targetDbPath: string, targetDbDir: string): void {
     if (existsSync(targetDbPath)) return;
 
     const legacyDir = getLegacyOpenCodeMagicContextStorageDir();
@@ -304,7 +300,7 @@ export function enforceSchemaFence(
     }
     lastSchemaFenceRejection = { persistedVersion, supportedVersion: latestSupportedVersion };
     log(
-        `[magic-context] storage fatal: refusing to open ${dbPath}; database schema v${persistedVersion} is newer than this binary supports (max v${latestSupportedVersion}). A pinned or stale plugin is likely sharing this database with a newer instance; update or unpin Magic Context with 'npx @cortexkit/magic-context@latest doctor --force', then restart.`,
+        `[magic-context] storage fatal: refusing to open ${dbPath}; database schema v${persistedVersion} is newer than this binary supports (max v${latestSupportedVersion}). A pinned or stale plugin is likely sharing this database with a newer instance; update or unpin Mini Magic Context with 'npx @ufoq/mini-magic-context@latest doctor --force', then restart.`,
     );
     return false;
 }
@@ -362,39 +358,7 @@ function finishDatabaseOpen(
         closeQuietly(db);
         return null;
     }
-    // Recover any Channel-2 ceiling-nudge lease left at `claimed` by a crash
-    // mid-delivery (see healWedgedChannel2Claims). Fresh opens and later
-    // cached-handle reuses both run this TTL-scoped heal so long-lived
-    // processes eventually unwind stuck stale claims without a restart.
-    healWedgedChannel2Claims(db);
-    // Initial boot-time backfill populates tool_owner_message_id on legacy tool
-    // tags. The module short-circuits when every session is already complete or
-    // skipped, so re-running it is cheap.
-    //
-    // The backfill is best-effort: missing OpenCode DB, transient
-    // SQLite errors, and per-session failures are logged but
-    // never fail-close the plugin. Lazy adoption covers rows the backfill could
-    // not reach.
-    if (!explicitDbPath) {
-        const runBackfill = () => {
-            try {
-                runToolOwnerBackfill(db);
-            } catch (error) {
-                log(
-                    `[magic-context] tool-owner backfill failed (continuing with lazy adoption fallback): ${getErrorMessage(error)}`,
-                );
-            }
-        };
-        if (bootQuietRemainingMs() > 0) scheduleAfterBootQuiet(runBackfill);
-        else runBackfill();
-    }
-    // Wire the persistence-backed tool-definition measurement store and
-    // rehydrate the in-memory map from any prior writes. Doing this here
-    // (after migrations) means migration v9 has already created the
-    // `tool_definition_measurements` table, so loadToolDefinitionMeasurements
-    // never hits a missing-table failure path.
-    setToolDefinitionDatabase(db);
-    loadToolDefinitionMeasurements(db);
+    void explicitDbPath;
     // Tighten the DB + WAL/SHM sidecars to owner-only now that WAL mode has
     // created the sidecars; best-effort, never fatal.
     restrictDatabaseFilePermissions(dbPath);
@@ -403,6 +367,67 @@ function finishDatabaseOpen(
     persistenceByDatabase.set(db, true);
     persistenceErrorByDatabase.delete(db);
     return db;
+}
+
+function initializeMiniDatabase(db: Database): void {
+    db.exec(`
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT,
+      message_id TEXT,
+      type TEXT,
+      status TEXT DEFAULT 'active',
+      byte_size INTEGER,
+      input_byte_size INTEGER NOT NULL DEFAULT 0,
+      reasoning_byte_size INTEGER NOT NULL DEFAULT 0,
+      tag_number INTEGER,
+      tool_name TEXT,
+      harness TEXT NOT NULL DEFAULT 'opencode',
+      entry_fingerprint TEXT,
+      token_count INTEGER,
+      input_token_count INTEGER,
+      reasoning_token_count INTEGER,
+      call_id TEXT,
+      tool_owner_message_id TEXT,
+      dropped_at INTEGER,
+      drop_mode TEXT,
+      caveman_depth INTEGER DEFAULT 0,
+      file_path TEXT,
+      part_index INTEGER,
+      UNIQUE(session_id, tag_number)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tags_session_status ON tags(session_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tags_session_tag_number ON tags(session_id, tag_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_tool_composite ON tags(session_id, message_id, tool_owner_message_id) WHERE type = 'tool' AND tool_owner_message_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_tags_tool_null_owner ON tags(session_id, message_id) WHERE type = 'tool' AND tool_owner_message_id IS NULL;
+    CREATE TABLE IF NOT EXISTS pending_ops (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, tag_id INTEGER NOT NULL, operation TEXT NOT NULL, queued_at INTEGER NOT NULL, harness TEXT NOT NULL DEFAULT 'opencode');
+    CREATE INDEX IF NOT EXISTS idx_pending_ops_session ON pending_ops(session_id);
+    CREATE TABLE IF NOT EXISTS source_contents (tag_id INTEGER NOT NULL, session_id TEXT NOT NULL, content TEXT, created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000), harness TEXT NOT NULL DEFAULT 'opencode', PRIMARY KEY(session_id, tag_id));
+    CREATE INDEX IF NOT EXISTS idx_source_contents_session ON source_contents(session_id);
+    CREATE TABLE IF NOT EXISTS compartments (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, sequence INTEGER NOT NULL, start_message INTEGER NOT NULL, end_message INTEGER NOT NULL, start_message_id TEXT, end_message_id TEXT, title TEXT NOT NULL, content TEXT NOT NULL, p1 TEXT, p2 TEXT, p3 TEXT, p4 TEXT, importance INTEGER, episode_type TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL DEFAULT 0, legacy INTEGER NOT NULL DEFAULT 0, harness TEXT NOT NULL DEFAULT 'opencode', UNIQUE(session_id, sequence));
+    CREATE INDEX IF NOT EXISTS idx_compartments_session_range ON compartments(session_id, start_message, end_message);
+    CREATE TABLE IF NOT EXISTS compartment_chunk_embeddings (id INTEGER PRIMARY KEY AUTOINCREMENT, compartment_id INTEGER NOT NULL, session_id TEXT NOT NULL, project_path TEXT NOT NULL, harness TEXT NOT NULL DEFAULT 'opencode', window_index INTEGER NOT NULL DEFAULT 0, start_ordinal INTEGER NOT NULL, end_ordinal INTEGER NOT NULL, chunk_hash TEXT NOT NULL, model_id TEXT NOT NULL, dims INTEGER NOT NULL, vector BLOB NOT NULL, created_at INTEGER NOT NULL, UNIQUE(compartment_id, model_id, window_index));
+    CREATE INDEX IF NOT EXISTS idx_cce_project_model ON compartment_chunk_embeddings(project_path, model_id);
+    CREATE INDEX IF NOT EXISTS idx_cce_session ON compartment_chunk_embeddings(session_id);
+    CREATE TABLE IF NOT EXISTS session_projects (session_id TEXT NOT NULL, harness TEXT NOT NULL DEFAULT 'opencode', project_path TEXT NOT NULL, directory TEXT, created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(session_id, harness));
+    CREATE TABLE IF NOT EXISTS compartment_state_lease (session_id TEXT PRIMARY KEY, holder_id TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS compression_depth (session_id TEXT NOT NULL, message_ordinal INTEGER NOT NULL, depth INTEGER NOT NULL DEFAULT 0, harness TEXT NOT NULL DEFAULT 'opencode', PRIMARY KEY(session_id, message_ordinal));
+    CREATE TABLE IF NOT EXISTS m0_mutation_log (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, mutation_type TEXT NOT NULL, target_id INTEGER, queued_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_m0_mutation_log_session ON m0_mutation_log(session_id, id);
+    CREATE VIRTUAL TABLE IF NOT EXISTS message_history_fts USING fts5(session_id UNINDEXED, message_ordinal UNINDEXED, message_id UNINDEXED, role UNINDEXED, content, tokenize = 'porter unicode61');
+    CREATE TABLE IF NOT EXISTS message_history_index (session_id TEXT PRIMARY KEY, last_indexed_ordinal INTEGER NOT NULL DEFAULT 0, dirty_floor_ordinal INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0, harness TEXT NOT NULL DEFAULT 'opencode');
+    CREATE TABLE IF NOT EXISTS message_history_source (session_id TEXT NOT NULL, message_id TEXT NOT NULL, message_ordinal INTEGER NOT NULL, source_version TEXT NOT NULL, normalized_content_hash TEXT NOT NULL, role TEXT NOT NULL, harness TEXT NOT NULL DEFAULT 'opencode', updated_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(session_id, message_id));
+    CREATE TABLE IF NOT EXISTS pending_session_cleanup (session_id TEXT PRIMARY KEY, marked_at INTEGER NOT NULL, retry_after INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS message_history_orphan_sweep (harness TEXT PRIMARY KEY, cursor_session_id TEXT NOT NULL DEFAULT '', last_swept_at INTEGER);
+    CREATE TABLE IF NOT EXISTS session_meta (
+      session_id TEXT PRIMARY KEY, harness TEXT NOT NULL DEFAULT 'opencode', last_response_time INTEGER, cache_ttl TEXT, counter INTEGER DEFAULT 0, last_nudge_tokens INTEGER DEFAULT 0, last_nudge_band TEXT DEFAULT '', last_nudge_undropped INTEGER DEFAULT 0, last_nudge_level TEXT DEFAULT '', channel2_nudge_state TEXT DEFAULT '', channel2_nudge_claimed_at INTEGER DEFAULT 0, channel2_nudge_claim_token TEXT DEFAULT '', last_emergency_input_sample INTEGER DEFAULT 0, last_transform_error TEXT DEFAULT '', nudge_anchor_message_id TEXT DEFAULT '', nudge_anchor_text TEXT DEFAULT '', sticky_turn_reminder_text TEXT DEFAULT '', sticky_turn_reminder_message_id TEXT DEFAULT '', note_nudge_trigger_pending INTEGER DEFAULT 0, note_nudge_trigger_message_id TEXT DEFAULT '', note_nudge_sticky_text TEXT DEFAULT '', note_nudge_sticky_message_id TEXT DEFAULT '', note_nudge_anchors TEXT NOT NULL DEFAULT '[]', note_last_read_at INTEGER NOT NULL DEFAULT 0, auto_search_hint_decisions TEXT NOT NULL DEFAULT '[]', last_todo_state TEXT DEFAULT '', todo_synthetic_call_id TEXT DEFAULT '', todo_synthetic_anchor_message_id TEXT DEFAULT '', todo_synthetic_state_json TEXT DEFAULT '', cleared_reasoning_through_tag INTEGER DEFAULT 0, is_subagent INTEGER DEFAULT 0, last_context_percentage REAL DEFAULT 0, last_input_tokens INTEGER DEFAULT 0, observed_safe_input_tokens INTEGER NOT NULL DEFAULT 0, cache_alert_sent INTEGER NOT NULL DEFAULT 0, times_execute_threshold_reached INTEGER DEFAULT 0, compartment_in_progress INTEGER DEFAULT 0, historian_failure_count INTEGER DEFAULT 0, historian_last_error TEXT DEFAULT NULL, historian_last_failure_at INTEGER DEFAULT NULL, system_prompt_hash TEXT DEFAULT '', system_prompt_tokens INTEGER NOT NULL DEFAULT 0, conversation_tokens INTEGER NOT NULL DEFAULT 0, tool_call_tokens INTEGER NOT NULL DEFAULT 0, tool_reclaim_watermark INTEGER NOT NULL DEFAULT 0, memory_block_cache TEXT DEFAULT '', memory_block_count INTEGER DEFAULT 0, memory_block_ids TEXT DEFAULT '', compaction_marker_state TEXT DEFAULT '', pending_compaction_marker_state TEXT, compaction_marker_target_end_message_id TEXT, pending_pi_compaction_marker_state TEXT, new_work_tokens INTEGER NOT NULL DEFAULT 0, total_input_tokens INTEGER NOT NULL DEFAULT 0, deferred_execute_state TEXT, cached_m0_bytes BLOB, cached_m0_project_memory_epoch INTEGER, cached_m0_workspace_fingerprint TEXT, cached_m0_project_user_profile_version INTEGER, cached_m0_max_compartment_seq INTEGER, cached_m0_max_memory_id INTEGER, cached_m0_max_mutation_id INTEGER, cached_m0_max_memory_mutation_id INTEGER, cached_m0_project_docs_hash TEXT, cached_m1_bytes BLOB, last_observed_model_key TEXT, last_usage_context_limit INTEGER NOT NULL DEFAULT 0, prior_boundary_ordinal INTEGER NOT NULL DEFAULT 1, protected_tail_policy_version INTEGER NOT NULL DEFAULT 0, protected_tail_drain_window_started_at INTEGER NOT NULL DEFAULT 0, protected_tail_drain_tokens INTEGER NOT NULL DEFAULT 0, recovery_no_eligible_head_count INTEGER NOT NULL DEFAULT 0, force_emergency_bypass_window_start INTEGER NOT NULL DEFAULT 0, force_emergency_bypass_used INTEGER NOT NULL DEFAULT 0, emergency_drain_active INTEGER NOT NULL DEFAULT 0, historian_drain_failure_at INTEGER NOT NULL DEFAULT 0, wrapup_in_progress_state TEXT, detected_context_limit INTEGER NOT NULL DEFAULT 0, detected_context_limit_model_key TEXT, needs_emergency_recovery INTEGER NOT NULL DEFAULT 0, emergency_recovery_origin TEXT NOT NULL DEFAULT '', stripped_placeholder_ids TEXT NOT NULL DEFAULT '[]', stale_reduce_stripped_ids TEXT NOT NULL DEFAULT '[]', processed_image_stripped_ids TEXT NOT NULL DEFAULT '[]', session_facts_version INTEGER NOT NULL DEFAULT 0, cached_m0_materialized_at INTEGER, cached_m0_session_facts_version INTEGER, cached_m0_upgrade_state TEXT, cached_m0_system_hash TEXT, cached_m0_tool_set_hash TEXT, cached_m0_model_key TEXT, cached_m0_project_identity TEXT, cached_m0_last_baseline_end_message_id TEXT, upgrade_reminded_at INTEGER, upgrade_reminder_last_sent_at INTEGER, upgrade_reminder_count INTEGER DEFAULT 0, pi_stable_id_scheme INTEGER, cached_m0_mural_data_url TEXT, cached_m0_mural_hash TEXT
+    );
+    CREATE TABLE IF NOT EXISTS recomp_compartments (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, sequence INTEGER NOT NULL, start_message INTEGER NOT NULL, end_message INTEGER NOT NULL, start_message_id TEXT DEFAULT '', end_message_id TEXT DEFAULT '', title TEXT NOT NULL, content TEXT NOT NULL, p1 TEXT, p2 TEXT, p3 TEXT, p4 TEXT, importance INTEGER NOT NULL DEFAULT 50, episode_type TEXT, pass_number INTEGER NOT NULL, created_at INTEGER NOT NULL, harness TEXT NOT NULL DEFAULT 'opencode', UNIQUE(session_id, sequence));
+    CREATE TABLE IF NOT EXISTS embedding_identity_active (project_path TEXT NOT NULL, scope TEXT NOT NULL, model_id TEXT NOT NULL, last_active_at INTEGER NOT NULL, PRIMARY KEY(project_path, scope, model_id));
+    CREATE TABLE IF NOT EXISTS git_sweep_coordinator (project_path TEXT PRIMARY KEY, lease_holder TEXT, lease_expires_at INTEGER, last_swept_at INTEGER);
+    CREATE TABLE IF NOT EXISTS embedding_registrations (project_path TEXT PRIMARY KEY, source_directory TEXT NOT NULL DEFAULT '', provider_identity TEXT NOT NULL, model_id TEXT NOT NULL, chunk_model_id TEXT NOT NULL, runtime_fingerprint TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL DEFAULT '', table_epoch INTEGER NOT NULL DEFAULT 0, dims INTEGER NOT NULL DEFAULT 0, provenance_json TEXT NOT NULL DEFAULT '{}', generation INTEGER NOT NULL, features_json TEXT NOT NULL DEFAULT '{}', config_json TEXT NOT NULL DEFAULT '{}', observation_mode INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
+    `);
 }
 
 export function initializeDatabase(db: Database): void {
@@ -417,6 +442,11 @@ export function initializeDatabase(db: Database): void {
     db.exec("PRAGMA foreign_keys=ON");
     db.exec("PRAGMA journal_mode=WAL");
     applySqliteTuningPragmas(db);
+    initializeMiniDatabase(db);
+    initializeDedicatedMiniDatabase(db);
+}
+
+function _initializeRemovedFullDatabase(db: Database): void {
     db.exec(`
     CREATE TABLE IF NOT EXISTS tags (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1633,6 +1663,15 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     // cannot go here because the table doesn't exist yet on a fresh DB.
 }
 
+function canOpenMiniDatabase(db: Database, dbPath: string): boolean {
+    const state = classifyMiniDatabase(db);
+    if (state === "fresh" || state === "current") return true;
+    log(
+        `[magic-context] storage fatal: refusing to open ${dbPath}; it is not a supported Mini Magic Context database. Legacy databases are never modified.`,
+    );
+    return false;
+}
+
 const CHANNEL2_CLAIM_TTL_MS = 120_000;
 
 /**
@@ -1645,7 +1684,7 @@ const CHANNEL2_CLAIM_TTL_MS = 120_000;
  * rewound to `pending`; fresh claims are left alone so boot recovery never steals
  * an in-flight delivery.
  */
-function healWedgedChannel2Claims(db: Database): void {
+function _healWedgedChannel2Claims(db: Database): void {
     try {
         const staleBefore = Date.now() - CHANNEL2_CLAIM_TTL_MS;
         db.prepare(
@@ -1708,14 +1747,10 @@ export function openDatabase(dbPathOrOptions?: string | OpenDatabaseOptions): Da
         // processes keep this handle for hours, and a revert/confirm DB lock can
         // leave a stale `claimed` lease behind until some later openDatabase()
         // call. The heal is one idempotent UPDATE gated by claimed_at age.
-        healWedgedChannel2Claims(existing);
         return existing;
     }
 
     try {
-        if (!explicitDbPath) {
-            migrateLegacyStorageIfNeeded(dbPath, dbDir);
-        }
         ensureSecureStorageDir(dbDir);
 
         const db = new Database(dbPath);
@@ -1723,9 +1758,11 @@ export function openDatabase(dbPathOrOptions?: string | OpenDatabaseOptions): Da
             closeQuietly(db);
             return null;
         }
+        if (!canOpenMiniDatabase(db, dbPath)) {
+            closeQuietly(db);
+            return null;
+        }
         initializeDatabase(db);
-        runMigrations(db);
-        ensureContextStoreUuid(db);
         return finishDatabaseOpen(db, dbPath, explicitDbPath, latestSupportedVersion);
     } catch (error) {
         const detail = getErrorMessage(error);
@@ -1755,7 +1792,6 @@ export async function openDatabaseAsync(
     if (existing) {
         if (!enforceSchemaFence(existing, dbPath, latestSupportedVersion)) return null;
         if (!persistenceByDatabase.has(existing)) persistenceByDatabase.set(existing, true);
-        healWedgedChannel2Claims(existing);
         return existing;
     }
 
@@ -1765,7 +1801,6 @@ export async function openDatabaseAsync(
     const opening = (async (): Promise<Database | null> => {
         let db: Database | undefined;
         try {
-            if (!explicitDbPath) migrateLegacyStorageIfNeeded(dbPath, dbDir);
             ensureSecureStorageDir(dbDir);
 
             db = new Database(dbPath);
@@ -1773,9 +1808,11 @@ export async function openDatabaseAsync(
                 closeQuietly(db);
                 return null;
             }
+            if (!canOpenMiniDatabase(db, dbPath)) {
+                closeQuietly(db);
+                return null;
+            }
             initializeDatabase(db);
-            await runMigrationsWithRetry(db);
-            ensureContextStoreUuid(db);
             return finishDatabaseOpen(db, dbPath, explicitDbPath, latestSupportedVersion);
         } catch (error) {
             if (db) closeQuietly(db);

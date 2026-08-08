@@ -6,13 +6,9 @@ import {
     releaseCompartmentLease,
 } from "../../features/magic-context/compartment-lease";
 import { getCompartments } from "../../features/magic-context/compartment-storage";
-import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
-import { getMemoriesByProject } from "../../features/magic-context/memory/storage-memory";
 import { runMigrations } from "../../features/magic-context/migrations";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { reserveProtectedTailDrainTokens } from "../../features/magic-context/storage-meta-persisted";
-import { getPrimerCandidatesForProject } from "../../features/magic-context/storage-primers";
-import { getUserMemoryCandidates } from "../../features/magic-context/user-memory/storage-user-memory";
 import type { PluginContext } from "../../plugin/types";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
@@ -177,8 +173,7 @@ async function runWithLease(args: {
 }
 
 describe("runCompartmentAgent wrapup controls", () => {
-    it("persists a forced final compartment but skips facts, user observations, and primers", async () => {
-        const project = resolveProjectIdentity("/tmp/wrapup-runner");
+    it("persists a forced final compartment", async () => {
         for (const forceKeepLastCompartment of [true, false]) {
             const db = createDb();
             const sessionId = `ses-force-${forceKeepLastCompartment}`;
@@ -194,13 +189,6 @@ describe("runCompartmentAgent wrapup controls", () => {
                 );
 
                 expect(getCompartments(db, sessionId)).toHaveLength(1);
-                if (forceKeepLastCompartment) {
-                    expect(getMemoriesByProject(db, project)).toHaveLength(0);
-                    expect(getUserMemoryCandidates(db)).toHaveLength(0);
-                    expect(getPrimerCandidatesForProject(db, project)).toHaveLength(0);
-                } else {
-                    expect(getMemoriesByProject(db, project).length).toBeGreaterThan(0);
-                }
             } finally {
                 closeQuietly(db);
             }
@@ -210,7 +198,6 @@ describe("runCompartmentAgent wrapup controls", () => {
     it("downgrades forced final keep on token-capped chunks so discard-last healing still applies", async () => {
         const db = createDb();
         const sessionId = "ses-force-mid-loop-has-more";
-        const project = resolveProjectIdentity("/tmp/wrapup-runner");
         try {
             const messages = alternatingMessages(10);
             await withProviderMessages(sessionId, messages, async () => {
@@ -247,7 +234,6 @@ describe("runCompartmentAgent wrapup controls", () => {
             // the re-read), so no memories may appear here.
             expect(getCompartments(db, sessionId)).toHaveLength(1);
             expect(getCompartments(db, sessionId)[0]?.endMessage).toBe(2);
-            expect(getMemoriesByProject(db, project)).toHaveLength(0);
         } finally {
             closeQuietly(db);
         }

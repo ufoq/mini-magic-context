@@ -11,7 +11,7 @@ const checkerMocks = {
     getLatestVersion: mock(async () => null),
     getLocalDevVersion: mock(() => null),
     preparePluginUpdate: mock(async () => ({
-        spec: "@cortexkit/opencode-magic-context@0.15.6",
+        spec: "@ufoq/opencode-mini-magic-context@0.15.6",
         configPaths: ["/config/opencode.jsonc", "/config/tui.jsonc"],
     })),
 };
@@ -90,7 +90,7 @@ describe("auto-update-checker/index", () => {
         checkerMocks.getLocalDevVersion.mockImplementation(() => null);
         checkerMocks.preparePluginUpdate.mockReset();
         checkerMocks.preparePluginUpdate.mockImplementation(async () => ({
-            spec: "@cortexkit/opencode-magic-context@0.15.6",
+            spec: "@ufoq/opencode-mini-magic-context@0.15.6",
             configPaths: ["/config/opencode.jsonc", "/config/tui.jsonc"],
         }));
 
@@ -290,7 +290,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows success toast after updating the active install root", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@ufoq/opencode-mini-magic-context@latest",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",
@@ -309,7 +309,7 @@ describe("auto-update-checker/index", () => {
 
         expect(checkerMocks.preparePluginUpdate).toHaveBeenCalledWith(
             "/test",
-            expect.objectContaining({ entry: "@cortexkit/opencode-magic-context@latest" }),
+            expect.objectContaining({ entry: "@ufoq/opencode-mini-magic-context@latest" }),
             "0.15.6",
             expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
@@ -325,7 +325,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows notification-only toast when auto-update is disabled", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@ufoq/opencode-mini-magic-context@latest",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",
@@ -356,7 +356,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows pinned-version notification without installing", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@0.15.5",
+            entry: "@ufoq/opencode-mini-magic-context@0.15.5",
             pinnedVersion: "0.15.5",
             isPinned: true,
             configPath: "/config/opencode.jsonc",
@@ -387,7 +387,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows warning toast when latest version fetch fails", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@ufoq/opencode-mini-magic-context@latest",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",
@@ -408,7 +408,7 @@ describe("auto-update-checker/index", () => {
             body: {
                 title: "Magic Context update check failed",
                 message:
-                    "Could not check npm for @cortexkit/opencode-magic-context updates. Continuing with the cached version.",
+                    "Could not check npm for @ufoq/opencode-mini-magic-context updates. Continuing with the cached version.",
                 variant: "warning",
                 duration: 8000,
             },
@@ -417,7 +417,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows install failure toast without telling users to restart", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@ufoq/opencode-mini-magic-context@latest",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",

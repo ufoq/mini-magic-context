@@ -69,11 +69,6 @@ async function unifiedSearchWithTimeout(
             unifiedSearch(db, sessionId, projectPath, prompt, {
                 ...options,
                 signal: controller.signal,
-                // Plugin-internal auto-surfacing: do NOT count these as real
-                // retrievals. The agent may never actually consume the hint,
-                // and counting inflates retrieval_count-based memory
-                // promotion decisions with false-positive signal.
-                countRetrievals: false,
             }),
             timeoutPromise,
         ]);
@@ -95,12 +90,7 @@ export interface AutoSearchRunnerOptions {
     directory?: string;
     projectPath: string;
     ensureProjectRegistered?: (directory: string, db: Database) => Promise<void>;
-    memoryEnabled?: boolean;
     embeddingEnabled?: boolean;
-    gitCommitsEnabled?: boolean;
-    /** Memory ids already rendered in the injected <session-history> block —
-     *  skip fragments that just duplicate visible memories. */
-    visibleMemoryIds?: Set<number>;
 }
 
 function collectUserPromptParts(message: MessageLike): string {
@@ -122,11 +112,7 @@ function collectUserPromptParts(message: MessageLike): string {
  *  up. This runs on the RAW text (before stripping) because the whole point is
  *  to detect what the stripper would remove. */
 function hasStackedAugmentation(rawText: string): boolean {
-    return (
-        rawText.includes("<sidekick-augmentation>") ||
-        rawText.includes("<ctx-search-hint>") ||
-        rawText.includes("<ctx-search-auto>")
-    );
+    return rawText.includes("<ctx-search-hint>") || rawText.includes("<ctx-search-auto>");
 }
 
 /**
@@ -314,17 +300,12 @@ export async function runAutoSearchHint(args: {
             await options.ensureProjectRegistered?.(options.directory, db);
         }
         const embeddingSnapshot = getProjectEmbeddingSnapshot(options.projectPath);
-        const memoryEnabled = embeddingSnapshot?.features.memoryEnabled ?? options.memoryEnabled;
         const embeddingEnabled = embeddingSnapshot
             ? embeddingSnapshot.enabled || embeddingSnapshot.gitCommitEnabled
             : options.embeddingEnabled;
-        const gitCommitsEnabled =
-            embeddingSnapshot?.gitCommitEnabled ?? options.gitCommitsEnabled ?? false;
         const searchOptions: UnifiedSearchOptions = {
             limit: 10,
-            memoryEnabled,
             embeddingEnabled,
-            gitCommitsEnabled,
             embedQuery: async (text, signal) => {
                 const result = await embedTextForProject(
                     options.projectPath,
@@ -335,13 +316,7 @@ export async function runAutoSearchHint(args: {
                 return result;
             },
             isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
-            // Hard-filter memories already rendered in <session-history>.
-            // unifiedSearch applies this during memory merging so ranking
-            // can't be distorted by already-visible hits.
-            visibleMemoryIds: options.visibleMemoryIds ?? null,
-            // Primers v1 are cache-neutral: they surface via explicit ctx_search
-            // and dashboard only, never transform-time auto-search prompt hints.
-            sources: ["memory", "message", "git_commit"],
+            sources: ["message"],
         };
         results = await unifiedSearchWithTimeout(
             db,

@@ -102,20 +102,16 @@ describe("buildSupersessionReclaimOps", () => {
         expect(ids(ops)).toEqual([1, 2]);
     });
 
-    it("drops ctx_note read/dismiss but never write/update; unreadable action is safe", () => {
+    it("never targets note tool calls (branch removed)", () => {
         const db = freshDb();
         insertTag(db, SES, "c1", "tool", 50, 1, 0, "ctx_note");
         insertTag(db, SES, "c2", "tool", 50, 2, 0, "ctx_note");
-        insertTag(db, SES, "c3", "tool", 50, 3, 0, "ctx_note");
-        insertTag(db, SES, "c4", "tool", 50, 4, 0, "ctx_note");
         const targets = new Map<number, TagTarget>([
             [1, target({ action: "read" })],
             [2, target({ action: "dismiss" })],
-            [3, target({ action: "write" })], // intent — never dropped
-            [4, target(undefined)], // unreadable action — fail safe
         ]);
         const ops = buildSupersessionReclaimOps({ db, sessionId: SES, targets });
-        expect(ids(ops)).toEqual([1, 2]);
+        expect(ops).toHaveLength(0);
     });
 
     it("never targets non-superseded tools (read/grep/edit untouched)", () => {

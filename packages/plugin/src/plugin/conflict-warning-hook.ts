@@ -447,7 +447,7 @@ export async function sendSchemaFenceWarning(
         "newer instance. Update or unpin Magic Context on this harness (or update",
         "OpenCode/Pi) to the latest version, then restart. The fastest fix is:",
         "",
-        "  npx @cortexkit/magic-context@latest doctor --force",
+        "  npx @ufoq/mini-magic-context@latest doctor --force",
         "",
         "Your data is safe; nothing is disabled permanently.",
     ].join("\n");

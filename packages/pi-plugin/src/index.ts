@@ -1,40 +1,10 @@
-/**
- * Magic Context — Pi coding agent extension.
- *
- * Loaded once per Pi session via `pi.extensions` in package.json. Boots
- * Magic Context's shared SQLite store and registers session lifecycle
- * hooks: tools, transform pipeline (tagging + drops), historian trigger,
- * /ctx-aug command, system-prompt injection, dreamer scheduling, and
- * agent_end cleanup.
- *
- * Storage: shares one SQLite database with the OpenCode plugin at
- *   ~/.local/share/cortexkit/magic-context/context.db
- * so project memories, embedding cache, dreamer runs, and other
- * project-scoped state are visible across both harnesses. Session-scoped
- * tables carry a `harness` column ('opencode' or 'pi') so per-session
- * data stays correctly attributed.
- *
- * Config: read from the shared CortexKit location —
- *   $cwd/.cortexkit/magic-context.jsonc (project) and
- *   ~/.config/cortexkit/magic-context.jsonc (user) via `loadPiConfig()`.
- *   Falls back to schema defaults when neither file exists.
- */
-
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isDreamerRunnable } from "@magic-context/core/config/agent-disable";
-import { migrateMagicContextConfigLocations } from "@magic-context/core/config/migrate-config-location";
 import type {
-	DreamerConfig,
 	HistorianConfig,
 	MagicContextConfig,
-	SidekickConfig,
 } from "@magic-context/core/config/schema/magic-context";
-import {
-	summarizeDreamSchedule,
-	userMemoryCollectionEnabled,
-} from "@magic-context/core/features/magic-context/dreamer/task-config";
 import {
 	type FailClosedReason,
 	formatFailClosedBlockingMessage,
@@ -42,7 +12,6 @@ import {
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { scheduleIncrementalIndex } from "@magic-context/core/features/magic-context/message-index-async";
 import { detectOverflow } from "@magic-context/core/features/magic-context/overflow-detection";
-import { runSessionProjectBackfill } from "@magic-context/core/features/magic-context/session-project-backfill";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
 import {
 	getOrCreateSessionMeta,
@@ -60,22 +29,13 @@ import {
 	getOverflowState,
 	recordOverflowDetected,
 } from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { runDeferredV22Backfill } from "@magic-context/core/features/magic-context/v22-deferred-backfill";
 import {
 	deriveHistorianChunkTokens,
 	resolveHistorianContextLimit,
 } from "@magic-context/core/hooks/magic-context/derive-budgets";
 import { resolveCacheTtl } from "@magic-context/core/hooks/magic-context/event-resolvers";
-import {
-	clearNoteNudgeTriggerAndCooldown,
-	onNoteTrigger,
-} from "@magic-context/core/hooks/magic-context/note-nudger";
 import { normalizeTodoStateJson } from "@magic-context/core/hooks/magic-context/todo-view";
-import { maybeSendUpgradeReminder } from "@magic-context/core/hooks/magic-context/upgrade-reminder";
-import {
-	beginBootQuietPeriod,
-	scheduleAfterBootQuiet,
-} from "@magic-context/core/plugin/boot-quiet";
+import { beginBootQuietPeriod } from "@magic-context/core/plugin/boot-quiet";
 import {
 	ANNOUNCEMENT_FEATURES,
 	ANNOUNCEMENT_FOOTER,
@@ -92,19 +52,14 @@ import { resolveFallbackChain } from "@magic-context/core/shared/resolve-fallbac
 
 import { handlePiCloneSessionStart } from "./clone-inheritance";
 import {
-	type PiSidekickConfig,
-	registerCtxAugCommand,
-} from "./commands/ctx-aug";
-import { registerCtxDreamCommand } from "./commands/ctx-dream";
-import {
 	maybeAutoEmbedPiSession,
 	registerCtxEmbedCommand,
 } from "./commands/ctx-embed";
 import { registerCtxFlushCommand } from "./commands/ctx-flush";
 import { registerCtxRecompCommand } from "./commands/ctx-recomp";
-import { registerCtxSessionUpgradeCommand } from "./commands/ctx-session-upgrade";
 import { registerCtxStatusCommand } from "./commands/ctx-status";
 import { registerCtxWrapupCommand } from "./commands/ctx-wrapup";
+import { registerMcImportContextCommand } from "./commands/mc-import-context";
 import {
 	registerCtxStatusEntryRenderer,
 	sendCtxStatusMessage,
@@ -126,20 +81,8 @@ import {
 	signalPiHistoryRefresh,
 	signalPiPendingMaterialization,
 	signalPiSystemPromptRefresh,
-	signalPiSystemPromptRefreshForProject,
 	trackSessionForProject,
 } from "./context-handler";
-import {
-	markPiChannel1Reduced,
-	maybeChannel1ReminderForToolResult,
-	maybeDeliverChannel2Pi,
-} from "./ctx-reduce-nudge-pi";
-import {
-	awaitInFlightDreamers,
-	registerPiDreamerProject,
-	unregisterPiDreamerProject,
-} from "./dreamer";
-import { loadDefaultPiSessionApi } from "./dreamer/pi-session-api";
 import { ensureProjectRegisteredFromPiDirectory } from "./embedding-bootstrap";
 import { registerPiFailClosedSurface } from "./fail-closed-pi";
 import { computePiPressure, extractAssistantUsage } from "./pi-pressure";
@@ -371,24 +314,9 @@ function warn(message: string, data?: unknown): void {
 	log(`${PREFIX} WARN ${message}`, data);
 }
 
-// Migrate config from the legacy per-harness locations to the shared CortexKit
-// location BEFORE any loadPiConfig. The loader prefers the shared CortexKit
-// paths and only falls back to Pi-owned legacy files when that base is absent.
-// Memoized per directory so the per-cwd switch sites don't re-run the
-// (idempotent, lock-guarded) migration on every pass. Fails open.
-const migratedConfigDirs = new Set<string>();
 // Memoized per directory so repeated /cd lookups do not spam the same config
 // summary/warning lines on every hot-path config resolution.
 const loggedPiConfigDirs = new Set<string>();
-function ensureConfigLocationsMigrated(dir: string): void {
-	if (migratedConfigDirs.has(dir)) return;
-	migratedConfigDirs.add(dir);
-	migrateMagicContextConfigLocations(dir, {
-		warn: (m) => warn(m),
-		info: (m) => info(m),
-	});
-}
-
 function logPiConfigLoad(args: {
 	dir: string;
 	loadedFromPaths: string[];
@@ -570,23 +498,6 @@ setHarness("pi");
 // in config, so the registration helpers can short-circuit cleanly.
 // ---------------------------------------------------------------------------
 
-export function resolveSidekickFromConfig(
-	config: MagicContextConfig,
-): PiSidekickConfig | undefined {
-	const sidekick = config.sidekick as SidekickConfig | undefined;
-	if (!sidekick || sidekick.disable === true) return undefined;
-	const model = sidekick.model?.trim();
-	if (!model || model.length === 0) return undefined;
-	return {
-		model,
-		systemPrompt: sidekick.system_prompt,
-		timeoutMs: sidekick.timeout_ms,
-		thinking_level: sidekick.thinking_level,
-		fallbackModels: resolveFallbackChain(sidekick.fallback_models),
-		language: config.language,
-	};
-}
-
 export function resolveHistorianFromConfig(
 	config: MagicContextConfig,
 ): PiHistorianOptions | undefined {
@@ -632,9 +543,9 @@ export function resolveHistorianFromConfig(
 		protectedTags: config.protected_tags,
 		clearReasoningAge: config.clear_reasoning_age,
 		historyBudgetPercentage: config.history_budget_percentage,
-		memoryEnabled: config.memory.enabled,
-		autoPromote: config.memory.auto_promote,
-		userMemoriesEnabled: userMemoryCollectionEnabled(config.dreamer),
+		memoryEnabled: false,
+		autoPromote: false,
+		userMemoriesEnabled: false,
 		language: config.language,
 	};
 }
@@ -642,7 +553,7 @@ export function resolveHistorianFromConfig(
 function resolveAutoSearchFromConfig(
 	config: MagicContextConfig,
 ): PiAutoSearchHandlerOptions {
-	const auto = config.memory.auto_search;
+	const auto = config.journal.auto_search;
 	const enabled = auto?.enabled ?? false;
 	return {
 		enabled,
@@ -651,20 +562,6 @@ function resolveAutoSearchFromConfig(
 	};
 }
 
-export function resolveDreamerFromConfig(
-	config: MagicContextConfig,
-): DreamerConfig | undefined {
-	return config.dreamer?.disable === true ? undefined : config.dreamer;
-}
-
-/**
- * Pi extension default export. Called once per Pi session.
- *
- * Registers the full Magic Context Pi runtime: tools, transform pipeline
- * (tagging + drops), historian trigger, nudges, auto-search hint,
- * /ctx-aug command, system-prompt injection, and dreamer scheduling.
- * All driven by the user's `magic-context.jsonc` (Pi convention paths).
- */
 export default async function (pi: ExtensionAPI): Promise<void> {
 	if (process.env[MAGIC_CONTEXT_PI_SUBAGENT_ENV] === "1") {
 		log(
@@ -707,7 +604,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	// blocking surface instead of silently skipping hooks (native compaction).
 	if (!db) {
 		const projectDirForConfig = process.cwd();
-		ensureConfigLocationsMigrated(projectDirForConfig);
 		const early = loadPiConfig({ cwd: projectDirForConfig });
 		if (!early.config.enabled) {
 			info(
@@ -772,43 +668,11 @@ async function startPiMagicContextRuntime(
 ): Promise<void> {
 	const db = database;
 
-	// v22 deferred legacy-memory identity backfill. openDatabase() has already
-	// run migrations; the runner is fire-and-forget and logs failures without
-	// blocking Pi startup.
-	scheduleAfterBootQuiet(() => {
-		runDeferredV22Backfill(db).catch((err) => {
-			warn(`[v22-backfill] background runner failed: ${err}`);
-		});
-	});
-
-	scheduleAfterBootQuiet(() => {
-		void (async () => {
-			try {
-				const api = await loadDefaultPiSessionApi();
-				const sessions = (await api.listSessions()) as Array<{
-					id?: unknown;
-					cwd?: unknown;
-				}>;
-				await runSessionProjectBackfill(
-					database,
-					sessions.map((session) => ({
-						sessionId: typeof session?.id === "string" ? session.id : "",
-						directory: typeof session?.cwd === "string" ? session.cwd : "",
-					})),
-				);
-			} catch (err) {
-				warn(`[session-projects] background runner failed: ${err}`);
-			}
-		})();
-	}, 0);
-
 	// Capture boot project for initial config load and logging only. Runtime
 	// identity/path resolution uses ctx.cwd per hook/command so session cwd
 	// switches follow the active project without reloading config.
 	const projectDir = process.cwd();
 	const projectIdentity = resolveProjectIdentityForSession(projectDir) ?? "";
-	const seenDreamerProjectIdentities = new Set<string>();
-	if (projectIdentity) seenDreamerProjectIdentities.add(projectIdentity);
 
 	try {
 		const pendingPiMarkerSessions = getSessionsWithPendingPiMarker(db);
@@ -840,7 +704,6 @@ async function startPiMagicContextRuntime(
 	// We surface warnings via the standard `warn()` channel so users see
 	// them in the magic-context log. Loading never throws — bad config
 	// gracefully degrades to defaults.
-	ensureConfigLocationsMigrated(projectDir);
 	const { config, warnings, loadedFromPaths } = loadPiConfig({
 		cwd: projectDir,
 	});
@@ -887,9 +750,6 @@ async function startPiMagicContextRuntime(
 		historianConfig: PiHistorianOptions | undefined;
 		autoSearchConfig: PiAutoSearchHandlerOptions;
 		contextOptions: PiContextHandlerOptions;
-		sidekickConfig: PiSidekickConfig | undefined;
-		dreamerConfig: DreamerConfig | undefined;
-		dreamerEnabled: boolean;
 	};
 
 	// Per-cwd runtime deps. Pi can switch projects mid-process (`/cd`,
@@ -916,11 +776,11 @@ async function startPiMagicContextRuntime(
 			clearReasoningAge: cfg.clear_reasoning_age,
 		},
 		injection: {
-			memoryEnabled: cfg.memory.enabled,
-			injectDocs: cfg.dreamer?.inject_docs !== false,
-			injectionBudgetTokens: cfg.memory.injection_budget_tokens,
+			memoryEnabled: false,
+			injectDocs: true,
+			injectionBudgetTokens: 0,
 			temporalAwareness: cfg.temporal_awareness === true,
-			muralEnabled: cfg.experimental?.mural?.enabled === true,
+			muralEnabled: false,
 		},
 		scheduler: {
 			executeThresholdPercentage: cfg.execute_threshold_percentage,
@@ -936,7 +796,7 @@ async function startPiMagicContextRuntime(
 					db: database,
 					projectDir: dir,
 					projectIdentity: identity,
-					memoryEnabled: cfg.memory.enabled,
+					memoryEnabled: false,
 				},
 				sessionId,
 				dir,
@@ -974,9 +834,6 @@ async function startPiMagicContextRuntime(
 			historianConfig: hist,
 			autoSearchConfig: auto,
 			contextOptions: buildContextOptions(cfg, hist, auto),
-			sidekickConfig: resolveSidekickFromConfig(cfg),
-			dreamerConfig: resolveDreamerFromConfig(cfg),
-			dreamerEnabled: isDreamerRunnable(cfg),
 		};
 	}
 
@@ -986,7 +843,6 @@ async function startPiMagicContextRuntime(
 	): ResolvedPiProjectDeps {
 		const cached = projectDepsByDir.get(dir);
 		if (cached) return cached;
-		ensureConfigLocationsMigrated(dir);
 		const switchedLoad = loadPiConfig({ cwd: dir });
 		logPiConfigLoad({
 			dir,
@@ -1036,37 +892,12 @@ async function startPiMagicContextRuntime(
 	registerMagicContextTools(pi, {
 		db,
 		ensureProjectRegistered: ensureProjectRegisteredFromPiDirectory,
-		// Main extension entry never gets the dreamer-only ctx_memory
-		// surface — those actions are reserved for dreamer subagents
-		// loaded via subagent-entry.ts with the
-		// `--magic-context-dreamer-actions` flag.
-		allowDreamerActions: false,
-		// ALWAYS register ctx_memory in the main entry. Pi is a single REPL that
-		// can `/cd` between projects, but tool registration happens once at boot,
-		// so gating registration on the BOOT project's memory.enabled would
-		// mismatch the per-project prompt (which re-resolves memory.enabled each
-		// pass): start in a memory-off project and switch to a memory-on one and
-		// the tool would be absent while the prompt advertises it. The tool's
-		// own per-call guard (ctx-memory.ts, getProjectEmbeddingSnapshot) refuses
-		// when the CURRENT project has memory off, so always-register is correct.
-		// (The subagent entry still uses memoryToolEnabled to keep ctx_memory off
-		// the retrieval-only sidekick, a separate security concern.)
-		memoryToolEnabled: true,
-		protectedTags: config.protected_tags ?? 20,
-		resolveProtectedTags: (ctx) =>
-			resolveCurrentProjectDeps(ctx).config.protected_tags ?? 20,
-		// Smart notes (surface_condition) only work when dreamer is
-		// running — otherwise the note sits `pending` forever with no
-		// path to surface. Match the user's dreamer config flag.
-		dreamerEnabled: isDreamerRunnable(config),
-		resolveDreamerEnabled: (ctx) =>
-			resolveCurrentProjectDeps(ctx).dreamerEnabled,
 		todowriteEnabled,
 	});
 	info(
 		todowriteEnabled
-			? "registered tools: ctx_search, ctx_memory, ctx_note, ctx_expand, todowrite, ctx_reduce; registered /todos"
-			: "registered tools: ctx_search, ctx_memory, ctx_note, ctx_expand, ctx_reduce (todowrite disabled)",
+			? "registered tools: ctx_search, ctx_expand, todowrite; registered /todos"
+			: "registered tools: ctx_search, ctx_expand (todowrite disabled)",
 	);
 
 	pi.on("session_start", async (event, ctx) => {
@@ -1104,19 +935,7 @@ async function startPiMagicContextRuntime(
 	info(
 		bootProjectDeps.autoSearchConfig.enabled
 			? `registered auto-search hint (threshold=${bootProjectDeps.autoSearchConfig.scoreThreshold}, minChars=${bootProjectDeps.autoSearchConfig.minPromptChars})`
-			: "registered auto-search hint: DISABLED (memory.auto_search.enabled=false)",
-	);
-
-	// Register /ctx-aug once, but resolve sidekick config from the active cwd
-	// every invocation so `/cd` follows the current project's model/language.
-	registerCtxAugCommand(
-		pi,
-		(ctx) => resolveCurrentProjectDeps(ctx).sidekickConfig,
-	);
-	info(
-		bootProjectDeps.sidekickConfig
-			? `registered /ctx-aug (sidekick model=${bootProjectDeps.sidekickConfig.model})`
-			: "registered /ctx-aug (sidekick disabled — set sidekick.disable=false and sidekick.model in config)",
+			: "registered auto-search hint: DISABLED (journal.auto_search.enabled=false)",
 	);
 
 	// Register the shared renderer before any command can append a status entry.
@@ -1133,7 +952,6 @@ async function startPiMagicContextRuntime(
 	// uses model-invisible custom entries when the runtime can render them.
 	const recompRunner = new PiSubagentRunner();
 	const wrapupRunner = new PiSubagentRunner();
-	const upgradeRunner = new PiSubagentRunner();
 	registerCtxStatusCommand(pi, {
 		db,
 		projectIdentity,
@@ -1142,14 +960,9 @@ async function startPiMagicContextRuntime(
 		executeThresholdPercentage:
 			bootProjectDeps.config.execute_threshold_percentage,
 		historyBudgetPercentage: bootProjectDeps.config.history_budget_percentage,
-		injectionBudgetTokens:
-			bootProjectDeps.config.memory?.injection_budget_tokens,
+		injectionBudgetTokens: undefined,
 		commitClusterTrigger: bootProjectDeps.config.commit_cluster_trigger,
 		executeThresholdTokens: bootProjectDeps.config.execute_threshold_tokens,
-		dreamer: {
-			runnable: bootProjectDeps.dreamerEnabled,
-			scheduleSummary: summarizeDreamSchedule(bootProjectDeps.config.dreamer),
-		},
 		resolveStatusDeps: (ctx) => {
 			const current = resolveCurrentProjectDeps(ctx);
 			return {
@@ -1159,13 +972,9 @@ async function startPiMagicContextRuntime(
 				protectedTags: current.config.protected_tags,
 				executeThresholdPercentage: current.config.execute_threshold_percentage,
 				historyBudgetPercentage: current.config.history_budget_percentage,
-				injectionBudgetTokens: current.config.memory?.injection_budget_tokens,
+				injectionBudgetTokens: undefined,
 				commitClusterTrigger: current.config.commit_cluster_trigger,
 				executeThresholdTokens: current.config.execute_threshold_tokens,
-				dreamer: {
-					runnable: current.dreamerEnabled,
-					scheduleSummary: summarizeDreamSchedule(current.config.dreamer),
-				},
 			};
 		},
 	});
@@ -1175,6 +984,17 @@ async function startPiMagicContextRuntime(
 
 	registerCtxFlushCommand(pi, { db });
 	info("registered /ctx-flush");
+	registerMcImportContextCommand(pi, {
+		db,
+		projectPath: projectDir,
+		resolveProject: resolveCurrentProject,
+		afterImport: (sessionId) => {
+			clearPiM0Cache(db, sessionId, "mc-import-context");
+			signalPiDeferredHistoryRefresh(sessionId);
+			signalPiDeferredMaterialization(sessionId);
+		},
+	});
+	info("registered /mc-import-context");
 
 	// /ctx-recomp uses its own PiSubagentRunner instance — recomp can run
 	// concurrently with normal historian, and giving each its own runner
@@ -1190,8 +1010,8 @@ async function startPiMagicContextRuntime(
 		historianTimeoutMs: bootProjectDeps.config.historian_timeout_ms,
 		historianThinkingLevel: bootProjectDeps.historianConfig?.thinkingLevel,
 		language: bootProjectDeps.config.language,
-		memoryEnabled: bootProjectDeps.config.memory.enabled,
-		autoPromote: bootProjectDeps.config.memory.auto_promote,
+		memoryEnabled: false,
+		autoPromote: false,
 		resolveRuntimeDeps: (ctx) => {
 			const current = resolveCurrentProjectDeps(ctx);
 			return {
@@ -1205,8 +1025,8 @@ async function startPiMagicContextRuntime(
 				historianTimeoutMs: current.config.historian_timeout_ms,
 				historianThinkingLevel: current.historianConfig?.thinkingLevel,
 				language: current.config.language,
-				memoryEnabled: current.config.memory.enabled,
-				autoPromote: current.config.memory.auto_promote,
+				memoryEnabled: false,
+				autoPromote: false,
 			};
 		},
 	});
@@ -1223,11 +1043,9 @@ async function startPiMagicContextRuntime(
 		historianTimeoutMs: bootProjectDeps.config.historian_timeout_ms,
 		historianThinkingLevel: bootProjectDeps.historianConfig?.thinkingLevel,
 		language: bootProjectDeps.config.language,
-		memoryEnabled: bootProjectDeps.config.memory.enabled,
-		autoPromote: bootProjectDeps.config.memory.auto_promote,
-		userMemoriesEnabled: userMemoryCollectionEnabled(
-			bootProjectDeps.config.dreamer,
-		),
+		memoryEnabled: false,
+		autoPromote: false,
+		userMemoriesEnabled: false,
 		executeThresholdPercentage:
 			bootProjectDeps.config.execute_threshold_percentage,
 		executeThresholdTokens: bootProjectDeps.config.execute_threshold_tokens,
@@ -1244,11 +1062,9 @@ async function startPiMagicContextRuntime(
 				historianTimeoutMs: current.config.historian_timeout_ms,
 				historianThinkingLevel: current.historianConfig?.thinkingLevel,
 				language: current.config.language,
-				memoryEnabled: current.config.memory.enabled,
-				autoPromote: current.config.memory.auto_promote,
-				userMemoriesEnabled: userMemoryCollectionEnabled(
-					current.config.dreamer,
-				),
+				memoryEnabled: false,
+				autoPromote: false,
+				userMemoriesEnabled: false,
 				executeThresholdPercentage: current.config.execute_threshold_percentage,
 				executeThresholdTokens: current.config.execute_threshold_tokens,
 			};
@@ -1256,100 +1072,15 @@ async function startPiMagicContextRuntime(
 	});
 	info("registered /ctx-wrapup");
 
-	// E6b/E6c: /ctx-session-upgrade — full recomp (legacy→v2 tiered) + once-per-
-	// project memory migration into the 5-category taxonomy. Own runner instance
-	// for the same isolation reasons as /ctx-recomp.
-	registerCtxSessionUpgradeCommand(pi, {
-		db,
-		runner: upgradeRunner,
-		historianModel: bootProjectDeps.historianConfig?.model,
-		historianChunkTokens: deriveHistorianChunkTokens(
-			resolveHistorianContextLimit(bootProjectDeps.historianConfig?.model),
-		),
-		historianFallbacks: bootProjectDeps.historianConfig?.fallbackModels,
-		historianTimeoutMs: bootProjectDeps.config.historian_timeout_ms,
-		historianThinkingLevel: bootProjectDeps.historianConfig?.thinkingLevel,
-		language: bootProjectDeps.config.language,
-		memoryEnabled: bootProjectDeps.config.memory.enabled,
-		autoPromote: bootProjectDeps.config.memory.auto_promote,
-		userMemoriesEnabled: userMemoryCollectionEnabled(
-			bootProjectDeps.config.dreamer,
-		),
-		resolveRuntimeDeps: (ctx) => {
-			const current = resolveCurrentProjectDeps(ctx);
-			return {
-				db,
-				runner: upgradeRunner,
-				historianModel: current.historianConfig?.model,
-				historianChunkTokens: deriveHistorianChunkTokens(
-					resolveHistorianContextLimit(current.historianConfig?.model),
-				),
-				historianFallbacks: current.historianConfig?.fallbackModels,
-				historianTimeoutMs: current.config.historian_timeout_ms,
-				historianThinkingLevel: current.historianConfig?.thinkingLevel,
-				language: current.config.language,
-				memoryEnabled: current.config.memory.enabled,
-				autoPromote: current.config.memory.auto_promote,
-				userMemoriesEnabled: userMemoryCollectionEnabled(
-					current.config.dreamer,
-				),
-			};
-		},
-	});
-	info("registered /ctx-session-upgrade");
-
-	registerCtxDreamCommand(pi, {
-		db,
-		projectDir,
-		projectIdentity,
-		resolveProject: resolveCurrentProject,
-		dreamerEnabled: bootProjectDeps.dreamerEnabled,
-		resolveDreamerEnabled: (ctx) =>
-			resolveCurrentProjectDeps(ctx).dreamerEnabled,
-		onProjectSeen: (identity) => seenDreamerProjectIdentities.add(identity),
-	});
-	info("registered /ctx-dream");
-
 	registerCtxEmbedCommand(pi, {
 		db,
 		projectDir,
 		projectIdentity,
-		memoryEnabled: bootProjectDeps.config.memory.enabled,
-		resolveMemoryEnabled: (ctx) =>
-			resolveCurrentProjectDeps(ctx).config.memory.enabled,
+		memoryEnabled: true,
+		resolveMemoryEnabled: () => true,
 		resolveProject: resolveCurrentProject,
 	});
 	info("registered /ctx-embed");
-
-	// Register Pi project with the singleton dreamer timer. When dreamer is
-	// disabled in config (default) this is a no-op. When enabled, the timer
-	// schedules dream runs based on config.dreamer.schedule and uses
-	// PiSubagentRunner to spawn child sessions for each task.
-	const dreamerConfig = bootProjectDeps.dreamerConfig;
-	if (dreamerConfig) {
-		registerPiDreamerProject({
-			db,
-			projectDir,
-			projectIdentity,
-			config: dreamerConfig,
-			// Council finding #7: thread real embedding + memory config so
-			// dreamer can do semantic dedup AND can write memory updates.
-			// Previously hardcoded to off/false, making most dreamer tasks
-			// useless on Pi.
-			embeddingConfig: bootProjectDeps.config.embedding,
-			memoryEnabled: bootProjectDeps.config.memory.enabled,
-			language: bootProjectDeps.config.language,
-			gitCommitIndexing: bootProjectDeps.config.memory.git_commit_indexing,
-			onAdjunctsRefreshNeeded: signalPiSystemPromptRefreshForProject,
-		});
-		info(`registered dreamer (${summarizeDreamSchedule(dreamerConfig)})`);
-	} else {
-		info(
-			bootProjectDeps.dreamerEnabled
-				? "registered dreamer: DISABLED (no dreamer config)"
-				: "registered dreamer: DISABLED (dreamer.disable=true or no dreamer config)",
-		);
-	}
 
 	// Inject the magic-context guidance block into the system prompt for every agent
 	// turn, then run hash-detection + sticky-date freezing so the
@@ -1413,50 +1144,6 @@ async function startPiMagicContextRuntime(
 				projectIdentity: effectiveProjectDeps.projectIdentity,
 			};
 			const effectiveConfig = effectiveProjectDeps.config;
-			seenDreamerProjectIdentities.add(currentProject.projectIdentity);
-
-			// Re-register the dreamer for the CURRENT project. The boot-time
-			// registration above used process.cwd(), but Pi can switch projects
-			// mid-process (`/cd`, multi-root). Without this, a switched-into
-			// project is never dreamed and `/ctx-dream` there throws
-			// "not registered". registerPiDreamerProject is idempotent for the
-			// same identity+dir, and rebuilds against the new checkout when the
-			// directory changed (worktree/clone of the same repo).
-			//
-			// All project-sensitive config comes from resolveCurrentProjectDeps(ctx),
-			// the same per-cwd accessor used by tools, commands, and the context
-			// pipeline. A switched-into project may carry its own config (different
-			// model/schedule, or its own `dreamer.disable`), so boot config must not
-			// leak into this registration.
-			const effectiveDreamerConfig = effectiveProjectDeps.dreamerConfig;
-			if (effectiveDreamerConfig) {
-				try {
-					registerPiDreamerProject({
-						db,
-						projectDir: currentProject.projectDir,
-						projectIdentity: currentProject.projectIdentity,
-						config: effectiveDreamerConfig,
-						embeddingConfig: effectiveConfig.embedding,
-						memoryEnabled: effectiveConfig.memory.enabled,
-						language: effectiveConfig.language,
-						gitCommitIndexing: effectiveConfig.memory.git_commit_indexing,
-						onAdjunctsRefreshNeeded: signalPiSystemPromptRefreshForProject,
-					});
-				} catch (err) {
-					warn("before_agent_start: registerPiDreamerProject threw:", err);
-				}
-			} else {
-				// The current checkout disables the dreamer. Any existing registration
-				// for this identity may have been created while another checkout's
-				// config was active, so tear it down explicitly here.
-				try {
-					unregisterPiDreamerProject({
-						projectIdentity: currentProject.projectIdentity,
-					});
-				} catch (err) {
-					warn("before_agent_start: unregisterPiDreamerProject threw:", err);
-				}
-			}
 			// Pi exposes `sessionManager.getSessionId()` once a session is
 			// active. We resolve it here defensively because before_agent_start
 			// fires once per agent turn.
@@ -1506,36 +1193,11 @@ async function startPiMagicContextRuntime(
 				} catch {
 					// Best-effort: a read failure must not block agent start.
 				}
-
-				// E6d: one-time upgrade reminder for sessions with legacy (pre-v2)
-				// compartments. Model-invisible (ctx.ui.notify), self-gating via the
-				// durable + per-process guards in the shared helper. Only when the
-				// historian can run (so /ctx-session-upgrade is actionable).
-				if (ctx.hasUI && effectiveProjectDeps.historianConfig?.model) {
-					void maybeSendUpgradeReminder(
-						{
-							client: null,
-							db,
-							sendIgnoredMessage: async (_client, _sid, text) => {
-								ctx.ui.notify(text, "info");
-								return "sent";
-							},
-							getNotificationParams: () => ({}),
-							// Pi's ctx.ui.notify is a TRANSIENT toast (no scrollback),
-							// so the durable stamp must not suppress after one missed
-							// toast — re-prompt each Pi start until the session upgrades.
-							deliveryPersists: false,
-						},
-						sessionId,
-					).catch(() => {
-						// Never block agent start on reminder delivery.
-					});
-				}
 			}
 
 			// Use effectiveConfig (re-resolved from the CURRENT checkout's cwd on
 			// a project switch) for every system-prompt decision below — a
-			// switched-into project may carry its own .cortexkit/magic-context.jsonc
+			// switched-into project may carry its own .cortexkit/mini-magic-context.jsonc
 			// (memory/docs/key-files/injection toggles). Reusing boot `config`
 			// would render the launch project's adjuncts in the new checkout.
 			if (effectiveConfig.system_prompt_injection?.enabled === false) {
@@ -1573,11 +1235,10 @@ async function startPiMagicContextRuntime(
 				db,
 				cwd: currentProject.projectDir,
 				sessionId,
-				memoryEnabled: effectiveConfig.memory.enabled,
+				memoryEnabled: false,
 				includeGuidance: true,
 				protectedTags: effectiveConfig.protected_tags,
-				ctxReduceCallable: true,
-				dreamerEnabled: effectiveProjectDeps.dreamerEnabled,
+				ctxReduceCallable: false,
 				temporalAwarenessEnabled: effectiveConfig.temporal_awareness ?? false,
 				cavemanTextCompressionEnabled:
 					effectiveConfig.caveman_text_compression?.enabled === true,
@@ -1586,9 +1247,7 @@ async function startPiMagicContextRuntime(
 				// promotes recurring observations into this set, then the
 				// system prompt surfaces them across all sessions in the
 				// project. Gated on dreamer.user_memories.enabled.
-				userMemoriesEnabled: userMemoryCollectionEnabled(
-					effectiveConfig.dreamer,
-				),
+				userMemoriesEnabled: false,
 				isCacheBusting,
 				existingSystemPrompt: event.systemPrompt,
 			});
@@ -1687,7 +1346,7 @@ async function startPiMagicContextRuntime(
 	// We let print mode skip the wait too. Users who want guaranteed
 	// historian completion in print mode should run interactive Pi
 	// instead.
-	pi.on("agent_end", (event, ctx) => {
+	pi.on("agent_end", (_event, _ctx) => {
 		// Synchronous return — DO NOT await background work here.
 		// awaitInFlightHistorians()/awaitInFlightDreamers() are still
 		// invoked at session_shutdown where they belong (and where pi
@@ -1696,59 +1355,8 @@ async function startPiMagicContextRuntime(
 		// (runPiHistorian wraps everything; spawnPiHistorianRun's
 		// .finally cleans up the inFlight map).
 		log("agent_end: returning synchronously (background work continues)");
-
-		// Channel 2 (ceiling) nudge delivery — the Pi analog of OpenCode's
-		// event-handler delivery on terminal message.updated. The pipeline
-		// records a `pending` intent near the threshold; deliver it here at the
-		// turn boundary via sendUserMessage(followUp). Internally CAS-gated to
-		// one delivery per session lifetime, and no-ops unless `pending`.
-		// Fire-and-forget; never block agent_end.
-		//
-		// Deliver ONLY on a clean final stop. Pi emits agent_end for error /
-		// aborted responses and for retry attempts too (agent-loop); delivering
-		// on those would inject the follow-up mid-retry and burn the one-shot cap
-		// before the turn actually completed. OpenCode's equivalent gates on
-		// finish === "stop". Mirror that with the final assistant's stopReason.
-		try {
-			const msgs = (
-				event as { messages?: Array<{ role?: string; stopReason?: string }> }
-			)?.messages;
-			const lastAssistant = Array.isArray(msgs)
-				? [...msgs].reverse().find((m) => m?.role === "assistant")
-				: undefined;
-			if (lastAssistant?.stopReason === "stop") {
-				const sessionId = ctx.sessionManager?.getSessionId?.();
-				if (sessionId && db) maybeDeliverChannel2Pi(pi, db, sessionId);
-			}
-		} catch (err) {
-			log(`agent_end: channel2 delivery skipped: ${String(err)}`);
-		}
 	});
 
-	// Tool-execution-start hook: detect note-nudge triggers from
-	// agent tool usage. Mirrors OpenCode's `tool.execute.after` hook in
-	// `hook-handlers.ts` (`createToolExecuteAfterHook`). We use Pi's
-	// `tool_execution_start` event because (a) it fires before the tool
-	// runs (so we can inspect args without waiting for output, matching
-	// OpenCode's `tool.execute.before`/`after` that have full args
-	// available), and (b) `tool_execution_end` is fire-and-forget and
-	// could race with the next pipeline pass.
-	//
-	// What we wire:
-	//
-	//   - `todowrite` with all-terminal todos → `todos_complete` trigger.
-	//     The agent's `todos` arg is an array of {id, content, status}
-	//     items. Note nudges should fire only when EVERY item is in a
-	//     terminal state (`completed` or `cancelled`) — firing on every
-	//     todowrite is too eager since agents call it repeatedly during
-	//     work to mark intermediate progress.
-	//
-	//   - `ctx_note` (any action) → `clearNoteNudgeState(sessionId)`.
-	//     The agent already saw / acted on notes, so we kill any
-	//     pending sticky reminder for this session right away. Subagents
-	//     never deliver note nudges (gated upstream in postprocess),
-	//     so we still skip the trigger for them. Mirrors OpenCode's
-	//     `if (typedInput.tool === "ctx_note") clearNoteNudgeState(...)`.
 	pi.on("tool_execution_start", async (event, ctx) => {
 		try {
 			const sessionId = ctx.sessionManager.getSessionId();
@@ -1785,72 +1393,12 @@ async function startPiMagicContextRuntime(
 					persist: Boolean(sessionMeta && !sessionMeta.isSubagent),
 					toolCallId,
 				});
-
-				if (
-					Array.isArray(todos) &&
-					todos.length > 0 &&
-					todos.every(
-						(t) => t.status === "completed" || t.status === "cancelled",
-					)
-				) {
-					if (sessionMeta && !sessionMeta.isSubagent) {
-						onNoteTrigger(db, sessionId, "todos_complete");
-					}
-				}
-			} else if (event.toolName === "ctx_note") {
-				clearNoteNudgeTriggerAndCooldown(db, sessionId);
 			}
 		} catch (err) {
 			// tool-event hook is opportunistic; failure should not break
 			// the agent loop.
 			log(
 				`tool_execution_start hook failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	});
-
-	pi.on("tool_execution_end", async (event, ctx) => {
-		try {
-			const sessionId = ctx.sessionManager.getSessionId();
-			if (typeof sessionId !== "string" || sessionId.length === 0) return;
-			if (event.toolName === "ctx_reduce") {
-				markPiChannel1Reduced(sessionId, db);
-			}
-		} catch (err) {
-			log(
-				`tool_execution_end hook failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	});
-
-	// Channel 1 (ctx_reduce in-turn nudge), Pi parity with OpenCode's
-	// `tool.execute.after` → `output.output` append. `tool_result` lets an
-	// extension REPLACE the recorded tool result content; returning the original
-	// content plus an appended `<system-reminder>` block persists to the session
-	// JSONL (via `appendMessage` on `message_end`) and replays verbatim on every
-	// later `context` pass — "free sticky", no anchor/CAS/replay machinery. The
-	// metric baseline is computed in the pipeline (`pi.on("context")`) and read
-	// here, exactly mirroring OpenCode's transform→tool.execute.after split.
-	pi.on("tool_result", async (event, ctx) => {
-		try {
-			const sessionId = ctx.sessionManager.getSessionId();
-			if (typeof sessionId !== "string" || sessionId.length === 0) return;
-			// Channel 2 mid-turn delivery: a pending ceiling intent steers a
-			// queued user message into the NEXT STEP of the in-flight turn so
-			// the agent is warned while the pile is still growing (agent_end
-			// stays as the idle fallback). No-ops unless pending + revalidated.
-			if (db) maybeDeliverChannel2Pi(pi, db, sessionId, "steer");
-			const block = maybeChannel1ReminderForToolResult({
-				db,
-				sessionId,
-				toolName: event.toolName,
-				content: event.content,
-			});
-			if (!block) return;
-			return { content: [...event.content, block] };
-		} catch (err) {
-			log(
-				`tool_result hook failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
 			);
 		}
 	});
@@ -2091,19 +1639,6 @@ async function startPiMagicContextRuntime(
 		}
 	});
 
-	// Unregister project from dreamer timer on session shutdown. Pi's
-	// `/reload` command tears down extensions and re-runs this default
-	// export — without unregistering, the dreamer timer would hold a
-	// stale reference to the previous extension instance.
-	//
-	// IMPORTANT: We do NOT close the SQLite handle here. `openDatabase()`
-	// caches handles in a process-lifetime Map keyed by path; closing
-	// the handle invalidates the cache entry, but the Map still returns
-	// the closed handle on the next `openDatabase()` call after reload,
-	// causing every tool/hook to fail with "database is not open". The
-	// DB handle is intentionally process-lifetime — Pi's `/reload`
-	// re-runs the extension code but keeps the host process alive, so
-	// the cached handle is still valid across reload boundaries.
 	pi.on("session_shutdown", async (_event, ctx) => {
 		// Bounded drain of in-flight historian / dreamer runs that were
 		// kicked off by recent turns. We moved the drain here from
@@ -2129,18 +1664,6 @@ async function startPiMagicContextRuntime(
 			await withTimeout(awaitInFlightRecomps(), SHUTDOWN_DRAIN_MS);
 		} catch (err) {
 			warn("shutdown: recomp drain threw:", err);
-		}
-		try {
-			await withTimeout(awaitInFlightDreamers(), SHUTDOWN_DRAIN_MS);
-		} catch (err) {
-			warn("shutdown: dreamer drain threw:", err);
-		}
-		try {
-			for (const identity of seenDreamerProjectIdentities) {
-				unregisterPiDreamerProject({ projectIdentity: identity });
-			}
-		} catch (err) {
-			warn("shutdown: unregisterPiDreamerProject threw:", err);
 		}
 		// Clear per-session system-prompt adjunct caches (sticky date,
 		// project docs, user profile, key files). Pi's

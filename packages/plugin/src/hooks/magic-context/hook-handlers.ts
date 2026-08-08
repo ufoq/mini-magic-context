@@ -39,11 +39,6 @@ import {
 } from "./event-payloads";
 import { resolveSessionId as resolveEventSessionId } from "./event-resolvers";
 import { dropSlot } from "./lkg-slot";
-import {
-    clearNoteNudgeTriggerAndCooldown,
-    onNoteTrigger,
-    resetNoteNudgeCooldownOnly,
-} from "./note-nudger";
 import { readRawSessionMessageById, readRawSessionMessages } from "./read-session-chunk";
 import { variantChangeBustsProviderCache } from "./sentinel";
 import { normalizeTodoStateJson } from "./todo-view";
@@ -383,7 +378,6 @@ export function createEventHook(args: {
             args.deferredMaterializationSessions.delete(sessionId);
             args.lastHeuristicsTurnId.delete(sessionId);
             args.commitSeenLastPass?.delete(sessionId);
-            resetNoteNudgeCooldownOnly(sessionId);
             clearAutoSearchForSession(sessionId);
             clearSidebarSnapshotCache(sessionId);
             clearSessionTracking(sessionId);
@@ -602,26 +596,6 @@ export function createToolExecuteAfterHook(args: {
                     }
                 }
             }
-            if (
-                Array.isArray(todos) &&
-                todos.length > 0 &&
-                todos.every(
-                    (t) =>
-                        typeof t === "object" &&
-                        t !== null &&
-                        ((t as { status?: unknown }).status === "completed" ||
-                            (t as { status?: unknown }).status === "cancelled"),
-                )
-            ) {
-                // Subagents never deliver note nudges (gated in postprocess), so don't
-                // accumulate orphan trigger state for them.
-                if (sessionMeta && !sessionMeta.isSubagent) {
-                    onNoteTrigger(args.db, typedInput.sessionID, "todos_complete");
-                }
-            }
-        }
-        if (typedInput.tool === "ctx_note") {
-            clearNoteNudgeTriggerAndCooldown(args.db, typedInput.sessionID);
         }
     };
 }

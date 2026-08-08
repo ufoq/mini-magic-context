@@ -113,7 +113,7 @@ describe("runSetup", () => {
             paths: {
                 getPiAgentConfigDir: () => agentDir,
                 getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                    join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 getPiUserExtensionsPath: () => settingsPath,
             },
         };
@@ -136,7 +136,7 @@ describe("runSetup", () => {
 
         const existing = {
             packages: [
-                { name: "npm:@cortexkit/pi-magic-context", version: "1.2.3" },
+                { name: "npm:@ufoq/pi-mini-magic-context", version: "1.2.3" },
                 "npm:other-string-extension",
                 { name: "third-party-extension", version: "9.9.9", enabled: true },
             ],
@@ -172,7 +172,7 @@ describe("runSetup", () => {
         expect(updated.packages).toEqual([
             "npm:one",
             { name: "two", version: "2.0.0" },
-            "npm:@cortexkit/pi-magic-context",
+            "npm:@ufoq/pi-mini-magic-context",
         ]);
     });
 
@@ -181,7 +181,7 @@ describe("runSetup", () => {
         const agentDir = join(root, ".pi", "agent");
         setConfigEnv(root, agentDir);
         mkdirSync(agentDir, { recursive: true });
-        const legacyPath = join(agentDir, "magic-context.jsonc");
+        const legacyPath = join(agentDir, "mini-magic-context.jsonc");
         writeFileSync(legacyPath, JSON.stringify({ protected_tags: 7 }));
 
         const env: SetupEnvironment = {
@@ -200,7 +200,7 @@ describe("runSetup", () => {
         const code = await runSetup({ prompts, env });
 
         expect(code).toBe(0);
-        const targetPath = join(root, ".config", "cortexkit", "magic-context.jsonc");
+        const targetPath = join(root, ".config", "cortexkit", "mini-magic-context.jsonc");
         const config = parseJsonc(readFileSync(targetPath, "utf-8")) as {
             protected_tags?: number;
         };
@@ -226,7 +226,7 @@ describe("runSetup", () => {
             paths: {
                 getPiAgentConfigDir: () => agentDir,
                 getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                    join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
             },
         };
@@ -237,77 +237,27 @@ describe("runSetup", () => {
 
         expect(code).toBe(0);
         const settingsPath = join(agentDir, "settings.json");
-        const configPath = join(root, ".config", "cortexkit", "magic-context.jsonc");
+        const configPath = join(root, ".config", "cortexkit", "mini-magic-context.jsonc");
         expect(existsSync(settingsPath)).toBe(true);
         expect(existsSync(configPath)).toBe(true);
 
         const settings = parseJsonc(readFileSync(settingsPath, "utf-8")) as {
             packages?: string[];
         };
-        expect(settings.packages).toContain("npm:@cortexkit/pi-magic-context");
+        expect(settings.packages).toContain("npm:@ufoq/pi-mini-magic-context");
 
         const config = parseJsonc(readFileSync(configPath, "utf-8")) as {
             historian?: { model?: string; thinking_level?: string };
-            dreamer?: { enabled?: boolean; model?: string; disable?: boolean };
-            sidekick?: { enabled?: boolean; disable?: boolean };
             embedding?: { provider?: string; model?: string };
         };
-        // No recommendation tree anymore: the picker shows the full model list
-        // sorted, and the mock selects the first option — alphabetically
-        // "anthropic/claude-haiku-4-5" for BOTH historian and dreamer.
         expect(config.historian?.model).toBe("anthropic/claude-haiku-4-5");
         expect(config.historian?.thinking_level).toBeUndefined();
-        expect(config.dreamer).toEqual({
-            model: "anthropic/claude-haiku-4-5",
-        });
-        expect(config.dreamer).not.toHaveProperty("enabled");
-        expect(config.sidekick?.disable).toBe(true);
-        expect(config.sidekick).not.toHaveProperty("enabled");
         expect(config.embedding).toEqual({
             provider: "local",
             model: "Xenova/all-MiniLM-L6-v2",
         });
-    });
-
-    it("does not ask for a dreamer model when the dreamer is declined (issue #144)", async () => {
-        const root = makeTempRoot();
-        const agentDir = join(root, ".pi", "agent");
-        setConfigEnv(root, agentDir);
-        mkdirSync(agentDir, { recursive: true });
-
-        const env: SetupEnvironment = {
-            detectPiBinary: () => ({ path: join(root, "bin", "pi"), source: "path" }),
-            getPiVersion: () => "0.74.0",
-            getAvailableModels: () => ["anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-4-6"],
-            paths: {
-                getPiAgentConfigDir: () => agentDir,
-                getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
-                getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
-            },
-        };
-        // confirms: configurePi=true, dreamerEnabled=FALSE, sidekickEnabled=false.
-        // The picker is invoked once (historian); a 2nd autocomplete call would
-        // mean the dreamer model was wrongly requested after the user declined.
-        let autocompleteCalls = 0;
-        const prompts = new MockPrompts({ confirms: [true, false, false] });
-        const origAuto = prompts.selectAutocomplete.bind(prompts);
-        prompts.selectAutocomplete = async (message, options) => {
-            autocompleteCalls += 1;
-            return origAuto(message, options);
-        };
-
-        const code = await runSetup({ prompts, env });
-        expect(code).toBe(0);
-        expect(autocompleteCalls).toBe(1); // historian only — not dreamer
-
-        const config = parseJsonc(
-            readFileSync(join(root, ".config", "cortexkit", "magic-context.jsonc"), "utf-8"),
-        ) as {
-            dreamer?: { model?: string; disable?: boolean };
-        };
-        expect(config.dreamer?.disable).toBe(true);
-        expect(config.dreamer).not.toHaveProperty("model");
+        expect(config).not.toHaveProperty("dreamer");
+        expect(config).not.toHaveProperty("sidekick");
     });
 
     it("prompts for thinking_level when historian model is github-copilot", async () => {
@@ -324,7 +274,7 @@ describe("runSetup", () => {
             paths: {
                 getPiAgentConfigDir: () => agentDir,
                 getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                    join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
             },
         };
@@ -336,7 +286,7 @@ describe("runSetup", () => {
         expect(code).toBe(0);
 
         const config = parseJsonc(
-            readFileSync(join(root, ".config", "cortexkit", "magic-context.jsonc"), "utf-8"),
+            readFileSync(join(root, ".config", "cortexkit", "mini-magic-context.jsonc"), "utf-8"),
         ) as {
             historian?: { model?: string; thinking_level?: string };
         };
@@ -356,7 +306,7 @@ describe("runSetup", () => {
             paths: {
                 getPiAgentConfigDir: () => agentDir,
                 getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                    join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
             },
         };
@@ -380,7 +330,7 @@ describe("runSetup", () => {
             paths: {
                 getPiAgentConfigDir: () => agentDir,
                 getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                    join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
             },
         };
@@ -393,7 +343,9 @@ describe("runSetup", () => {
         const log = prompts.messages.join("\n");
         expect(log).toContain("Pi 0.69.0 is older than the required 0.74.0");
         expect(log).toContain("outro:Setup cancelled");
-        expect(existsSync(join(root, ".config", "cortexkit", "magic-context.jsonc"))).toBe(false);
+        expect(existsSync(join(root, ".config", "cortexkit", "mini-magic-context.jsonc"))).toBe(
+            false,
+        );
         expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
     });
 
@@ -408,7 +360,7 @@ describe("runSetup", () => {
             paths: {
                 getPiAgentConfigDir: () => agentDir,
                 getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                    join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
             },
         };
@@ -419,7 +371,9 @@ describe("runSetup", () => {
         const code = await runSetup({ prompts, env });
 
         expect(code).toBe(0);
-        expect(existsSync(join(root, ".config", "cortexkit", "magic-context.jsonc"))).toBe(true);
+        expect(existsSync(join(root, ".config", "cortexkit", "mini-magic-context.jsonc"))).toBe(
+            true,
+        );
         expect(prompts.messages.join("\n")).toContain(
             "Pi 0.69.0 is older than the required 0.74.0",
         );

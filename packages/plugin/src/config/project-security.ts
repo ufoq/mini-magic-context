@@ -14,7 +14,7 @@ import { DEFAULT_EXECUTE_THRESHOLD_PERCENTAGE } from "./schema/magic-context";
  */
 
 /** Hidden agents that run with elevated/autonomous capability. */
-const HIDDEN_AGENT_KEYS = ["historian", "dreamer", "sidekick"] as const;
+const HIDDEN_AGENT_KEYS = ["historian"] as const;
 const HISTORIAN_USER_ONLY_FIELDS = ["model", "fallback_models"] as const;
 
 /**
@@ -41,7 +41,7 @@ const HISTORIAN_USER_ONLY_FIELDS = ["model", "fallback_models"] as const;
  * historian spend on the user's dime.
  */
 const AGENT_ESCALATION_FIELDS = ["prompt", "permission", "tools", "system_prompt"] as const;
-const EMBEDDING_DESTINATION_FIELDS = ["endpoint", "provider", "fallback_provider"] as const;
+const EMBEDDING_DESTINATION_FIELDS = ["endpoint", "provider"] as const;
 const PERCENTAGE_THRESHOLD_REASON =
     "security: a repository may only raise compaction thresholds above the user's effective value; it cannot force earlier historian work or cloned-repo cost escalation.";
 const TOKEN_THRESHOLD_REASON =
@@ -201,9 +201,6 @@ function makeProjectThresholdWarning(field: string, reason: string): string {
  *  - `embedding.endpoint` / `embedding.provider` — a repo must not choose
  *    where private memory/search/commit text is embedded. User-level config is
  *    the trust boundary for embedding destinations.
- *  - `transform_mode` is intentionally allowed at project tier so a repository
- *    can opt its own runtime into the experimental Rust pipeline. The resolver
- *    requires trusted user-level `subc` configuration before Rust can activate.
  *  - `historian.model` / `historian.fallback_models` — historian model spend is
  *    user-level only; a cloned repo cannot force extra compaction cost.
  *  - `pi.subagent_extensions` — a cloned repo must not choose which extensions
@@ -249,15 +246,6 @@ export function stripUnsafeProjectConfigFields(projectRaw: Record<string, unknow
         warnings.push(
             "Ignoring pi.subagent_extensions from project config (security: only user-level config may choose extensions loaded by Pi subagent children).",
         );
-    }
-
-    for (const field of ["subc", "shadow_embedding"] as const) {
-        if (field in projectRaw) {
-            delete projectRaw[field];
-            warnings.push(
-                `Ignoring ${field} from project config (security: daemon routing and developer-only embedding traffic are user-level settings).`,
-            );
-        }
     }
 
     const embedding = projectRaw.embedding;

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { parse as parseJsonc } from "comment-json";
 import {
     addPluginToOpenCodeConfig,
-    addPluginToTuiConfig,
     findDcpPluginIndexes,
     writeMagicContextConfig,
 } from "./setup-opencode";
@@ -31,10 +30,6 @@ describe("setup-opencode config safety", () => {
         expect(() =>
             writeMagicContextConfig(path, {
                 historianModel: "anthropic/claude-sonnet-4-6",
-                dreamerEnabled: false,
-                dreamerModel: null,
-                sidekickEnabled: false,
-                sidekickModel: null,
                 claudeMax: false,
             }),
         ).toThrow(`Refusing to overwrite unparseable config ${path}`);
@@ -44,21 +39,14 @@ describe("setup-opencode config safety", () => {
     it("re-detects targets created after discovery and merges them", () => {
         const root = tempDir();
         const opencodePath = join(root, "opencode.jsonc");
-        const tuiPath = join(root, "tui.jsonc");
         writeFileSync(opencodePath, `{"theme":"dark","plugin":["other"]}`);
-        writeFileSync(tuiPath, `{"layout":"wide","plugin":["other-tui"]}`);
 
         // "none" is the stale pre-prompt detection result.
         addPluginToOpenCodeConfig(opencodePath, "none");
-        addPluginToTuiConfig(tuiPath, "none");
 
         expect(parseJsonc(readFileSync(opencodePath, "utf-8"))).toMatchObject({
             theme: "dark",
-            plugin: ["other", "@cortexkit/opencode-magic-context@latest"],
-        });
-        expect(parseJsonc(readFileSync(tuiPath, "utf-8"))).toMatchObject({
-            layout: "wide",
-            plugin: ["other-tui", "@cortexkit/opencode-magic-context@latest"],
+            plugin: ["other", "@ufoq/opencode-mini-magic-context@latest"],
         });
     });
 
@@ -87,6 +75,34 @@ describe("setup-opencode config safety", () => {
         });
         expect(merged.plugin).toContain("other");
         expect(merged.plugin).not.toContain("@tarquinen/opencode-dcp@latest");
+    });
+
+    it("writes the Mini Magic Context schema URL", () => {
+        const path = join(tempDir(), "mini-magic-context.jsonc");
+
+        writeMagicContextConfig(path, {
+            historianModel: null,
+            claudeMax: false,
+        });
+
+        expect(parseJsonc(readFileSync(path, "utf-8"))).toMatchObject({
+            $schema:
+                "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
+        });
+    });
+
+    it("writes only retained Magic Context settings", () => {
+        const path = join(tempDir(), "mini-magic-context.jsonc");
+
+        writeMagicContextConfig(path, {
+            historianModel: "anthropic/claude-sonnet-4-6",
+            claudeMax: false,
+        });
+
+        const config = parseJsonc(readFileSync(path, "utf-8"));
+        expect(config).toMatchObject({ historian: { model: "anthropic/claude-sonnet-4-6" } });
+        expect(config).not.toHaveProperty("dreamer");
+        expect(config).not.toHaveProperty("sidekick");
     });
 });
 

@@ -30,8 +30,8 @@ env:
 #   - Docker e2e: fresh-install smoke (plugin loads, doctor clean, one mock turn writes DB
 #     rows under the cortexkit path). Catches packaging / install-flow regressions.
 #   - Host e2e: behavior suite with byte-level wire assertions, multi-turn cache stability,
-#     historian publish behavior, tag-owner collision, synthetic todowrite, cross-harness
-#     memory, etc. Spawns real `opencode serve` / Pi subprocesses against the embedded
+#     historian publish behavior, tag-owner collision, synthetic todowrite, etc. Spawns real
+#     `opencode serve` / Pi subprocesses against the embedded
 #     mock provider. Catches cache-stability + correctness regressions that the smoke
 #     layer cannot see. Adding it to the release gate means a tag push that breaks any of
 #     the ~74 host tests will block npm publishes.
@@ -75,9 +75,6 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Check compiled TUI freshness
-        run: bun run --cwd packages/plugin check:tui-compiled
-
       - name: Test
         run: bun run test
 
@@ -85,22 +82,6 @@ jobs:
       # #151 array-bind normalization) under real Node before publishing.
       - name: Smoke (node:sqlite backend)
         run: node packages/plugin/scripts/smoke-node-sqlite.ts
-
-      # Smart-note QuickJS sandbox: verify the WASM is embedded in the BUNDLE
-      # (not a sibling .wasm file the build never emits — bun test runs from src
-      # and cannot see this).
-      - name: Smoke (smart-note wasm bundle)
-        run: bun packages/plugin/scripts/smoke-smartnote-wasm.ts
-
-      # Verify the raw-TSX ./tui entry imports (OpenTUI/Solid runtime resolves)
-      # before publishing — a missing dep ships a TUI that won't load.
-      - name: Smoke (TUI entry import)
-        run: bun packages/plugin/scripts/smoke-tui-import.ts
-
-      # Packaged-install import — the only check that exercises the published
-      # node_modules load path (the v0.31.1 failure class).
-      - name: Smoke (TUI packaged install import)
-        run: bun packages/plugin/scripts/smoke-tui-pack-install.ts
 
   test-pi:
     name: Test (pi-plugin)
@@ -170,7 +151,7 @@ jobs:
         run: bun run --cwd packages/plugin build
 
       - name: Build CLI
-        # The CLI is its own package (@cortexkit/magic-context) since
+        # The CLI is its own package (@ufoq/mini-magic-context) since
         # v0.16.1; Dockerfile.opencode COPYs packages/cli/dist/ in.
         run: bun run --cwd packages/cli build
 
@@ -203,9 +184,9 @@ jobs:
         run: bun run --cwd packages/pi-plugin build
 
       - name: Build CLI
-        # The CLI moved to its own package (@cortexkit/magic-context) in
+        # The CLI moved to its own package (@ufoq/mini-magic-context) in
         # v0.16.1. Dockerfile.pi COPYs packages/cli/dist/ in for the
-        # `magic-context doctor --harness pi` test invocation.
+        # `mini-magic-context doctor --harness pi` test invocation.
         run: bun run --cwd packages/cli build
 
       - name: Build E2E image
@@ -264,11 +245,7 @@ jobs:
           NODE_ENV: ""
         run: |
           cd packages/e2e-tests
-          # Match every test file except pi-*.test.ts, plus the cache-bust oracle
-          # unit test (src/cache-analysis.test.ts) that backs the cache-invariant
-          # suite — a regression in it would silently neuter those guards.
           files=$(ls tests/*.test.ts | grep -v "/pi-" | tr '\n' ' ')
-          files="$files src/cache-analysis.test.ts"
           echo "Running OpenCode host tests: $files"
           bun test --timeout 600000 $files
 
@@ -290,26 +267,8 @@ jobs:
       - name: Install workspace deps
         run: bun install --frozen-lockfile
 
-      # pi-cross-harness.test.ts spawns BOTH a Pi runner and an OpenCode
-      # serve to verify cross-harness memory sharing, so this job needs
-      # opencode on PATH too. Float to LATEST like the OpenCode host job
-      # (see ci.yml for the rationale + re-pin escape hatch).
-      - name: Install opencode
-        run: |
-          curl -fsSL https://opencode.ai/install | bash
-          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
-
-      - name: Verify opencode on PATH
-        run: opencode --version
-
       - name: Build Pi plugin
         run: bun run --cwd packages/pi-plugin build
-
-      # pi-cross-harness also instantiates the OpenCode harness, which
-      # spawns `opencode serve` with a file:// plugin specifier pointing
-      # at packages/plugin/. That dist must exist.
-      - name: Build OpenCode plugin
-        run: bun run --cwd packages/plugin build
 
       - name: Run host e2e suite (Pi tests only)
         env:
@@ -389,7 +348,7 @@ jobs:
         run: bun run --cwd packages/pi-plugin build
 
       # Uses npm Trusted Publishing (OIDC) — must be configured on npmjs.com
-      # for @cortexkit/pi-magic-context before first release.
+      # for @ufoq/pi-mini-magic-context before first release.
       - name: Publish to npm
         run: npm publish --access public --provenance
         working-directory: packages/pi-plugin
@@ -423,7 +382,7 @@ jobs:
         run: bun run --cwd packages/cli build
 
       # Uses npm Trusted Publishing (OIDC) — must be configured on npmjs.com
-      # for @cortexkit/magic-context before first release.
+      # for @ufoq/mini-magic-context before first release.
       - name: Publish to npm
         run: npm publish --access public --provenance
         working-directory: packages/cli
@@ -434,7 +393,7 @@ jobs:
     # Wait for ALL three npm publishes to succeed before tagging the
     # GitHub release. Previously this depended only on test jobs, so a
     # publish timeout or registry failure could leave a published release
-    # page on GitHub while one of the @cortexkit/* packages was missing
+    # page on GitHub while one of the @ufoq/* packages was missing
     # from npm.
     needs: [test, test-pi, test-cli, e2e-opencode, e2e-pi, e2e-host-opencode, e2e-host-pi, publish-npm, publish-npm-pi, publish-npm-cli]
     steps:

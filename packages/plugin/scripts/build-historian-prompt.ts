@@ -26,14 +26,19 @@ const raw = readFileSync(SRC, "utf-8").trimEnd();
 if (!raw.startsWith("# Historian")) {
   throw new Error("build-historian-prompt: source does not start with '# Historian' header");
 }
-// Sanity: the locked reconciliation must be present (guards against a stale source copy).
-if (!raw.includes("always present (a small permanent calibration floor)")) {
+// Sanity: the compartment-only reconciliation must be present (guards against a stale
+// source copy that still instructs seed-corpus or fact/event extraction).
+if (
+  !raw.includes(
+    "Do NOT extract facts, events, user observations, or primers. Everything durable lives in the compartment tiers.",
+  )
+) {
   throw new Error(
-    "build-historian-prompt: source missing the 4-seed-floor reconciliation — refusing to emit a stale 'phases down/disappears' prompt",
+    "build-historian-prompt: source missing the compartment-only reconciliation — refusing to emit a stale removed-feature prompt",
   );
 }
 // Sanity: the output envelope the parser depends on must exist.
-for (const marker of ["<compartments>", "<unprocessed_from>", "<facts>"]) {
+for (const marker of ["<compartments>", "<unprocessed_from>", "<meta>", "<p1>", "<p4>"]) {
   if (!raw.includes(marker)) {
     throw new Error(`build-historian-prompt: source missing required output marker '${marker}'`);
   }

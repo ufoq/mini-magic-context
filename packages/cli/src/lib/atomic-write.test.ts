@@ -37,8 +37,8 @@ describe("writeFileAtomic", () => {
         const root = mkdtempSync(join(tmpdir(), "mc-atomic-mkdir-"));
         roots.push(root);
         // Nested path whose parents do NOT exist yet — mirrors a first-ever setup
-        // writing ~/.config/cortexkit/magic-context.jsonc on a clean machine.
-        const target = join(root, "cortexkit", "nested", "magic-context.jsonc");
+        // writing ~/.config/cortexkit/mini-magic-context.jsonc on a clean machine.
+        const target = join(root, "cortexkit", "nested", "mini-magic-context.jsonc");
         expect(existsSync(join(root, "cortexkit"))).toBe(false);
         writeFileAtomic(target, '{"created":true}\n');
         expect(readFileSync(target, "utf-8")).toBe('{"created":true}\n');

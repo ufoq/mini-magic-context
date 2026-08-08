@@ -1,11 +1,10 @@
 import { getHarness } from "../../shared/harness";
 import type { Database, Statement as PreparedStatement } from "../../shared/sqlite";
-import { isCompartmentLeaseHeld } from "./compartment-lease";
+import { canPublishWithCompartmentLease } from "./compartment-lease";
 import { getIncrementDepthStatement } from "./compression-depth-storage";
 import { clearCachedM0M1 } from "./storage-meta-shared";
 
 const insertCompartmentStatements = new WeakMap<Database, PreparedStatement>();
-const insertFactStatements = new WeakMap<Database, PreparedStatement>();
 
 function getInsertCompartmentStatement(db: Database): PreparedStatement {
     let stmt = insertCompartmentStatements.get(db);
@@ -14,17 +13,6 @@ function getInsertCompartmentStatement(db: Database): PreparedStatement {
             "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, legacy, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         );
         insertCompartmentStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getInsertFactStatement(db: Database): PreparedStatement {
-    let stmt = insertFactStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            "INSERT INTO session_facts (session_id, category, content, created_at, updated_at, harness) VALUES (?, ?, ?, ?, ?, ?)",
-        );
-        insertFactStatements.set(db, stmt);
     }
     return stmt;
 }
@@ -126,7 +114,7 @@ function isCompartmentRow(row: unknown): row is CompartmentRow {
     );
 }
 
-function isSessionFactRow(row: unknown): row is SessionFactRow {
+function _isSessionFactRow(row: unknown): row is SessionFactRow {
     if (row === null || typeof row !== "object") return false;
     const candidate = row as Record<string, unknown>;
     return (
@@ -192,18 +180,6 @@ function insertCompartmentRows(
     }
 }
 
-function insertFactRows(
-    db: Database,
-    sessionId: string,
-    facts: Array<{ category: string; content: string }>,
-    now: number,
-): void {
-    const stmt = getInsertFactStatement(db);
-    for (const fact of facts) {
-        stmt.run(sessionId, fact.category, fact.content, now, now, getHarness());
-    }
-}
-
 function toCompartment(row: CompartmentRow): Compartment {
     return {
         id: row.id,
@@ -226,7 +202,7 @@ function toCompartment(row: CompartmentRow): Compartment {
     };
 }
 
-function toSessionFact(row: SessionFactRow): SessionFact {
+function _toSessionFact(row: SessionFactRow): SessionFact {
     return {
         id: row.id,
         sessionId: row.session_id,
@@ -335,20 +311,14 @@ export function replaceSessionFacts(
     sessionId: string,
     facts: Array<{ category: string; content: string }>,
 ): void {
-    const now = Date.now();
-    db.transaction(() => {
-        db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
-        insertFactRows(db, sessionId, facts, now);
-        clearCachedM0M1(db, sessionId);
-    })();
+    void facts;
+    clearCachedM0M1(db, sessionId);
 }
 
 export function getSessionFacts(db: Database, sessionId: string): SessionFact[] {
-    const rows = db
-        .prepare("SELECT * FROM session_facts WHERE session_id = ? ORDER BY category ASC, id ASC")
-        .all(sessionId)
-        .filter(isSessionFactRow);
-    return rows.map(toSessionFact);
+    void db;
+    void sessionId;
+    return [];
 }
 
 export function replaceAllCompartmentState(
@@ -358,12 +328,11 @@ export function replaceAllCompartmentState(
     facts: Array<{ category: string; content: string }>,
 ): void {
     const now = Date.now();
+    void facts;
     db.transaction(() => {
         db.prepare("DELETE FROM compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
 
         insertCompartmentRows(db, sessionId, compartments, now);
-        insertFactRows(db, sessionId, facts, now);
 
         clearCachedM0M1(db, sessionId);
     })();
@@ -379,20 +348,19 @@ export function replaceAllCompartmentStateAndBumpDepth(
     depthEndOrdinal: number,
 ): boolean {
     const now = Date.now();
+    void facts;
     db.exec("BEGIN IMMEDIATE");
     let finished = false;
     try {
-        if (!isCompartmentLeaseHeld(db, sessionId, holderId)) {
+        if (!canPublishWithCompartmentLease(db, sessionId, holderId)) {
             db.exec("ROLLBACK");
             finished = true;
             return false;
         }
 
         db.prepare("DELETE FROM compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
 
         insertCompartmentRows(db, sessionId, compartments, now);
-        insertFactRows(db, sessionId, facts, now);
 
         clearCachedM0M1(db, sessionId);
 
@@ -479,13 +447,10 @@ export function saveRecompStagingPass(
     sessionId: string,
     passNumber: number,
     compartments: CompartmentInput[],
-    facts: Array<{ category: string; content: string }>,
+    _facts: Array<{ category: string; content: string }>,
 ): void {
     const now = Date.now();
     db.transaction(() => {
-        // Facts are replaced wholesale each pass (historian rewrites full fact list)
-        db.prepare("DELETE FROM recomp_facts WHERE session_id = ?").run(sessionId);
-
         const compartmentStmt = db.prepare(
             "INSERT OR REPLACE INTO recomp_compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, pass_number, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         );
@@ -509,13 +474,6 @@ export function saveRecompStagingPass(
                 now,
                 getHarness(),
             );
-        }
-
-        const factStmt = db.prepare(
-            "INSERT INTO recomp_facts (session_id, category, content, pass_number, created_at, harness) VALUES (?, ?, ?, ?, ?, ?)",
-        );
-        for (const f of facts) {
-            factStmt.run(sessionId, f.category, f.content, passNumber, now, getHarness());
         }
     })();
 }
@@ -545,17 +503,12 @@ export function getRecompStaging(db: Database, sessionId: string): RecompStaging
         episodeType: row.episode_type ?? null,
     }));
 
-    const factRows = db
-        .prepare("SELECT category, content FROM recomp_facts WHERE session_id = ?")
-        .all(sessionId)
-        .filter(isRecompFactRow);
-
     const maxPass = compartmentRows.reduce((m, r) => Math.max(m, r.pass_number), 0);
     const lastEnd = compartmentRows[compartmentRows.length - 1]?.end_message ?? 0;
 
     return {
         compartments,
-        facts: factRows,
+        facts: [],
         passCount: maxPass,
         lastEndMessage: lastEnd,
     };
@@ -577,11 +530,8 @@ export function promoteRecompStaging(
             if (!staging || staging.compartments.length === 0) return null;
 
             db.prepare("DELETE FROM compartments WHERE session_id = ?").run(sessionId);
-            db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
             insertCompartmentRows(db, sessionId, staging.compartments, now);
-            insertFactRows(db, sessionId, staging.facts, now);
             db.prepare("DELETE FROM recomp_compartments WHERE session_id = ?").run(sessionId);
-            db.prepare("DELETE FROM recomp_facts WHERE session_id = ?").run(sessionId);
             clearCachedM0M1(db, sessionId);
             return { compartments: staging.compartments, facts: staging.facts };
         })();
@@ -590,7 +540,7 @@ export function promoteRecompStaging(
     db.exec("BEGIN IMMEDIATE");
     let finished = false;
     try {
-        if (!isCompartmentLeaseHeld(db, sessionId, holderId)) {
+        if (!canPublishWithCompartmentLease(db, sessionId, holderId)) {
             db.exec("ROLLBACK");
             finished = true;
             return null;
@@ -604,14 +554,11 @@ export function promoteRecompStaging(
         }
         // Replace real tables
         db.prepare("DELETE FROM compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
 
         insertCompartmentRows(db, sessionId, staging.compartments, now);
-        insertFactRows(db, sessionId, staging.facts, now);
 
         // Clear staging
         db.prepare("DELETE FROM recomp_compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM recomp_facts WHERE session_id = ?").run(sessionId);
 
         clearCachedM0M1(db, sessionId);
 
@@ -633,7 +580,6 @@ export function promoteRecompStaging(
 export function clearRecompStaging(db: Database, sessionId: string): void {
     db.transaction(() => {
         db.prepare("DELETE FROM recomp_compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM recomp_facts WHERE session_id = ?").run(sessionId);
         // Clear the partial-range marker so a future full recomp doesn't
         // resume under a partial range. Best-effort — column may not exist
         // in very old test DBs.
@@ -738,7 +684,7 @@ function isRecompCompartmentRow(row: unknown): row is RecompCompartmentRow {
     );
 }
 
-function isRecompFactRow(row: unknown): row is { category: string; content: string } {
+function _isRecompFactRow(row: unknown): row is { category: string; content: string } {
     if (row === null || typeof row !== "object") return false;
     const candidate = row as Record<string, unknown>;
     return typeof candidate.category === "string" && typeof candidate.content === "string";

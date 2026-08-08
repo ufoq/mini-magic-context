@@ -12,13 +12,11 @@ import {
     getOrCreateSessionMeta,
     getOverflowState,
     getPendingCompactionMarkerState,
-    getPersistedNoteNudge,
     getPersistedReasoningWatermark,
     markSessionCleanupPending,
     recordDetectedContextLimit,
     recordOverflowDetected,
     removeAutoSearchHintDecisionByMessageId,
-    removeNoteNudgeAnchorByMessageId,
     removeStrippedPlaceholderId,
     setPersistedReasoningWatermark,
     updateSessionMeta,
@@ -54,7 +52,6 @@ import {
     resolveSessionId,
 } from "./event-resolvers";
 import { dropSlot } from "./lkg-slot";
-import { clearNoteNudgeTriggerOnly } from "./note-nudger";
 import { readRawSessionMessages } from "./read-session-chunk";
 import { invalidateTrueRawTokenCache } from "./read-session-true-raw-tokens";
 import { type NotificationParams, sendIgnoredMessage } from "./send-session-notification";
@@ -69,10 +66,6 @@ interface ContextUsageEntry {
     usage: ContextUsage;
     updatedAt: number;
     lastResponseTime?: number;
-}
-
-interface MessageRemovedCleanupResult {
-    clearedNoteNudge: boolean;
 }
 
 export interface EventHandlerDeps {
@@ -170,8 +163,8 @@ function cleanupRemovedMessageState(
     deps: EventHandlerDeps,
     sessionId: string,
     messageId: string,
-): MessageRemovedCleanupResult {
-    return deps.db.transaction(() => {
+): void {
+    deps.db.transaction(() => {
         const removedTagNumbers = deleteTagsByMessageId(deps.db, sessionId, messageId);
         sessionLog(
             sessionId,
@@ -190,27 +183,10 @@ function cleanupRemovedMessageState(
                 : `event message.removed: stripped placeholder ids unchanged for ${messageId}`,
         );
 
-        const removedNoteNudgeAnchor = removeNoteNudgeAnchorByMessageId(
-            deps.db,
-            sessionId,
-            messageId,
-        );
         const removedAutoSearchDecision = removeAutoSearchHintDecisionByMessageId(
             deps.db,
             sessionId,
             messageId,
-        );
-        const persistedNoteNudge = getPersistedNoteNudge(deps.db, sessionId);
-        const clearedNoteNudgeTrigger = persistedNoteNudge.triggerMessageId === messageId;
-        if (clearedNoteNudgeTrigger) {
-            clearNoteNudgeTriggerOnly(deps.db, sessionId);
-        }
-        const clearedNoteNudge = removedNoteNudgeAnchor || clearedNoteNudgeTrigger;
-        sessionLog(
-            sessionId,
-            clearedNoteNudge
-                ? `event message.removed: pruned note nudge state for ${messageId}`
-                : `event message.removed: note nudge state unchanged for ${messageId}`,
         );
         sessionLog(
             sessionId,
@@ -240,9 +216,7 @@ function cleanupRemovedMessageState(
             `event message.removed: deleted ${removedIndexedMessages} indexed message row(s) for ${messageId}`,
         );
 
-        return {
-            clearedNoteNudge,
-        };
+        return undefined;
     })();
 }
 

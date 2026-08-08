@@ -8,7 +8,7 @@ import * as logger from "../../shared/logger";
 
 let importCounter = 0;
 const tempDirs: string[] = [];
-const PACKAGE_NAME = "@cortexkit/opencode-magic-context";
+const PACKAGE_NAME = "@ufoq/opencode-mini-magic-context";
 
 function freshCheckerImport() {
     return import(`./checker.ts?test=${importCounter++}`);
@@ -69,19 +69,19 @@ describe("auto-update-checker/checker", () => {
                 String(p).includes("opencode.json"),
             );
             const readSpy = spyOn(fs, "readFileSync").mockReturnValue(
-                JSON.stringify({ plugin: ["@cortexkit/opencode-magic-context"] }),
+                JSON.stringify({ plugin: ["@ufoq/opencode-mini-magic-context"] }),
             );
             const { findPluginEntry } = await freshCheckerImport();
 
             expect(findPluginEntry("/test")).toEqual({
-                entry: "@cortexkit/opencode-magic-context",
+                entry: "@ufoq/opencode-mini-magic-context",
                 isPinned: false,
                 pinnedVersion: null,
                 configPath: "/test/.opencode/opencode.jsonc",
             });
 
             readSpy.mockReturnValue(
-                JSON.stringify({ plugin: ["@cortexkit/opencode-magic-context@latest"] }),
+                JSON.stringify({ plugin: ["@ufoq/opencode-mini-magic-context@latest"] }),
             );
             expect(findPluginEntry("/test")?.isPinned).toBe(false);
 
@@ -95,16 +95,13 @@ describe("auto-update-checker/checker", () => {
             );
             const readSpy = spyOn(fs, "readFileSync").mockReturnValue(
                 JSON.stringify({
-                    plugin: [
-                        "@cortexkit/other@1.0.0",
-                        ["@cortexkit/opencode-magic-context@0.15.6", {}],
-                    ],
+                    plugin: ["@ufoq/other@1.0.0", ["@ufoq/opencode-mini-magic-context@0.15.6", {}]],
                 }),
             );
             const { findPluginEntry } = await freshCheckerImport();
 
             const entry = findPluginEntry("/test");
-            expect(entry?.entry).toBe("@cortexkit/opencode-magic-context@0.15.6");
+            expect(entry?.entry).toBe("@ufoq/opencode-mini-magic-context@0.15.6");
             expect(entry?.isPinned).toBe(true);
             expect(entry?.pinnedVersion).toBe("0.15.6");
 
@@ -141,7 +138,7 @@ describe("auto-update-checker/checker", () => {
                     }
                     if (value === "/dev/magic-context/package.json") {
                         return JSON.stringify({
-                            name: "@cortexkit/opencode-magic-context",
+                            name: "@ufoq/opencode-mini-magic-context",
                             version: "1.2.3-dev",
                         });
                     }
@@ -161,13 +158,13 @@ describe("auto-update-checker/checker", () => {
     describe("getCachedVersion and updatePinnedVersion", () => {
         test("does not derive package versions from guessed npm cache paths", async () => {
             const { getCachedVersion } = await freshCheckerImport();
-            expect(getCachedVersion("@cortexkit/opencode-magic-context@latest")).toBeTruthy();
+            expect(getCachedVersion("@ufoq/opencode-mini-magic-context@latest")).toBeTruthy();
         });
 
         test("updates exact quoted pinned entry while preserving surrounding JSONC", async () => {
             const existsSpy = spyOn(fs, "existsSync").mockReturnValue(true);
             const readSpy = spyOn(fs, "readFileSync").mockReturnValue(
-                '{\n  // plugins\n  "plugin": ["@cortexkit/opencode-magic-context@0.15.5"]\n}',
+                '{\n  // plugins\n  "plugin": ["@ufoq/opencode-mini-magic-context@0.15.5"]\n}',
             );
             const writes: Array<{ path: string; data: string }> = [];
             const writeSpy = spyOn(fs, "writeFileSync").mockImplementation(
@@ -186,13 +183,13 @@ describe("auto-update-checker/checker", () => {
             expect(
                 updatePinnedVersion(
                     "/config/opencode.jsonc",
-                    "@cortexkit/opencode-magic-context@0.15.5",
+                    "@ufoq/opencode-mini-magic-context@0.15.5",
                     "0.15.6",
                 ),
             ).toBe(true);
             // Atomic write: staged to a temp file in the same dir, then renamed
             // onto the real config path.
-            expect(writes[0]?.data).toContain('"@cortexkit/opencode-magic-context@0.15.6"');
+            expect(writes[0]?.data).toContain('"@ufoq/opencode-mini-magic-context@0.15.6"');
             expect(writes[0]?.data).toContain("// plugins");
             expect(writes[0]?.path).not.toBe("/config/opencode.jsonc");
             expect(writes[0]?.path).toContain("/config/opencode.jsonc.mc-tmp-");
@@ -207,7 +204,7 @@ describe("auto-update-checker/checker", () => {
         test("refuses to pin an invalid (non-semver) version and writes nothing", async () => {
             const existsSpy = spyOn(fs, "existsSync").mockReturnValue(true);
             const readSpy = spyOn(fs, "readFileSync").mockReturnValue(
-                '{\n  "plugin": ["@cortexkit/opencode-magic-context@0.15.5"]\n}',
+                '{\n  "plugin": ["@ufoq/opencode-mini-magic-context@0.15.5"]\n}',
             );
             const writeSpy = spyOn(fs, "writeFileSync").mockImplementation(() => {});
             const { updatePinnedVersion } = await freshCheckerImport();
@@ -216,7 +213,7 @@ describe("auto-update-checker/checker", () => {
                 expect(
                     updatePinnedVersion(
                         "/config/opencode.jsonc",
-                        "@cortexkit/opencode-magic-context@0.15.5",
+                        "@ufoq/opencode-mini-magic-context@0.15.5",
                         bad,
                     ),
                 ).toBe(false);

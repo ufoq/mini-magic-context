@@ -172,8 +172,6 @@ export function registerCtxEmbedCommand(
 				projectDir: deps.projectDir,
 				projectIdentity: deps.projectIdentity,
 			};
-			const memoryEnabled =
-				deps.resolveMemoryEnabled?.(ctx) ?? deps.memoryEnabled;
 			const sub = args.trim().toLowerCase();
 
 			if (sub === "pause") {
@@ -188,15 +186,6 @@ export function registerCtxEmbedCommand(
 				sendCtxStatusMessage(pi, {
 					title: "/ctx-embed",
 					text: `## /ctx-embed\n\nPaused at ${cov.session.embedded}/${cov.session.total} compartments embedded.`,
-					level: "info",
-				});
-				return;
-			}
-
-			if (memoryEnabled === false) {
-				sendCtxStatusMessage(pi, {
-					title: "/ctx-embed",
-					text: "## /ctx-embed\n\nMemory is disabled for this project, so there is no semantic embedding to backfill.",
 					level: "info",
 				});
 				return;
@@ -260,7 +249,6 @@ export function maybeAutoEmbedPiSession(
 ): void {
 	if (autoEmbedAttemptedBySession.has(sessionId)) return;
 	if (embedPauseBySession.has(sessionId)) return;
-	if (deps.memoryEnabled === false) return;
 	autoEmbedAttemptedBySession.add(sessionId);
 	void (async () => {
 		try {

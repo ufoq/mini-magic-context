@@ -16,13 +16,13 @@ describe("Pi config load logging", () => {
 		try {
 			__test.logPiConfigLoad({
 				dir: "/tmp/project-a",
-				loadedFromPaths: ["/tmp/project-a/.cortexkit/magic-context.jsonc"],
+				loadedFromPaths: ["/tmp/project-a/.cortexkit/mini-magic-context.jsonc"],
 				warnings: ["Ignoring historian.model from project config"],
 				dedupe: true,
 			});
 			__test.logPiConfigLoad({
 				dir: "/tmp/project-a",
-				loadedFromPaths: ["/tmp/project-a/.cortexkit/magic-context.jsonc"],
+				loadedFromPaths: ["/tmp/project-a/.cortexkit/mini-magic-context.jsonc"],
 				warnings: ["Ignoring historian.model from project config"],
 				dedupe: true,
 			});

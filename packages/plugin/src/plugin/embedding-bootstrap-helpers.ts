@@ -45,8 +45,6 @@ export const EMBEDDING_AFFECTING_KEYS = new Set([
     "embedding.max_input_tokens",
     "embedding.query_input_type",
     "embedding.fallback_provider",
-    "subc",
-    "subc.connection_file",
     "shadow_embedding",
 ]);
 

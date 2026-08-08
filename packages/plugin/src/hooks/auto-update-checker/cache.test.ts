@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const tempDirs: string[] = [];
-const PACKAGE_NAME = "@cortexkit/opencode-magic-context";
+const PACKAGE_NAME = "@ufoq/opencode-mini-magic-context";
 
 function fixture(version = "0.15.5") {
     const root = mkdtempSync(join(tmpdir(), "mc-auto-update-cache-"));
     tempDirs.push(root);
     const installDir = join(root, "install");
-    const packageDir = join(installDir, "node_modules", "@cortexkit", "opencode-magic-context");
+    const packageDir = join(installDir, "node_modules", "@ufoq", "opencode-mini-magic-context");
     mkdirSync(packageDir, { recursive: true });
     writeFileSync(
         join(installDir, "package.json"),

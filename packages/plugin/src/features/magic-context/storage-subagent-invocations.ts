@@ -75,7 +75,7 @@ interface SubagentInvocationDbRow {
     parent_invocation_id: number | null;
 }
 
-function clampToken(value: number): number {
+function _clampToken(value: number): number {
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
@@ -101,33 +101,9 @@ function toRow(row: SubagentInvocationDbRow): SubagentInvocationRow {
 }
 
 export function recordSubagentInvocation(db: Database, input: SubagentInvocationInput): number {
-    const result = db
-        .prepare(
-            `INSERT INTO subagent_invocations (
-                session_id, harness, subagent, task, provider_id, model_id,
-                started_at, ended_at, status,
-                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                error, parent_invocation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-            input.sessionId,
-            input.harness,
-            input.subagent,
-            input.task ?? null,
-            input.providerId ?? null,
-            input.modelId ?? null,
-            input.startedAt,
-            input.endedAt,
-            input.status,
-            clampToken(input.inputTokens),
-            clampToken(input.outputTokens),
-            clampToken(input.cacheReadTokens),
-            clampToken(input.cacheWriteTokens),
-            input.error ?? null,
-            input.parentInvocationId ?? null,
-        );
-    return Number(result.lastInsertRowid);
+    void db;
+    void input;
+    return 0;
 }
 
 /**
@@ -139,18 +115,9 @@ export function recordSubagentInvocation(db: Database, input: SubagentInvocation
  * end is the one for this run.
  */
 export function getLatestHistorianInvocationId(db: Database, sessionId: string): number | null {
-    try {
-        const row = db
-            .prepare(
-                `SELECT id FROM subagent_invocations
-                 WHERE session_id = ? AND subagent = 'historian'
-                 ORDER BY id DESC LIMIT 1`,
-            )
-            .get(sessionId) as { id?: number } | undefined;
-        return typeof row?.id === "number" ? row.id : null;
-    } catch {
-        return null;
-    }
+    void db;
+    void sessionId;
+    return null;
 }
 
 export function getSubagentInvocations(

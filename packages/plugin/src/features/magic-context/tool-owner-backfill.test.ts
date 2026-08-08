@@ -110,7 +110,7 @@ function buildOpencodeDb(messages: OcMessage[], parts: OcPart[]): Database {
 
 function createMcDb(): Database {
     const dataHome = process.env.XDG_DATA_HOME!;
-    const mcDir = join(dataHome, "cortexkit", "magic-context");
+    const mcDir = join(dataHome, "cortexkit", "mini-magic-context");
     require("node:fs").mkdirSync(mcDir, { recursive: true });
     const mcPath = join(mcDir, "context.db");
     const db = new Database(mcPath);

@@ -1,8 +1,8 @@
 {
-  "name": "@cortexkit/opencode-magic-context",
-  "version": "0.33.1",
+  "name": "@ufoq/opencode-mini-magic-context",
+  "version": "0.1.0",
   "type": "module",
-  "description": "OpenCode plugin for Magic Context — cross-session memory and context management",
+  "description": "OpenCode plugin for Mini Magic Context — historian-backed context management and journal search",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "author": "ualtinok",
@@ -11,7 +11,6 @@
     "opencode",
     "plugin",
     "context",
-    "memory",
     "ai",
     "llm",
     "prompt-caching",
@@ -19,41 +18,30 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/cortexkit/magic-context",
+    "url": "https://github.com/ufoq/mini-magic-context",
     "directory": "packages/plugin"
   },
   "files": [
     "dist",
-    "src/tui",
-    "src/tui-compiled",
-    "src/shared",
     "README.md"
   ],
   "scripts": {
-    "build": "bun run build:tui && rm -f dist/index.js dist/*-*.js && bun build src/index.ts --outdir dist --target node --format esm --splitting --external @opencode-ai/plugin --external @huggingface/transformers --external onnxruntime-web --external bun:sqlite --external node:sqlite && tsc --emitDeclarationOnly",
-    "build:tui": "bun scripts/build-tui.ts",
-    "check:tui-compiled": "bun run build:tui && git diff --exit-code -- src/tui-compiled && test -z \"$(git status --porcelain -- src/tui-compiled)\"",
+    "build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --format esm --splitting --external @opencode-ai/plugin --external @huggingface/transformers --external onnxruntime-web --external bun:sqlite --external node:sqlite && tsc --emitDeclarationOnly && bun scripts/prune-declarations.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
-    "test": "bun test",
+    "test": "bun scripts/test-mini.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "clean": "rm -rf dist",
-    "prepublishOnly": "bun run build && bun run build:tui"
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
-    "@cortexkit/subc-client": "0.4.1",
     "@huggingface/transformers": "^4.1.0",
-    "@jitl/quickjs-singlefile-cjs-release-asyncify": "0.32.0",
     "@opencode-ai/plugin": "^1.17.11",
     "@opencode-ai/sdk": "^1.17.11",
-    "@opentui/core": "^0.4.2",
-    "@opentui/solid": "^0.4.2",
     "ai-tokenizer": "^1.0.6",
     "comment-json": "^5.0.0",
-    "quickjs-emscripten": "^0.32.0",
-    "solid-js": "1.9.12",
     "zod": "^4.1.8"
   },
   "devDependencies": {
@@ -68,15 +56,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./tui": {
-      "types": "./src/tui/index.tsx",
-      "import": "./src/tui/entry.mjs"
     }
   },
   "oc-plugin": [
-    "server",
-    "tui"
+    "server"
   ],
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.15.0"

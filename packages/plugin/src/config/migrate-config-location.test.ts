@@ -28,11 +28,11 @@ describe("migrateConfigFile (location migration)", () => {
     it("no-ops when no legacy source exists", () => {
         const dir = tmp();
         try {
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
             const r = migrateConfigFile({
                 scope: "project",
                 targetPath: target,
-                legacySources: [src(join(dir, "magic-context.jsonc"))],
+                legacySources: [src(join(dir, "mini-magic-context.jsonc"))],
             });
             expect(r.migrated).toBe(false);
             expect(r.conflict).toBe(false);
@@ -45,8 +45,8 @@ describe("migrateConfigFile (location migration)", () => {
     it("reclaims a stale (crashed-holder) lock in one shot without blocking init", () => {
         const dir = tmp();
         try {
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
-            const legacy = join(dir, "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
+            const legacy = join(dir, "mini-magic-context.jsonc");
             writeFileSync(legacy, '{"enabled":false}');
             // A leftover lock dir from a crashed holder, aged past the stale
             // threshold. The non-blocking lock removes it and re-attempts mkdir
@@ -76,8 +76,8 @@ describe("migrateConfigFile (location migration)", () => {
     it("skips migration this run (no block) when a LIVE holder owns the lock", () => {
         const dir = tmp();
         try {
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
-            const legacy = join(dir, "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
+            const legacy = join(dir, "mini-magic-context.jsonc");
             writeFileSync(legacy, '{"enabled":false}');
             // A FRESH lock dir (live holder, not stale): we must not block waiting
             // for it — return immediately with migrated:false and leave the
@@ -103,10 +103,10 @@ describe("migrateConfigFile (location migration)", () => {
     it("moves a single legacy source to the target and leaves a .MOVED_READPLEASE marker", () => {
         const dir = tmp();
         try {
-            const legacy = join(dir, ".opencode", "magic-context.jsonc");
+            const legacy = join(dir, ".opencode", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".opencode"), { recursive: true });
             writeFileSync(legacy, '{ "enabled": true }');
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
 
             const r = migrateConfigFile({
                 scope: "project",
@@ -135,9 +135,9 @@ describe("migrateConfigFile (location migration)", () => {
     it("is idempotent: a second run finds no legacy source and no-ops", () => {
         const dir = tmp();
         try {
-            const legacy = join(dir, "magic-context.jsonc");
+            const legacy = join(dir, "mini-magic-context.jsonc");
             writeFileSync(legacy, '{ "protected_tags": 5 }');
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
             const opts = {
                 scope: "project" as const,
                 targetPath: target,
@@ -156,11 +156,11 @@ describe("migrateConfigFile (location migration)", () => {
     it("moves legacy aside (no overwrite) when target already exists and matches semantically", () => {
         const dir = tmp();
         try {
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".cortexkit"), { recursive: true });
             // Target = pretty-printed; legacy = compact + comment + reordered keys.
             writeFileSync(target, '{\n  "protected_tags": 5,\n  "cache_ttl": "1h"\n}\n');
-            const legacy = join(dir, ".opencode", "magic-context.jsonc");
+            const legacy = join(dir, ".opencode", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".opencode"), { recursive: true });
             writeFileSync(legacy, '// mine\n{ "cache_ttl": "1h", "protected_tags": 5, }');
 
@@ -184,10 +184,10 @@ describe("migrateConfigFile (location migration)", () => {
     it("REFUSES (conflict) when target exists with different settings — leaves both untouched", () => {
         const dir = tmp();
         try {
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".cortexkit"), { recursive: true });
             writeFileSync(target, '{ "protected_tags": 5 }');
-            const legacy = join(dir, ".opencode", "magic-context.jsonc");
+            const legacy = join(dir, ".opencode", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".opencode"), { recursive: true });
             writeFileSync(legacy, '{ "protected_tags": 9 }');
 
@@ -212,13 +212,13 @@ describe("migrateConfigFile (location migration)", () => {
     it("REFUSES (conflict) when multiple legacy sources disagree and no target exists", () => {
         const dir = tmp();
         try {
-            const a = join(dir, ".opencode", "magic-context.jsonc");
-            const b = join(dir, ".pi", "magic-context.jsonc");
+            const a = join(dir, ".opencode", "mini-magic-context.jsonc");
+            const b = join(dir, ".pi", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".opencode"), { recursive: true });
             mkdirSync(join(dir, ".pi"), { recursive: true });
             writeFileSync(a, '{ "protected_tags": 5 }');
             writeFileSync(b, '{ "protected_tags": 9 }');
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
 
             const r = migrateConfigFile({
                 scope: "project",
@@ -240,13 +240,13 @@ describe("migrateConfigFile (location migration)", () => {
     it("migrates once and moves ALL matching legacy sources aside when they agree", () => {
         const dir = tmp();
         try {
-            const a = join(dir, ".opencode", "magic-context.jsonc");
-            const b = join(dir, ".pi", "magic-context.jsonc");
+            const a = join(dir, ".opencode", "mini-magic-context.jsonc");
+            const b = join(dir, ".pi", "mini-magic-context.jsonc");
             mkdirSync(join(dir, ".opencode"), { recursive: true });
             mkdirSync(join(dir, ".pi"), { recursive: true });
             writeFileSync(a, '{ "protected_tags": 5 }');
             writeFileSync(b, '{ "protected_tags": 5 }'); // same
-            const target = join(dir, ".cortexkit", "magic-context.jsonc");
+            const target = join(dir, ".cortexkit", "mini-magic-context.jsonc");
 
             const r = migrateConfigFile({
                 scope: "project",
@@ -269,26 +269,26 @@ describe("resolveLegacyConfigSources", () => {
         const sources = resolveLegacyConfigSources("/proj");
         const projectPaths = sources.project.map((s) => s.path);
         // bare root + .opencode + .pi, each in {.jsonc,.json}
-        expect(projectPaths).toContain("/proj/magic-context.jsonc");
-        expect(projectPaths).toContain("/proj/magic-context.json");
-        expect(projectPaths).toContain("/proj/.opencode/magic-context.jsonc");
-        expect(projectPaths).toContain("/proj/.pi/magic-context.jsonc");
+        expect(projectPaths).toContain("/proj/mini-magic-context.jsonc");
+        expect(projectPaths).toContain("/proj/mini-magic-context.json");
+        expect(projectPaths).toContain("/proj/.opencode/mini-magic-context.jsonc");
+        expect(projectPaths).toContain("/proj/.pi/mini-magic-context.jsonc");
     });
 
     it("includes both OpenCode and Pi user sources", () => {
         const sources = resolveLegacyConfigSources("/proj");
         const userPaths = sources.user.map((s) => s.path);
-        expect(userPaths.some((p) => p.includes(join("opencode", "magic-context.jsonc")))).toBe(
-            true,
-        );
-        expect(userPaths.some((p) => p.includes(join(".pi", "agent", "magic-context.jsonc")))).toBe(
-            true,
-        );
+        expect(
+            userPaths.some((p) => p.includes(join("opencode", "mini-magic-context.jsonc"))),
+        ).toBe(true);
+        expect(
+            userPaths.some((p) => p.includes(join(".pi", "agent", "mini-magic-context.jsonc"))),
+        ).toBe(true);
     });
 
     it("never lists a user-scope config as a project source when the project dir is the CortexKit config home", () => {
         // Regression: opencode opened with cwd = ~/.config/cortexkit made the
-        // bare-root project source `<root>/magic-context.jsonc` collide with the
+        // bare-root project source `<root>/mini-magic-context.jsonc` collide with the
         // USER config, so the project migration ate the user config into
         // `<root>/.cortexkit/` and left the user on schema defaults.
         const prev = process.env.XDG_CONFIG_HOME;
@@ -299,11 +299,13 @@ describe("resolveLegacyConfigSources", () => {
             const sources = resolveLegacyConfigSources(cortexkitHome);
             const projectPaths = sources.project.map((s) => s.path);
             // The user config path must NOT be a project migration source.
-            expect(projectPaths).not.toContain(join(cortexkitHome, "magic-context.jsonc"));
-            expect(projectPaths).not.toContain(join(cortexkitHome, "magic-context.json"));
+            expect(projectPaths).not.toContain(join(cortexkitHome, "mini-magic-context.jsonc"));
+            expect(projectPaths).not.toContain(join(cortexkitHome, "mini-magic-context.json"));
             // The genuine project subdir sources are still present.
-            expect(projectPaths).toContain(join(cortexkitHome, ".opencode", "magic-context.jsonc"));
-            expect(projectPaths).toContain(join(cortexkitHome, ".pi", "magic-context.jsonc"));
+            expect(projectPaths).toContain(
+                join(cortexkitHome, ".opencode", "mini-magic-context.jsonc"),
+            );
+            expect(projectPaths).toContain(join(cortexkitHome, ".pi", "mini-magic-context.jsonc"));
         } finally {
             if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
             else process.env.XDG_CONFIG_HOME = prev;
@@ -321,8 +323,8 @@ describe("resolveLegacyConfigSources", () => {
             const opencodeHome = join(home, "opencode");
             const sources = resolveLegacyConfigSources(opencodeHome);
             const projectPaths = sources.project.map((s) => s.path);
-            expect(projectPaths).not.toContain(join(opencodeHome, "magic-context.jsonc"));
-            expect(projectPaths).not.toContain(join(opencodeHome, "magic-context.json"));
+            expect(projectPaths).not.toContain(join(opencodeHome, "mini-magic-context.jsonc"));
+            expect(projectPaths).not.toContain(join(opencodeHome, "mini-magic-context.json"));
         } finally {
             if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
             else process.env.XDG_CONFIG_HOME = prev;

@@ -40,18 +40,12 @@
 import * as crypto from "node:crypto";
 import { withContentLanguageDirective } from "@magic-context/core/agents/language-directive";
 import { embedAndStoreCompartmentChunks } from "@magic-context/core/features/magic-context/compartment-embedding";
-import { insertCompartmentEvents } from "@magic-context/core/features/magic-context/compartment-events";
 import { isCompartmentLeaseHeld } from "@magic-context/core/features/magic-context/compartment-lease";
 import {
 	appendCompartments,
 	getCompartments,
 } from "@magic-context/core/features/magic-context/compartment-storage";
-import {
-	embedPromotedFacts,
-	promoteSessionFactsDurable,
-} from "@magic-context/core/features/magic-context/memory";
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
-import { getMemoriesByProject } from "@magic-context/core/features/magic-context/memory/storage-memory";
 import {
 	clearEmergencyDrainLatch,
 	clearEmergencyRecovery,
@@ -73,9 +67,7 @@ import {
 	tallyFactsByCategory,
 } from "@magic-context/core/features/magic-context/storage-historian-runs";
 import { updateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
-import { insertPrimerCandidates } from "@magic-context/core/features/magic-context/storage-primers";
 import { getLatestHistorianInvocationId } from "@magic-context/core/features/magic-context/storage-subagent-invocations";
-import { insertUserMemoryCandidates } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import {
 	buildCompartmentAgentPrompt,
 	buildHistorianEditorPrompt,
@@ -90,8 +82,6 @@ import {
 	validateHistorianOutput,
 	validateStoredCompartments,
 } from "@magic-context/core/hooks/magic-context/compartment-runner-validation";
-import { renderMemoryBlock } from "@magic-context/core/hooks/magic-context/inject-compartments";
-import { onNoteTrigger } from "@magic-context/core/hooks/magic-context/note-nudger";
 import {
 	createDefaultBoundarySnapshotForTests,
 	hasRunnableCompartmentWindow,
@@ -286,7 +276,7 @@ function buildHistorianFallbackChain(
 	return chain;
 }
 
-function parseSourceMessageTime(value: unknown): number | null {
+function _parseSourceMessageTime(value: unknown): number | null {
 	if (typeof value === "number" && Number.isFinite(value)) return value;
 	if (typeof value === "string") {
 		const numeric = Number(value);
@@ -425,9 +415,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 		retryBackoffMs,
 		twoPass,
 		thinkingLevel,
-		memoryEnabled,
-		autoPromote,
-		userMemoriesEnabled,
 		onPublished,
 		compartmentLeaseHolderId,
 		readBranchEntries,
@@ -674,23 +661,13 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				rollbackDrainReservation();
 				return;
 			}
-			const memories = getMemoriesByProject(db, projectPath, [
-				"active",
-				"permanent",
-			]);
-			const memoryBlock = renderMemoryBlock(memories) ?? undefined;
 
 			// v2 (E6 parity): bounded reference blocks replace the unbounded
 			// existing-state dump. The historian no longer sees ALL prior
-			// compartments — it gets 4 rotating cross-project seed examples
-			// (importance-band calibration) + the last 6 same-session
-			// compartments (continuity) + <project-memory> for fact dedup.
-			// Bounded forever regardless of session age, so no temp-file
-			// offload is needed. Mirrors the OpenCode incremental runner.
-			const projectMemory = memoryBlock ?? "";
+			// compartments — it gets the last 6 same-session compartments
+			// (continuity). Bounded forever regardless of session age, so no
+			// temp-file offload is needed. Mirrors the OpenCode incremental runner.
 			const references = buildReferenceBlocks({
-				sessionId,
-				chunkStart: chunk.startIndex,
 				sessionCompartments: priorCompartments,
 			});
 
@@ -706,11 +683,8 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			}
 
 			const prompt = buildCompartmentAgentPrompt({
-				seedExamples: references.seedExamples,
 				sessionReferences: references.sessionReferences,
-				projectMemory,
 				inputSource: `Messages ${chunk.startIndex}-${chunk.endIndex}:\n\n${chunkText}`,
-				memoryEnabled: memoryEnabled !== false,
 			});
 
 			// Defensive: use MAX(sequence) + 1 over .length to survive any old
@@ -1111,34 +1085,16 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// promotion. Only the actual final chunk keeps its weak-lookahead tail and
 			// skips unanchored promotion.
 			const discardedLast = newCompartments.length < emittedCompartments.length;
-			const weakLookaheadFinalCompartment = forceKeepLastCompartmentForChunk;
-			// discard-last runs must also skip unanchored promotion: facts cannot be
-			// attributed to the persisted range, and a reworded re-emission next run
-			// would double-store.
-			const skipUnanchoredPromotion =
-				discardedLast || weakLookaheadFinalCompartment;
 
-			// Two distinct gates (parity with OpenCode): embeddingActive = memory
-			// feature on (drives registration + embedding, the ctx_search / dreamer
-			// linking substrate); promotionActive additionally requires auto_promote
-			// (drives writing facts as memories).
-			const embeddingActive = memoryEnabled !== false;
-			const promotionActive = embeddingActive && autoPromote !== false;
+			// Mini: the historian publishes compartments only — no fact/observation
+			// promotion to project memory and no user-memory/primer candidate writes.
+			// Embeddings over the new compartment chunks are the ctx_search semantic
+			// substrate and stay active.
+			const embeddingActive = true;
 
 			// Events: stored, NOT rendered. Best-effort. discard-last: drop events
 			// anchored to the discarded provisional compartment.
-			const publishableEvents = (validatedPass.events ?? []).filter((e) => {
-				if (typeof e.atCompartment !== "number")
-					return !weakLookaheadFinalCompartment;
-				if (e.atCompartment > newCompartments.length) return false;
-				if (
-					weakLookaheadFinalCompartment &&
-					e.atCompartment >= emittedCompartments.length
-				)
-					return false;
-				return true;
-			});
-			let promotedFactRefs: Array<{ memoryId: number; content: string }> = [];
+			const publishableEvents: [] = [];
 			let persistedIds: number[] = [];
 
 			// Atomic publication: append + durable facts/events/drop queue + clear failure state.
@@ -1168,43 +1124,11 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				}
 				appendCompartments(db, sessionId, newCompartments);
 				// Resolve durable ids for the just-appended compartments (last N rows by
-				// sequence — appendCompartments inserts at the tail). Used for events
-				// anchoring + post-commit embeddings.
+				// sequence — appendCompartments inserts at the tail). Used for
+				// post-commit embeddings.
 				persistedIds = getCompartments(db, sessionId)
 					.slice(-newCompartments.length)
 					.map((c) => c.id);
-				// v2 faithful fact lifecycle (E6 parity): facts are no longer a
-				// REPLACE-the-whole-list store. The historian emits only THIS
-				// chunk's facts (deduped against <project-memory> in the prompt);
-				// they flow to project memory via in-transaction durable promotion.
-				// No replaceSessionFacts — promoted facts reach the agent through the
-				// renderer's m[1] new-memories watermark. Promotion is in the SAME
-				// transaction as the boundary floor below, so both commit or both roll back.
-				if (promotionActive && !skipUnanchoredPromotion) {
-					promotedFactRefs = promoteSessionFactsDurable(
-						db,
-						sessionId,
-						projectPath,
-						validatedPass.facts ?? [],
-					);
-				}
-
-				if (publishableEvents.length > 0) {
-					try {
-						insertCompartmentEvents(
-							db,
-							sessionId,
-							publishableEvents,
-							persistedIds,
-						);
-						sessionLog(
-							sessionId,
-							`stored ${publishableEvents.length} compartment event(s)`,
-						);
-					} catch (error) {
-						sessionLog(sessionId, "failed to store compartment events:", error);
-					}
-				}
 
 				queueDropsForCompartmentalizedMessages(db, sessionId, lastNewEnd);
 
@@ -1255,100 +1179,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				`historian: published ${newCompartments.length} compartment(s), ${validatedPass.facts?.length ?? 0} fact(s) covering messages ${chunk.startIndex}-${lastNewEnd}`,
 			);
 
-			// Note-nudge trigger #1 (of 3): historian publication is a natural
-			// work boundary, so signal that deferred notes should surface on
-			// the next user turn. Mirrors OpenCode's placement.
-			onNoteTrigger(db, sessionId, "historian_complete");
-
-			// user observations are inserted POST-COMMIT,
-			// best-effort, so an auxiliary failure never rolls back the publish.
-			// Gated on the user-memory feature so opted-out users never have
-			// behavioral candidates persisted (privacy parity with OpenCode).
-			if (
-				userMemoriesEnabled === true &&
-				!skipUnanchoredPromotion &&
-				validatedPass.userObservations?.length
-			) {
-				try {
-					insertUserMemoryCandidates(
-						db,
-						validatedPass.userObservations.map((obs) => ({
-							content: obs,
-							sessionId,
-							sourceCompartmentStart: newCompartments[0]?.startMessage,
-							sourceCompartmentEnd: lastNewEnd,
-						})),
-					);
-					sessionLog(
-						sessionId,
-						`stored ${validatedPass.userObservations.length} user memory candidate(s)`,
-					);
-				} catch (error) {
-					sessionLog(
-						sessionId,
-						"failed to store user memory candidates:",
-						error,
-					);
-				}
-			}
-
-			// Primers v1 are recall-only side-table writes (dashboard + ctx_search),
-			// never prompt injection. They use the same actual-final weak-lookahead
-			// gate as facts and observations.
-			if (
-				!skipUnanchoredPromotion &&
-				validatedPass.primerCandidates?.length &&
-				projectPath
-			) {
-				try {
-					const firstNew = newCompartments[0];
-					const lastNew = newCompartments[newCompartments.length - 1];
-					// Stable occurrence key intentionally excludes question text, so a
-					// source chunk stores at most one candidate occurrence (its
-					// origin-compartment tag is the single tagged origin).
-					const [candidate] = validatedPass.primerCandidates;
-					// Origin-tag (mirrors OpenCode): narrow the source to the SPECIFIC
-					// compartment the question came from. originCompartmentIndex is
-					// 1-based into the emitted list (same convention as <events>);
-					// chunk-span fallback when untagged or out of range (non-fatal).
-					const idx = candidate.originCompartmentIndex;
-					const origin =
-						typeof idx === "number" && idx >= 1 && idx <= newCompartments.length
-							? newCompartments[idx - 1]
-							: undefined;
-					const startC = origin ?? firstNew;
-					const endC = origin ?? lastNew;
-					const sourceStartMessageId =
-						startC?.startMessageId ||
-						`ordinal:${startC?.startMessage ?? chunk.startIndex}`;
-					const sourceEndMessageId =
-						endC?.endMessageId || `ordinal:${endC?.endMessage ?? lastNewEnd}`;
-					const sourceMessage =
-						provider.readMessageById?.(sourceStartMessageId);
-					const sourceMessageTime =
-						parseSourceMessageTime(sourceMessage?.version) ?? Date.now();
-					const stored = insertPrimerCandidates(db, [
-						{
-							projectPath,
-							harness: "pi",
-							sessionId,
-							question: candidate.question,
-							sourceCompartmentStart: startC?.startMessage,
-							sourceCompartmentEnd: endC?.endMessage,
-							sourceStartMessageId,
-							sourceEndMessageId,
-							sourceMessageTime,
-						},
-					]);
-					sessionLog(
-						sessionId,
-						`stored ${stored.length} primer candidate occurrence(s)${origin ? " (origin-tagged)" : " (chunk-span fallback)"}`,
-					);
-				} catch (error) {
-					sessionLog(sessionId, "failed to store primer candidates:", error);
-				}
-			}
-
 			// Raw chunk embeddings: the ctx_search semantic substrate over session
 			// history. Fire-and-forget, best-effort, memory-gated.
 			if (embeddingActive) {
@@ -1367,20 +1197,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 						sessionLog(
 							sessionId,
 							"project registration after publish failed:",
-							error,
-						);
-					}
-					try {
-						await embedPromotedFacts(
-							db,
-							sessionId,
-							projectPath,
-							promotedFactRefs,
-						);
-					} catch (error) {
-						sessionLog(
-							sessionId,
-							"promoted fact embedding dispatch failed:",
 							error,
 						);
 					}

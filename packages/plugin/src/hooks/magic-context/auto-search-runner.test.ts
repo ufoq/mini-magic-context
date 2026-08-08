@@ -32,9 +32,7 @@ describe("auto-search-runner", () => {
         scoreThreshold: 0.6,
         minPromptChars: 20,
         projectPath: "git:test",
-        memoryEnabled: true,
         embeddingEnabled: true,
-        gitCommitsEnabled: true,
     };
 
     beforeEach(() => {
@@ -82,7 +80,7 @@ describe("auto-search-runner", () => {
         }
     });
 
-    test("excludes Primers from transform-time auto-search hints", async () => {
+    test("uses the mini message-only source set for transform-time auto-search hints", async () => {
         const spy = spyOn(searchModule, "unifiedSearch").mockImplementation(async () => []);
         try {
             const messages: MessageLike[] = [
@@ -100,7 +98,7 @@ describe("auto-search-runner", () => {
             });
 
             const options = spy.mock.calls[0]?.[4];
-            expect(options?.sources).toEqual(["memory", "message", "git_commit"]);
+            expect(options?.sources).toEqual(["message"]);
         } finally {
             spy.mockRestore();
         }
@@ -109,9 +107,16 @@ describe("auto-search-runner", () => {
     test("caches no-hint decision on below-threshold score", async () => {
         const spy = spyOn(searchModule, "unifiedSearch").mockImplementation(
             async () =>
-                [{ source: "memory", score: 0.4, id: 1, text: "x" }] as unknown as Awaited<
-                    ReturnType<typeof searchModule.unifiedSearch>
-                >,
+                [
+                    {
+                        source: "message",
+                        score: 0.4,
+                        content: "x",
+                        messageOrdinal: 1,
+                        messageId: "m1",
+                        role: "user",
+                    },
+                ] as Awaited<ReturnType<typeof searchModule.unifiedSearch>>,
         );
         try {
             const messages: MessageLike[] = [
@@ -413,9 +418,9 @@ describe("auto-search-runner", () => {
                     [
                         "help me implement feature X in the plugin",
                         "",
-                        "<sidekick-augmentation>",
+                        "<ctx-search-hint>",
                         "relevant memories: transform pipeline",
-                        "</sidekick-augmentation>",
+                        "</ctx-search-hint>",
                     ].join("\n"),
                 ),
             ];

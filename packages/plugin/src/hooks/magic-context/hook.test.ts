@@ -329,7 +329,7 @@ describe("magic-context hook", () => {
         process.env.XDG_DATA_HOME = dataHome;
         // Block mkdirSync at the cortexkit segment of the new shared path so
         // openDatabase() falls into its in-memory fallback. (Plugin v0.16+
-        // moved DB to <XDG_DATA_HOME>/cortexkit/magic-context/.)
+        // moved DB to <XDG_DATA_HOME>/cortexkit/mini-magic-context/.)
         writeFileSync(join(dataHome, "cortexkit"), "not-a-directory", "utf-8");
 
         const promptMocks = createPromptMocks();

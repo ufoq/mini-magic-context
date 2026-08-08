@@ -5,7 +5,6 @@
 import type { MagicContextConfig } from "../config/schema/magic-context";
 import { getMostRecentTaskRunAt } from "../features/magic-context/dreamer/storage-task-schedule";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
-import { getMural } from "../features/magic-context/mural/storage-mural";
 import { getEmbeddingCoverageStatus } from "../features/magic-context/project-embedding-registry";
 import {
     type ContextDatabase as Database,
@@ -111,7 +110,7 @@ function getDb(): Database | null {
     }
 }
 
-async function loadRustSessionStatus(
+async function _loadRustSessionStatus(
     client: RustModeModuleClient | undefined,
     sessionId: string,
     directory: string,
@@ -584,19 +583,9 @@ export function buildStatusDetail(
         compressionBudget: null,
         compressionUsage: null,
         toastDurationMs: 5000,
-        mural: undefined,
     };
 
     try {
-        const muralConfig = (config?.experimental as { mural?: { enabled?: boolean } } | undefined)
-            ?.mural;
-        if (muralConfig?.enabled && base.projectIdentity) {
-            const row = getMural(db, base.projectIdentity);
-            detail.mural = {
-                present: row !== null,
-                ageMs: row ? Math.max(0, Date.now() - row.renderedAt) : null,
-            };
-        }
         const meta = db
             .prepare<[string], Record<string, unknown>>(
                 "SELECT * FROM session_meta WHERE session_id = ?",
@@ -772,7 +761,7 @@ export function registerRpcHandlers(
         rustModeModuleClient?: RustModeModuleClient;
     },
 ): void {
-    const { directory, config, liveSessionState, rustModeModuleClient } = args;
+    const { directory, config, liveSessionState } = args;
 
     // Read config as raw object for per-model resolution
     const rawConfig = config as unknown as Record<string, unknown>;
@@ -785,17 +774,14 @@ export function registerRpcHandlers(
             config.toast_duration_ms,
         );
 
-    const injectionBudgetTokens = config.memory?.injection_budget_tokens;
+    const injectionBudgetTokens = undefined;
 
     rpcServer.handle("sidebar-snapshot", async (params) => {
         const sessionId = String(params.sessionId ?? "");
         const dir = String(params.directory ?? directory);
         const db = getDb();
         if (!db || !sessionId) return { error: "unavailable" };
-        const moduleStatus =
-            config.transform_mode === "rust"
-                ? await loadRustSessionStatus(rustModeModuleClient, sessionId, dir)
-                : undefined;
+        const moduleStatus = undefined;
         return buildSidebarSnapshotRpcResponse(
             db,
             sessionId,
@@ -813,10 +799,7 @@ export function registerRpcHandlers(
         const modelKey = params.modelKey ? String(params.modelKey) : undefined;
         const db = getDb();
         if (!db || !sessionId) return { error: "unavailable" };
-        const moduleStatus =
-            config.transform_mode === "rust"
-                ? await loadRustSessionStatus(rustModeModuleClient, sessionId, dir)
-                : undefined;
+        const moduleStatus = undefined;
         return buildStatusDetail(
             db,
             sessionId,
@@ -877,9 +860,6 @@ export function registerRpcHandlers(
             "../hooks/magic-context/derive-budgets"
         );
         const { resolveFallbackChain } = await import("../shared/resolve-fallbacks");
-        const { userMemoryCollectionEnabled } = await import(
-            "../features/magic-context/dreamer/task-config"
-        );
         const DEFAULT_HISTORIAN_TIMEOUT_MS = 10 * 60 * 1000;
         return {
             client: args.client as ManagedRecompContext["client"],
@@ -890,11 +870,11 @@ export function registerRpcHandlers(
                 resolveHistorianContextLimit(config.historian?.model),
             ),
             historianTimeoutMs: config.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
-            memoryEnabled: config.memory?.enabled ?? true,
-            autoPromote: config.memory?.auto_promote ?? true,
+            memoryEnabled: false,
+            autoPromote: false,
             fallbackModels: resolveFallbackChain(config.historian?.fallback_models),
-            runMigration: config.memory?.enabled !== false && !!config.historian?.model,
-            userMemoriesEnabled: userMemoryCollectionEnabled(config.dreamer),
+            runMigration: !!config.historian?.model,
+            userMemoriesEnabled: false,
             historianTwoPass: config.historian?.two_pass === true,
             getNotificationParams,
         };

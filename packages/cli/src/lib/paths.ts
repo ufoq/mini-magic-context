@@ -20,8 +20,6 @@ export interface ConfigPaths {
     magicContextConfig: string;
     /** oh-my-opencode/oh-my-openagent json(c) if exists */
     omoConfig: string | null;
-    tuiConfig: string;
-    tuiConfigFormat: "json" | "jsonc" | "none";
 }
 
 /**
@@ -59,8 +57,6 @@ export function detectConfigPaths(): ConfigPaths {
 
     let opencodeConfig: string;
     let opencodeConfigFormat: "json" | "jsonc" | "none";
-    let tuiConfig: string;
-    let tuiConfigFormat: "json" | "jsonc" | "none";
 
     const jsoncPath = join(configDir, "opencode.jsonc");
     const jsonPath = join(configDir, "opencode.json");
@@ -77,32 +73,12 @@ export function detectConfigPaths(): ConfigPaths {
         opencodeConfigFormat = "none";
     }
 
-    const tuiJsoncPath = join(configDir, "tui.jsonc");
-    const tuiJsonPath = join(configDir, "tui.json");
-    if (existsSync(tuiJsoncPath)) {
-        // OpenCode merges tui.json + tui.jsonc with tui.jsonc winning, so an
-        // existing tui.jsonc is the higher-precedence user file — write into it.
-        tuiConfig = tuiJsoncPath;
-        tuiConfigFormat = "jsonc";
-    } else if (existsSync(tuiJsonPath)) {
-        tuiConfig = tuiJsonPath;
-        tuiConfigFormat = "json";
-    } else {
-        // Fresh install: create tui.jsonc (not tui.json) so the user can add
-        // comments later and we don't leave a second, lower-precedence file
-        // alongside a tui.jsonc they create afterward (#176).
-        tuiConfig = tuiJsoncPath;
-        tuiConfigFormat = "none";
-    }
-
     return {
         configDir,
         opencodeConfig,
         opencodeConfigFormat,
         magicContextConfig: resolveCortexKitUserConfigPath(),
         omoConfig: findOmoConfig(configDir),
-        tuiConfig,
-        tuiConfigFormat,
     };
 }
 

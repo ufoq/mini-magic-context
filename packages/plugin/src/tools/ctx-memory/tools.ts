@@ -13,27 +13,22 @@ import {
     type Memory,
     type MemoryCategory,
     mergeMemoryStats,
-    saveEmbeddingIfHashMatches,
     supersededMemory,
     updateMemorySeenCount,
     V2_MEMORY_CATEGORIES,
 } from "../../features/magic-context/memory";
-import {
-    embedTextForProject,
-    enqueueShadowEmbeddingItems,
-    getProjectEmbeddingSnapshot,
-} from "../../features/magic-context/memory/embedding";
+import { getProjectEmbeddingSnapshot } from "../../features/magic-context/memory/embedding";
 import { invalidateMemory } from "../../features/magic-context/memory/embedding-cache";
 import { computeNormalizedHash } from "../../features/magic-context/memory/normalize-hash";
+import {
+    normalizeStoredProjectPath,
+    storedPathBelongsToIdentity,
+} from "../../features/magic-context/memory/project-identity";
 import {
     hasMemoryClassifiedAtColumn,
     hasMemoryShareableColumn,
 } from "../../features/magic-context/memory/storage-memory";
-import {
-    normalizeStoredProjectPath,
-    queueMemoryMutation,
-    storedPathBelongsToIdentity,
-} from "../../features/magic-context/storage";
+import { queueMemoryMutation } from "../../features/magic-context/storage";
 import {
     expandWorkspaceIdentitySetWithAliases,
     resolveStoredPathWorkspaceIdentity,
@@ -210,51 +205,6 @@ function formatGetOutput(args: {
         }
     }
     return parts.join("\n\n");
-}
-
-function queueMemoryEmbedding(args: {
-    deps: CtxMemoryToolDeps;
-    sessionId: string;
-    projectPath: string;
-    memoryId: number;
-    content: string;
-}): void {
-    const snapshot = getProjectEmbeddingSnapshot(args.projectPath);
-    if (!snapshot?.enabled) {
-        return;
-    }
-
-    const normalizedHash = computeNormalizedHash(args.content);
-    void (async () => {
-        const result = await embedTextForProject(args.projectPath, args.content);
-        if (!result) {
-            sessionLog(
-                args.sessionId,
-                `memory embedding skipped for memory ${args.memoryId}: provider unavailable or embedding generation failed.`,
-            );
-            return;
-        }
-
-        const saved = saveEmbeddingIfHashMatches(
-            args.deps.db,
-            args.memoryId,
-            result.vector,
-            result.modelId,
-            normalizedHash,
-        );
-        if (!saved) {
-            sessionLog(
-                args.sessionId,
-                `memory embedding skipped for memory ${args.memoryId}: content changed before the embedding finished.`,
-            );
-            return;
-        }
-
-        enqueueShadowEmbeddingItems(args.projectPath, "memory", [String(args.memoryId)]);
-        sessionLog(args.sessionId, `proactively embedded memory ${args.memoryId}.`);
-    })().catch((error: unknown) => {
-        sessionLog(args.sessionId, `memory embedding failed for memory ${args.memoryId}:`, error);
-    });
 }
 
 function getValidatedCategory(category: string | undefined): MemoryCategory | null {
@@ -557,20 +507,12 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     category,
                     content,
                     sourceSessionId: toolContext.sessionID,
-                    sourceType:
-                        toolContext.agent === DREAMER_AGENT ? "dreamer" : getSourceType(deps),
+                    sourceType: getSourceType(deps),
                 });
                 if (!insertResult.inserted) {
                     return `Memory already exists [ID: ${insertResult.memory.id}] in ${category} (seen count incremented).`;
                 }
 
-                queueMemoryEmbedding({
-                    deps,
-                    sessionId: toolContext.sessionID,
-                    projectPath,
-                    memoryId: insertResult.memory.id,
-                    content,
-                });
                 requestRustMemorySync(deps, toolContext.sessionID);
 
                 return `Saved memory [ID: ${insertResult.memory.id}] in ${category}.`;
@@ -662,13 +604,6 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                         category: memory.category,
                         newContent: content,
                     });
-                });
-                queueMemoryEmbedding({
-                    deps,
-                    sessionId: toolContext.sessionID,
-                    projectPath: projectIdentity,
-                    memoryId: memory.id,
-                    content,
                 });
                 requestRustMemorySync(deps, toolContext.sessionID);
 
@@ -807,10 +742,7 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                                   category,
                                   content,
                                   sourceSessionId: toolContext.sessionID,
-                                  sourceType:
-                                      toolContext.agent === DREAMER_AGENT
-                                          ? "dreamer"
-                                          : getSourceType(deps),
+                                  sourceType: getSourceType(deps),
                               }).memory;
                     const canonicalContentChanged =
                         nextCanonical.content !== content ||
@@ -863,13 +795,6 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     return mergeConflict ?? "Error: Failed to merge memories.";
                 }
 
-                queueMemoryEmbedding({
-                    deps,
-                    sessionId: toolContext.sessionID,
-                    projectPath,
-                    memoryId: canonicalMemory.id,
-                    content,
-                });
                 requestRustMemorySync(deps, toolContext.sessionID);
 
                 const supersededIds = sourceMemories

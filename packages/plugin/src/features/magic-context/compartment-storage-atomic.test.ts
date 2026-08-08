@@ -6,7 +6,6 @@ import { closeQuietly } from "../../shared/sqlite-helpers";
 import { acquireCompartmentLease } from "./compartment-lease";
 import {
     getCompartments,
-    getSessionFacts,
     promoteRecompStaging,
     replaceAllCompartmentState,
     replaceAllCompartmentStateAndBumpDepth,
@@ -35,7 +34,7 @@ const compartment = (sequence: number, start: number, end: number, title = `c${s
 });
 
 describe("atomic compartment state publish", () => {
-    it("replaces compartments/facts and bumps the selected depth range atomically", () => {
+    it("replaces compartments and bumps the selected depth range atomically", () => {
         const db = makeDb();
         const sessionId = "ses-atomic";
         const holderId = "holder";
@@ -53,7 +52,6 @@ describe("atomic compartment state publish", () => {
 
         expect(ok).toBe(true);
         expect(getCompartments(db, sessionId).map((c) => c.title)).toEqual(["c0", "c1"]);
-        expect(getSessionFacts(db, sessionId).map((f) => f.content)).toEqual(["fresh"]);
         expect(getAverageCompressionDepth(db, sessionId, 1, 1)).toBe(0);
         expect(getAverageCompressionDepth(db, sessionId, 2, 3)).toBe(1);
         expect(getAverageCompressionDepth(db, sessionId, 4, 4)).toBe(0);
@@ -83,7 +81,6 @@ describe("atomic compartment state publish", () => {
 
         expect(ok).toBe(false);
         expect(getCompartments(db, sessionId).map((c) => c.title)).toEqual(["old"]);
-        expect(getSessionFacts(db, sessionId).map((f) => f.content)).toEqual(["old fact"]);
         expect(getAverageCompressionDepth(db, sessionId, 1, 2)).toBe(0);
         closeQuietly(db);
     });

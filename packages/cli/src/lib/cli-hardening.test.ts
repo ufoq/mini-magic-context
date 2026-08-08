@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDevPathPluginEntry } from "../adapters/opencode";
-import { projectPathToPiDirSlug } from "../commands/migrate";
+import { projectPathToPiSessionSlug } from "../lib/migration-paths";
 import { resolveAdaptersForCommand } from "./harness-select";
 import { detectConfigPaths } from "./paths";
 import { isPiMagicContextPackageEntry } from "./pi-package-entry";
@@ -50,7 +50,7 @@ describe("CLI hardening helpers", () => {
         mkdirSync(theme, { recursive: true });
         writeFileSync(
             join(plugin, "package.json"),
-            JSON.stringify({ name: "@cortexkit/opencode-magic-context" }),
+            JSON.stringify({ name: "@ufoq/opencode-mini-magic-context" }),
         );
         writeFileSync(join(theme, "package.json"), JSON.stringify({ name: "magic-context-theme" }));
 
@@ -61,13 +61,15 @@ describe("CLI hardening helpers", () => {
     it("recognizes source-only Pi object entries without substring matches", () => {
         expect(
             isPiMagicContextPackageEntry({
-                source: "npm:@cortexkit/pi-magic-context@0.31.5",
+                source: "npm:@ufoq/pi-mini-magic-context@0.31.5",
             }),
         ).toBe(true);
-        expect(isPiMagicContextPackageEntry("npm:@cortexkit/pi-magic-context-theme")).toBe(false);
+        expect(isPiMagicContextPackageEntry("npm:@ufoq/pi-mini-magic-context-theme")).toBe(false);
     });
 
     it("uses Pi's Windows-safe session slug encoding", () => {
-        expect(projectPathToPiDirSlug("C:\\Users\\me\\repo", "win32")).toBe("--C-Users-me-repo--");
+        expect(projectPathToPiSessionSlug("C:\\Users\\me\\repo", "win32")).toBe(
+            "--C-Users-me-repo--",
+        );
     });
 });

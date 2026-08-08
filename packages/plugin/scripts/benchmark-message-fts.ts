@@ -250,7 +250,6 @@ console.log(
 
 const t19 = performance.now();
 const searchOnlyResults = await unifiedSearch(db, sessionId, process.cwd(), query, {
-    memoryEnabled: false,
     embeddingEnabled: false,
     sources: ["message"],
     limit: 10,

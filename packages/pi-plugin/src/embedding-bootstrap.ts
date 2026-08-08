@@ -3,6 +3,7 @@ import {
 	cortexKitProjectConfigBasePath,
 	cortexKitUserConfigBasePath,
 } from "@magic-context/core/config/migrate-config-location";
+import type { EmbeddingConfig } from "@magic-context/core/config/schema/magic-context";
 import {
 	type EmbeddingFeatures,
 	registerProjectEmbedding,
@@ -53,6 +54,10 @@ function configFingerprint(paths: readonly string[]): string {
 		.join("|");
 }
 
+export function miniEmbeddingConfig(config: EmbeddingConfig): EmbeddingConfig {
+	return config;
+}
+
 export async function ensureProjectRegisteredFromPiDirectory(
 	directory: string,
 	db: ContextDatabase,
@@ -74,13 +79,13 @@ export async function ensureProjectRegisteredFromPiDirectory(
 	}
 
 	const features: EmbeddingFeatures = {
-		memoryEnabled: detailed.config.memory.enabled,
-		gitCommitEnabled: detailed.config.memory.git_commit_indexing.enabled,
+		memoryEnabled: false,
+		gitCommitEnabled: false,
 	};
 	registerProjectEmbedding(
 		db,
 		projectIdentity,
-		detailed.config.embedding,
+		miniEmbeddingConfig(detailed.config.embedding),
 		features,
 		directory,
 	);

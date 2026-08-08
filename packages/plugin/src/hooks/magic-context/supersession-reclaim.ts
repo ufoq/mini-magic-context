@@ -12,17 +12,13 @@ import type { TagTarget } from "./tag-messages";
 // Keep-counts are fixed constants (no config sub-knobs):
 //   - todowrite: keep newest 1 (the live plan is the synthetic todowrite we
 //     inject + protect every pass; real ones are older snapshots).
-//   - ctx_reduce: keep newest 5 (preserves the visible reduce rhythm).
+//   - reduction calls: keep newest 5 (preserves the visible reduce rhythm).
 //   - zero-value meta: keep 0 (worthless once executed).
 const TODOWRITE_KEEP = 1;
 const CTX_REDUCE_KEEP = 5;
 
-// Tools whose output is worthless once the call ran. ctx_note is handled
-// separately because only its read/dismiss actions are zero-value.
+// Tools whose output is worthless once the call ran.
 const ZERO_VALUE_META_TOOLS = new Set(["bash_status", "bash_kill"]);
-// ctx_note actions that carry no durable value (write/update carry intent and
-// are never dropped). An unreadable action fails safe = not a target.
-const CTX_NOTE_ZERO_VALUE_ACTIONS = new Set(["read", "dismiss"]);
 
 /**
  * Build synthetic drop ops for superseded spent-control-plane tool outputs.
@@ -60,10 +56,6 @@ export function buildSupersessionReclaimOps(input: {
             isTarget = ctxReduceSeen > CTX_REDUCE_KEEP;
         } else if (ZERO_VALUE_META_TOOLS.has(name)) {
             isTarget = true;
-        } else if (name === "ctx_note") {
-            const action = input.targets.get(tag.tagNumber)?.readInput?.()?.action;
-            // Fail safe: only drop when we can positively read a zero-value action.
-            isTarget = typeof action === "string" && CTX_NOTE_ZERO_VALUE_ACTIONS.has(action);
         }
         if (isTarget) dropTagIds.push(tag.tagNumber);
     }

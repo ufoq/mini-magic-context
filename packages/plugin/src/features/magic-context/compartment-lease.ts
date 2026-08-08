@@ -59,9 +59,18 @@ export function releaseCompartmentLease(db: Database, sessionId: string, holderI
 
 export function isCompartmentLeaseHeld(db: Database, sessionId: string, holderId: string): boolean {
     const row = db
-        .prepare(
-            "SELECT 1 FROM compartment_state_lease WHERE session_id = ? AND holder_id = ? AND expires_at > ?",
-        )
-        .get(sessionId, holderId, Date.now());
+        .prepare("SELECT 1 FROM compartment_state_lease WHERE session_id = ? AND holder_id = ?")
+        .get(sessionId, holderId);
     return row != null;
+}
+
+export function canPublishWithCompartmentLease(
+    db: Database,
+    sessionId: string,
+    holderId: string,
+): boolean {
+    const row = db
+        .prepare("SELECT holder_id AS holderId FROM compartment_state_lease WHERE session_id = ?")
+        .get(sessionId) as { holderId: string } | undefined;
+    return row == null || row.holderId === holderId;
 }

@@ -1,12 +1,12 @@
-# Magic Context — Interactive Setup (Windows)
-# Usage: irm https://raw.githubusercontent.com/cortexkit/magic-context/master/scripts/install.ps1 | iex
+# Mini Magic Context — Interactive Setup (Windows)
+# Usage: irm https://raw.githubusercontent.com/ufoq/mini-magic-context/master/scripts/install.ps1 | iex
 
 Write-Host ""
-Write-Host "  ✨ Magic Context — Setup" -ForegroundColor Cyan
+Write-Host "  ✨ Mini Magic Context — Setup" -ForegroundColor Cyan
 Write-Host "  ────────────────────────"
 Write-Host ""
 
-$package = "@cortexkit/magic-context"
+$package = "@ufoq/mini-magic-context"
 # Always pin "@latest": without an explicit version, npx resolves from its
 # on-disk cache rather than re-resolving the npm dist-tag, so a user who
 # already installed an older version would keep getting the cached bundle

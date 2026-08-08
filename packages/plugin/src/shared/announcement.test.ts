@@ -69,9 +69,9 @@ describe("announcement state persistence", () => {
         const mod = await import(`./announcement?t=${Date.now()}-mkdir`);
         const { markAnnouncementSeen } = mod;
 
-        // Storage dir lives under tmpRoot + cortexkit/magic-context — does not
+        // Storage dir lives under tmpRoot + cortexkit/mini-magic-context — does not
         // exist yet at the start of the test
-        const expectedDir = path.join(tmpRoot, "cortexkit", "magic-context");
+        const expectedDir = path.join(tmpRoot, "cortexkit", "mini-magic-context");
         expect(fs.existsSync(expectedDir)).toBe(false);
 
         markAnnouncementSeen("0.21.7");
@@ -86,7 +86,7 @@ describe("announcement state persistence", () => {
         const mod = await import(`./announcement?t=${Date.now()}-trim`);
         const { readLastAnnouncedVersion } = mod;
 
-        const dir = path.join(tmpRoot, "cortexkit", "magic-context");
+        const dir = path.join(tmpRoot, "cortexkit", "mini-magic-context");
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, "last_announced_version"), "  1.2.3  \n");
 
@@ -149,7 +149,7 @@ describe("shouldShowAnnouncement gating", () => {
             return;
         }
 
-        const dir = path.join(tmpRoot, "cortexkit", "magic-context");
+        const dir = path.join(tmpRoot, "cortexkit", "mini-magic-context");
         const file = path.join(dir, "last_announced_version");
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(file, "");

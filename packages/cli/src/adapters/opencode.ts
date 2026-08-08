@@ -54,7 +54,6 @@ export class OpenCodeAdapter implements HarnessAdapter {
             configDir: paths.configDir,
             pluginConfigPath: paths.opencodeConfig,
             magicContextConfigPath: paths.magicContextConfig,
-            secondaryConfigPath: paths.tuiConfig,
         };
     }
 
@@ -290,8 +289,8 @@ export function isDevPathPluginEntry(entry: unknown): boolean {
 
 /**
  * Match a plugin array entry against a package name. Plugin entries can be:
- *   - a string: "@cortexkit/opencode-magic-context@latest" or "@cortexkit/opencode-magic-context"
- *   - a tuple: ["@cortexkit/opencode-magic-context@latest", { ... options }]
+ *   - a string: "@ufoq/opencode-mini-magic-context@latest" or "@ufoq/opencode-mini-magic-context"
+ *   - a tuple: ["@ufoq/opencode-mini-magic-context@latest", { ... options }]
  *   - a file URL: "file:///path/to/local/dev/checkout"
  *
  * For matching purposes we strip everything after `@` (after the first `@org/pkg`
@@ -308,7 +307,7 @@ export function matchesPluginEntry(entry: unknown, pkgName: string): boolean {
     else if (Array.isArray(entry) && typeof entry[0] === "string") candidate = entry[0];
     if (!candidate) return false;
     if (candidate.startsWith("file://")) return false;
-    // Strip version tag: "@cortexkit/foo@latest" → "@cortexkit/foo"
+    // Strip version tag: "@scope/foo@latest" → "@scope/foo"
     const at = candidate.lastIndexOf("@");
     const head = at > 0 ? candidate.slice(0, at) : candidate;
     return head === pkgName;

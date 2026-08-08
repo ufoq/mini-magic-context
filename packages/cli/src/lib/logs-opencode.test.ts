@@ -286,7 +286,7 @@ describe("sanitizeLogContent — secret token redaction (council finding #9)", (
 
         it("handles multiline log content", () => {
             const log = [
-                "Loading config from /Users/alice/.config/cortexkit/magic-context.jsonc",
+                "Loading config from /Users/alice/.config/cortexkit/mini-magic-context.jsonc",
                 "ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYzZ12345678901234567890",
                 'Spawning subagent with {"api_key":"superdupersecret"}',
                 "Done.",
@@ -348,12 +348,9 @@ describe("bundleIssueReport secret redaction", () => {
                     opencodeConfig: join(root, ".config", "opencode", "opencode.jsonc"),
                     opencodeConfigFormat: "jsonc",
                     magicContextConfig: join(root, ".config", "cortexkit", "magic-context.jsonc"),
-                    tuiConfig: join(root, ".config", "opencode", "tui.jsonc"),
-                    tuiConfigFormat: "jsonc",
                     omoConfig: null,
                 },
                 opencodeConfigHasPlugin: true,
-                tuiConfigHasPlugin: true,
                 magicContextConfig: {
                     exists: true,
                     flags: {
@@ -442,13 +439,10 @@ describe("bundleIssueReport secret redaction", () => {
                     configDir: "/Users/alice/.config/opencode",
                     opencodeConfig: "/Users/alice/.config/opencode/opencode.jsonc",
                     opencodeConfigFormat: "jsonc",
-                    magicContextConfig: "/Users/alice/.config/cortexkit/magic-context.jsonc",
-                    tuiConfig: "/Users/alice/.config/opencode/tui.jsonc",
-                    tuiConfigFormat: "jsonc",
+                    magicContextConfig: "/Users/alice/.config/cortexkit/mini-magic-context.jsonc",
                     omoConfig: null,
                 },
                 opencodeConfigHasPlugin: true,
-                tuiConfigHasPlugin: true,
                 magicContextConfig: {
                     exists: true,
                     flags: {},
@@ -486,7 +480,7 @@ describe("bundleIssueReport secret redaction", () => {
                 "Description with /Users/<USER>/private and token=<REDACTED:token>",
             );
             expect(body).toContain(
-                "Config from `/Users/<USER>/.config/cortexkit/magic-context.jsonc`:",
+                "Config from `/Users/<USER>/.config/cortexkit/mini-magic-context.jsonc`:",
             );
             expect(body).toContain(
                 '"title": "Problem at /Users/<USER>/private token=<REDACTED:token>"',

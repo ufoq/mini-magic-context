@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Generates JSON Schema for magic-context.jsonc configuration.
+ * Generates JSON Schema for mini-magic-context.jsonc configuration.
  *
  * Source of truth is the Zod schema `MagicContextConfigSchema` in
  * `src/config/schema/magic-context.ts`. This script derives the JSON Schema
@@ -20,7 +20,7 @@ import { z } from "zod";
 import { MagicContextConfigSchema } from "../src/config/schema/magic-context";
 
 const SCHEMA_ID =
-    "https://raw.githubusercontent.com/cortexkit/magic-context/master/assets/magic-context.schema.json";
+    "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json";
 
 export function buildSchema(): Record<string, unknown> {
     // `io: "input"` so optional/defaulted fields render as accepted INPUT (a
@@ -38,7 +38,7 @@ export function buildSchema(): Record<string, unknown> {
     const properties = (generated.properties ?? {}) as Record<string, unknown>;
 
     // Allow (and document) the `$schema` self-reference line users put at the
-    // top of magic-context.jsonc for editor support. It's not part of the Zod
+    // top of mini-magic-context.jsonc for editor support. It's not part of the Zod
     // config (the loader ignores it), so it isn't in the generated properties.
     if (!("$schema" in properties)) {
         properties.$schema = {
@@ -50,9 +50,9 @@ export function buildSchema(): Record<string, unknown> {
     return {
         $schema: "http://json-schema.org/draft-07/schema#",
         $id: SCHEMA_ID,
-        title: "Magic Context Configuration",
+        title: "Mini Magic Context Configuration",
         description:
-            "Configuration schema for the @cortexkit/opencode-magic-context plugin. Place as magic-context.jsonc in your project root or ~/.config/opencode/.",
+            "Configuration schema for the @ufoq/opencode-mini-magic-context plugin. Place as mini-magic-context.jsonc in <project>/.cortexkit/ or ~/.config/cortexkit/.",
         ...generated,
         properties,
         // The Zod schema strips unknown keys at runtime rather than rejecting,

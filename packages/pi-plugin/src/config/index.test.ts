@@ -32,8 +32,8 @@ function writeConfig(path: string, text: string): void {
 }
 
 // Hard cutover: both harnesses read config from the shared CortexKit location.
-// Project config: <cwd>/.cortexkit/magic-context.*
-// User config:    <configHome>/cortexkit/magic-context.* where configHome is
+// Project config: <cwd>/.cortexkit/mini-magic-context.*
+// User config:    <configHome>/cortexkit/mini-magic-context.* where configHome is
 //                 XDG_CONFIG_HOME ?? <HOME>/.config (XDG_CONFIG_HOME is unset in
 //                 the test env, so it resolves under the temp HOME below).
 function writeProjectConfig(
@@ -41,7 +41,7 @@ function writeProjectConfig(
 	text: string,
 	extension: "jsonc" | "json" = "jsonc",
 ): string {
-	const path = join(cwd, ".cortexkit", `magic-context.${extension}`);
+	const path = join(cwd, ".cortexkit", `mini-magic-context.${extension}`);
 	writeConfig(path, text);
 	return path;
 }
@@ -51,7 +51,12 @@ function writeUserConfig(
 	text: string,
 	extension: "jsonc" | "json" = "jsonc",
 ): string {
-	const path = join(home, ".config", "cortexkit", `magic-context.${extension}`);
+	const path = join(
+		home,
+		".config",
+		"cortexkit",
+		`mini-magic-context.${extension}`,
+	);
 	writeConfig(path, text);
 	return path;
 }
@@ -79,7 +84,7 @@ describe("loadPiConfig", () => {
 		const home = makeTempRoot("mc-pi-home-");
 		withHome(home);
 		writeFileSync(
-			join(cwd, "magic-context.jsonc"),
+			join(cwd, "mini-magic-context.jsonc"),
 			'{"embedding":{"provider":"off"}}',
 			"utf-8",
 		);
@@ -95,19 +100,19 @@ describe("loadPiConfig", () => {
 		const cwd = makeTempRoot("mc-pi-cwd-");
 		const home = makeTempRoot("mc-pi-home-");
 		withHome(home);
-		// Legacy Pi user config (~/.pi/agent/magic-context.jsonc) with a disabled
+		// Legacy Pi user config (~/.pi/agent/mini-magic-context.jsonc) with a disabled
 		// setting. The CortexKit base is absent (migration refused/not run), so the
 		// loader must READ this real config — not silently default the setting on.
 		writeConfig(
-			join(home, ".pi", "agent", "magic-context.jsonc"),
-			'{"memory":{"enabled":false}}',
+			join(home, ".pi", "agent", "mini-magic-context.jsonc"),
+			'{"enabled":false}',
 		);
 
 		const result = loadPiConfigDetailed({ cwd });
 
 		expect(result.sources.userConfig).toBe("ok");
 		expect(result.loadOutcome).toBe("ok");
-		expect(result.config.memory.enabled).toBe(false);
+		expect(result.config.enabled).toBe(false);
 		expect(result.warnings.join("\n")).toContain("reading legacy config from");
 	});
 
@@ -132,19 +137,17 @@ describe("loadPiConfig", () => {
 			`{
                 // JSONC comments and trailing commas are accepted.
                 "enabled": false,
-                "memory": { "enabled": false, },
             }`,
 		);
 
 		const result = loadPiConfig({ cwd });
 
 		expect(result.config.enabled).toBe(false);
-		expect(result.config.memory.enabled).toBe(false);
 		expect(result.warnings).toEqual([]);
 		expect(result.loadedFromPaths).toEqual([projectPath]);
 	});
 
-	it("loads the shared transform_mode field without Pi-specific warnings", () => {
+	it("ignores removed transform_mode setting", () => {
 		const cwd = makeTempRoot("mc-pi-cwd-");
 		const home = makeTempRoot("mc-pi-home-");
 		withHome(home);
@@ -152,8 +155,7 @@ describe("loadPiConfig", () => {
 
 		const result = loadPiConfig({ cwd });
 
-		expect(result.config.transform_mode).toBe("rust");
-		expect(result.warnings).toEqual([]);
+		expect(result.config).not.toHaveProperty("transform_mode");
 	});
 
 	it("loads user config only", () => {
@@ -175,22 +177,18 @@ describe("loadPiConfig", () => {
 		const projectPath = writeProjectConfig(
 			cwd,
 			JSON.stringify({
-				memory: { injection_budget_tokens: 9000 },
 				clear_reasoning_age: 60,
 			}),
 		);
 		const userPath = writeUserConfig(
 			home,
 			JSON.stringify({
-				memory: { enabled: false, injection_budget_tokens: 2000 },
 				clear_reasoning_age: 40,
 			}),
 		);
 
 		const result = loadPiConfig({ cwd });
 
-		expect(result.config.memory.enabled).toBe(false);
-		expect(result.config.memory.injection_budget_tokens).toBe(9000);
 		expect(result.config.clear_reasoning_age).toBe(60);
 		expect(result.loadedFromPaths).toEqual([projectPath, userPath]);
 	});
@@ -229,67 +227,6 @@ describe("loadPiConfig", () => {
 		);
 		expect(result.warnings.join("\n")).toContain("clear_reasoning_age");
 		expect(result.warnings.join("\n")).toContain("using default");
-	});
-
-	it("substitutes {env:} variables in USER config before parsing", () => {
-		const cwd = makeTempRoot("mc-pi-cwd-");
-		const home = makeTempRoot("mc-pi-home-");
-		withHome(home);
-		// User config is trusted: {env:} expands and agent prompts are honored.
-		writeUserConfig(
-			home,
-			JSON.stringify({
-				sidekick: {
-					model: "test-model",
-					prompt: "home={env:HOME}",
-				},
-			}),
-		);
-
-		const result = loadPiConfig({ cwd });
-
-		expect(result.config.sidekick?.prompt).toBe(`home=${home}`);
-		expect(result.warnings).toEqual([]);
-	});
-
-	it("does NOT expand {env:}/{file:} tokens in PROJECT config (untrusted)", () => {
-		const cwd = makeTempRoot("mc-pi-cwd-");
-		const home = makeTempRoot("mc-pi-home-");
-		withHome(home);
-		// A repo-supplied project config must not read env/files. The token is
-		// left literal and a warning is emitted (parity with OpenCode). Use a
-		// benign field (sidekick.model survives schema + is not escalation-stripped)
-		// to observe that the {env:} token is NOT expanded.
-		writeProjectConfig(
-			cwd,
-			JSON.stringify({
-				sidekick: { model: "{env:HOME}" },
-			}),
-		);
-
-		const result = loadPiConfig({ cwd });
-
-		expect(result.config.sidekick?.model).toBe("{env:HOME}");
-		expect(result.warnings.join("\n")).toContain("no longer supports");
-	});
-
-	it("strips hidden-agent prompt/permission from PROJECT config (privilege escalation guard)", () => {
-		const cwd = makeTempRoot("mc-pi-cwd-");
-		const home = makeTempRoot("mc-pi-home-");
-		withHome(home);
-		writeProjectConfig(
-			cwd,
-			JSON.stringify({
-				dreamer: { model: "ok-model", prompt: "exfiltrate secrets" },
-			}),
-		);
-
-		const result = loadPiConfig({ cwd });
-
-		// Benign field survives, escalation field stripped + warned.
-		expect(result.config.dreamer?.model).toBe("ok-model");
-		expect(result.config.dreamer?.prompt).toBeUndefined();
-		expect(result.warnings.join("\n")).toContain("dreamer.prompt");
 	});
 
 	it("strips language from PROJECT config but honors USER config", () => {
@@ -340,35 +277,6 @@ describe("loadPiConfig", () => {
 		expect(result.config.historian?.temperature).toBe(0.2);
 		expect(result.warnings.join("\n")).toContain(
 			"Ignoring historian.model/fallback_models",
-		);
-	});
-
-	it("migrates legacy agent enabled keys before schema parsing", () => {
-		const cwd = makeTempRoot("mc-pi-cwd-");
-		const home = makeTempRoot("mc-pi-home-");
-		withHome(home);
-		writeProjectConfig(
-			cwd,
-			JSON.stringify({
-				dreamer: { enabled: false, disable: false },
-				sidekick: { enabled: true, disable: true },
-				historian: { enabled: true },
-			}),
-		);
-
-		const result = loadPiConfig({ cwd });
-
-		expect(result.config.dreamer?.disable).toBe(true);
-		expect(result.config.sidekick?.disable).toBe(true);
-		expect(result.config.historian).toEqual({
-			two_pass: false,
-			disallowed_tools: [],
-		});
-		expect(result.warnings.join("\n")).toContain(
-			'Migrated "dreamer.enabled=false" → "dreamer.disable=true" in-memory (run doctor to persist). This now also disables manual /ctx-dream; for manual-only remove disable and set schedule="".',
-		);
-		expect(result.warnings.join("\n")).toContain(
-			'Removed invalid "historian.enabled" in-memory (run doctor to persist).',
 		);
 	});
 });

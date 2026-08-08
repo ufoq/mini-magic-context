@@ -559,7 +559,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
                     log(
                         "[magic-context] local embeddings are disabled because the " +
                             "onnxruntime-node native binding is missing or failed to load. " +
-                            "Run `npx @cortexkit/magic-context@latest doctor` for repair " +
+                            "Run `npx @ufoq/mini-magic-context@latest doctor` for repair " +
                             "guidance (use `doctor --force` to reinstall cached plugin packages), " +
                             "or configure an `openai-compatible` embedding HTTP endpoint. " +
                             "Existing memories are unaffected.",

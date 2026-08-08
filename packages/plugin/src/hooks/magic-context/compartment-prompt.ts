@@ -37,10 +37,9 @@ Your job is to clean the draft without changing its structure:
 Do NOT change:
 - Compartment titles, ranges, or ordering.
 - Narrative summary text unless it directly references a U: line you dropped (in which case integrate the signal into the narrative).
-- Facts — leave the facts section untouched.
 - <meta> section — leave messages_processed and unprocessed_from exactly as the draft has them.
 
-Output the cleaned version as valid XML matching the original structure. Preserve all XML tags, compartment ranges, meta, and facts.`;
+Output the cleaned version as valid XML matching the original structure. Preserve all XML tags, compartment ranges, and meta.`;
 
 export const COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT = `# Historian (structural recomp)
 
@@ -48,13 +47,7 @@ You are Historian — the hippocampus of a long-running coding agent. In this mo
 
 Your only job: turn the provided raw message slice into ordered, contiguous <compartment> blocks with four progressive paraphrase tiers (<p1>-<p4>), episode_type, importance, and <meta>.
 
-Do NOT extract or emit any side-channel memory dimensions in this mode:
-- no <facts>
-- no <events>
-- no <user_observations>
-- no <primer_candidates>
-
-This extraction-free recomp mode is used for /ctx-recomp and session upgrade. It must not rewrite durable project memories, user memories, events, or Primers. Spend all output budget on high-quality compartments.
+This extraction-free recomp mode is used for /ctx-recomp and session upgrade. Spend all output budget on high-quality compartments.
 
 Output valid XML only:
 
@@ -79,7 +72,7 @@ Rules:
 - Boundaries are pivots in objective, not changes in activity type. Keep coherent arcs together.
 - Importance is decay rate (1-100): high means this compartment should stay detailed longer.
 - Preserve hard user constraints and source-of-truth corrections; drop low-signal chatter.
-- Never output facts, events, user observations, primer candidates, markdown fences, or prose outside <output>.`;
+- Never output markdown fences or prose outside <output>.`;
 
 export function buildHistorianEditorPrompt(draft: string): string {
     return [
@@ -93,50 +86,23 @@ export function buildHistorianEditorPrompt(draft: string): string {
     ].join("\n");
 }
 export interface CompartmentPromptInputs {
-    /** `<compartment_examples_from_other_projects>` block (4-seed floor), or "". */
-    seedExamples: string;
     /** `<session_references>` block (last-6 recency), or "" for a young session. */
     sessionReferences: string;
-    /** `<project-memory>` block for fact dedup, or "" when memory disabled/empty. */
-    projectMemory: string;
     /** Raw chunk to compartmentalize, pre-formatted `Messages X-Y:\n\n...`. */
     inputSource: string;
-    /** When false, instruct the historian to SKIP fact extraction entirely.
-     *  v2 faithful facts are stored only as project memories; with memory
-     *  disabled there is no fact store, so emitting facts is pure waste
-     *  (and they would never be rendered). Defaults to enabled. */
-    memoryEnabled?: boolean;
-    /** Recomp/session-upgrade structural rebuilds must use the extraction-free prompt. */
-    extractionFree?: boolean;
 }
 
 /**
- * Assemble the per-run historian USER prompt for the v8.7.3 system prompt.
+ * Assemble the per-run historian USER prompt.
  *
  * The system prompt (`COMPARTMENT_AGENT_SYSTEM_PROMPT`, from
  * historian-prompt.generated.ts) carries ALL instructions. This builder only
- * lays out the four input blocks in the order the prompt's Inputs section
- * documents: cross-project examples → session references → project memory →
- * `<new_messages>`. The unbounded v1 `existing_state` dump is GONE (v2) —
- * bounded reference blocks replace it.
+ * lays out the reference + input blocks: `<session_references>` (continuity)
+ * then `<new_messages>`.
  */
 export function buildCompartmentAgentPrompt(inputs: CompartmentPromptInputs): string {
     const parts: string[] = [];
-    if (inputs.seedExamples) parts.push(inputs.seedExamples);
     if (inputs.sessionReferences) parts.push(inputs.sessionReferences);
-    if (inputs.projectMemory) parts.push(inputs.projectMemory);
-    if (inputs.extractionFree) {
-        parts.push(
-            "<extraction>disabled</extraction>\nStructural recomp mode: emit compartments and <meta> only. Do NOT emit <facts>, <events>, <user_observations>, or <primer_candidates>.",
-        );
-    }
-    if (inputs.memoryEnabled === false) {
-        // Memory disabled → no fact store exists. Tell the historian to skip
-        // the <facts> section so it spends its budget on compartments only.
-        parts.push(
-            "<fact_extraction>disabled</fact_extraction>\nMemory is disabled for this project: do NOT emit a <facts> block. Produce compartments only.",
-        );
-    }
     parts.push("<new_messages>");
     parts.push(inputs.inputSource);
     parts.push("</new_messages>");

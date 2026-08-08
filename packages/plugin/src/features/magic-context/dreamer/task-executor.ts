@@ -7,7 +7,6 @@ import {
     DREAMER_RETROSPECTIVE_AGENT,
 } from "../../../agents/dreamer";
 import { withContentLanguageDirective } from "../../../agents/language-directive";
-import type { DreamingTask } from "../../../config/schema/magic-context";
 import type { RawMessageProvider } from "../../../hooks/magic-context/read-session-chunk";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
@@ -24,7 +23,6 @@ import {
     getMemoryVerifications,
     type Memory,
 } from "../memory";
-import { runCompressCues } from "../mural/compress-cues";
 import { recordChildInvocation } from "../subagent-token-capture";
 import { reviewUserMemories } from "../user-memory/review-user-memories";
 import { getActiveUserMemories } from "../user-memory/storage-user-memory";
@@ -101,7 +99,6 @@ export interface DreamTaskExecutorDeps {
     transformMode?: "ts" | "rust";
     /** Rust-mode module transport; classify uses it only after MODULE authority is confirmed. */
     dreamerModel?: string;
-    experimentalMural?: { enabled: boolean; model?: string };
     memoryInjectionBudgetTokens?: number;
     moduleClient?: ClassifyModuleClient & {
         authorityStatus?: (args: {
@@ -217,7 +214,6 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
         let moduleRoute: Awaited<ReturnType<typeof resolveDreamerModuleRoute>>;
         if (
             config.task === "map-memories" ||
-            config.task === "compress-cues" ||
             config.task === "verify" ||
             config.task === "verify-broad" ||
             config.task === "retrospective"
@@ -296,48 +292,6 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
         }
 
         try {
-            if (config.task === "compress-cues") {
-                if (deps.experimentalMural?.enabled !== true) {
-                    // Config-gated no-op, but say so: a silent "completed" here
-                    // reads as a successful run in /ctx-dream summaries and would
-                    // otherwise mask a wiring gap.
-                    log("[dreamer] compress-cues: skipped (experimental.mural is not enabled)");
-                    recordRun("completed", null);
-                    return { status: "completed" };
-                }
-                if (moduleRoute) {
-                    const reason =
-                        "compress-cues parked: MODULE memory authority has no cue write facade";
-                    log(`[dreamer] compress-cues: skipped (${reason})`);
-                    recordRun("failed", reason);
-                    return { status: "failed", transient: true, error: reason };
-                }
-                // Model ladder mirrors classify: task override → experimental.mural
-                // model (the cue COMPRESSOR model) → dreamer model → session model.
-                const result = await runCompressCues({
-                    db,
-                    client: deps.client,
-                    projectIdentity,
-                    parentSessionId: parent,
-                    sessionDirectory: deps.sessionDirectory,
-                    holderId,
-                    leaseKey,
-                    deadline,
-                    model: config.model ?? deps.experimentalMural.model ?? deps.dreamerModel,
-                    fallbackModels: config.fallbackModels,
-                });
-                log(
-                    `[dreamer] compress-cues: compressed=${result.compressed} skipped=${result.skipped} chunks=${result.chunks} remaining=${result.remaining}`,
-                );
-                if (!result.complete) {
-                    const error = `compress-cues incomplete: ${result.remaining} selected memories remain`;
-                    recordRun("failed", error);
-                    return { status: "failed", transient: true, error };
-                }
-                recordRun("completed", null);
-                return { status: "completed" };
-            }
-
             if (config.task === "review-user-memories") {
                 const result = await reviewUserMemories({
                     db,
@@ -1036,7 +990,7 @@ async function runAgenticTask(
 ): Promise<TaskExecOutcome> {
     const { db, projectIdentity, holderId, leaseKey } = ctx;
     const { deps, deadline, parent } = helpers;
-    const task = config.task as DreamingTask;
+    const task = config.task;
     const docsDir = deps.sessionDirectory;
     const invocationStartedAt = Date.now();
     const memoryBefore = getMemoryCountsByStatus(db, projectIdentity);

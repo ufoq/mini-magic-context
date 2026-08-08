@@ -1,7 +1,7 @@
 // NOTE: bun:sqlite is loaded lazily inside collectHistorianFailures() via a
 // runtime-gated dynamic import. The CLI runs under Node (npx invocation), so
 // `bun:sqlite` is normally unavailable; we only attempt the import when running
-// under Bun (e.g. someone runs `bun x @cortexkit/magic-context doctor`). A
+// under Bun (e.g. someone runs `bun x @ufoq/mini-magic-context doctor`). A
 // static `import { Database } from "bun:sqlite"` would crash the CLI under
 // Node before any try/catch could intervene because Node's ESM loader rejects
 // `bun:` specifiers during resolution. Historian-failure diagnostics are
@@ -45,7 +45,6 @@ export interface DiagnosticReport {
     opencodeInstallations: OpenCodeInstallationReport[];
     configPaths: ConfigPaths;
     opencodeConfigHasPlugin: boolean;
-    tuiConfigHasPlugin: boolean;
     magicContextConfig: {
         exists: boolean;
         parseError?: string;
@@ -100,7 +99,7 @@ export interface DiagnosticReport {
  * Per-project historian-dump bucket built from the recent-sessions list.
  *
  * One entry per unique project directory that has at least one dump under
- * `<directory>/.cortexkit/magic-context/historian/`. Sessions sharing a
+ * `<directory>/.cortexkit/mini-magic-context/historian/`. Sessions sharing a
  * directory roll into the same bucket. Empty buckets are omitted.
  */
 export interface ProjectHistorianBucket {
@@ -240,12 +239,12 @@ function getPluginCacheInfo(): { path: string; cached?: string; latest?: string 
 
 function getStorageDir(): string {
     const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-    // Plugin v0.16+ uses the shared cortexkit/magic-context path so OpenCode and
+    // Mini Magic Context uses the shared cortexkit/mini-magic-context path so OpenCode and
     // Pi can share memory/embedding/dreamer state. doctor --issue diagnostics
     // should report on the live storage location, not the legacy OpenCode-only
     // path. (See packages/plugin/src/shared/data-path.ts for the canonical
     // resolver.)
-    return join(dataHome, "cortexkit", "magic-context");
+    return join(dataHome, "cortexkit", "mini-magic-context");
 }
 
 function fileSize(path: string): number {
@@ -374,7 +373,7 @@ function listDumpsInDir(
 /**
  * Group historian dumps by project directory using the recent-sessions list as
  * the lookup index. For each unique directory, opens
- * `<directory>/.cortexkit/magic-context/historian/` and lists dumps there.
+ * `<directory>/.cortexkit/mini-magic-context/historian/` and lists dumps there.
  *
  * Falls back to the legacy harness-scoped tmp-dir layout when recentSessions
  * is empty (Node runs without bun:sqlite) OR when the project-local dir is
@@ -520,7 +519,7 @@ async function collectRecentSessions(): Promise<RecentSessionSummary[]> {
  *
  *   - Under Bun (typeof Bun !== "undefined"): import("bun:sqlite") succeeds
  *     and we read the failures.
- *   - Under Node (the default for `npx @cortexkit/magic-context doctor`):
+ *   - Under Node (the default for `npx @ufoq/mini-magic-context doctor`):
  *     we never attempt the import, so Node's ESM loader doesn't see a `bun:`
  *     specifier. The function returns `[]` and the rest of the diagnostics
  *     report builds normally.
@@ -722,7 +721,6 @@ export async function collectDiagnostics(): Promise<DiagnosticReport> {
     const pluginVersion = getSelfVersion();
     const configPaths = detectConfigPaths();
     const opencodeConfig = readConfig(configPaths.opencodeConfig);
-    const tuiConfig = readConfig(configPaths.tuiConfig);
     const magicContextConfig = readConfig(configPaths.magicContextConfig);
     const storageDirPath = getStorageDir();
     const contextDbPath = join(storageDirPath, "context.db");
@@ -752,7 +750,6 @@ export async function collectDiagnostics(): Promise<DiagnosticReport> {
         opencodeInstallations,
         configPaths,
         opencodeConfigHasPlugin: configHasPluginEntry(opencodeConfig.value),
-        tuiConfigHasPlugin: configHasPluginEntry(tuiConfig.value),
         magicContextConfig: {
             exists: existsSync(configPaths.magicContextConfig),
             ...(magicContextConfig.error ? { parseError: magicContextConfig.error } : {}),
@@ -793,8 +790,6 @@ export function renderDiagnosticsMarkdown(report: DiagnosticReport): string {
         opencodeConfig: sanitizeString(report.configPaths.opencodeConfig),
         opencodeConfigFormat: report.configPaths.opencodeConfigFormat,
         magicContextConfig: sanitizeString(report.configPaths.magicContextConfig),
-        tuiConfig: sanitizeString(report.configPaths.tuiConfig),
-        tuiConfigFormat: report.configPaths.tuiConfigFormat,
         omoConfig: report.configPaths.omoConfig
             ? sanitizeString(report.configPaths.omoConfig)
             : null,
@@ -856,7 +851,6 @@ export function renderDiagnosticsMarkdown(report: DiagnosticReport): string {
         `- Node: ${report.nodeVersion}`,
         `- OpenCode installed: ${report.opencodeInstalled} [${report.opencodeInstallKind}]${report.opencodeVersion ? ` (${report.opencodeVersion})` : ""}`,
         `- Plugin registered in opencode config: ${report.opencodeConfigHasPlugin}`,
-        `- Plugin registered in tui config: ${report.tuiConfigHasPlugin}`,
         `- magic-context.jsonc parse error: ${report.magicContextConfig.parseError ?? "none"}`,
         `- Conflicts detected: ${report.conflicts.hasConflict ? report.conflicts.reasons.join("; ") : "none"}`,
         ...openCodeInstallationTable,
@@ -888,7 +882,7 @@ export function renderDiagnosticsMarkdown(report: DiagnosticReport): string {
         "",
         "### Historian dumps",
         "(Metadata only — XML content is not included in this report.)",
-        "Dumps are stored per-project under `<project>/.cortexkit/magic-context/historian/`.",
+        "Dumps are stored per-project under `<project>/.cortexkit/mini-magic-context/historian/`.",
         "```json",
         JSON.stringify(historianDumps, null, 2),
         "```",

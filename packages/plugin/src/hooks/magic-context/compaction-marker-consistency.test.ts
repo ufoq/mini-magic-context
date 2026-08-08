@@ -22,7 +22,7 @@ function useTempDataHome(prefix: string): string {
     // cortexkit path. Create both parent directories so the OpenCode-side DB
     // file write succeeds and openDatabase() finds a clean target.
     mkdirSync(join(dir, "opencode"), { recursive: true });
-    mkdirSync(join(dir, "cortexkit", "magic-context"), { recursive: true });
+    mkdirSync(join(dir, "cortexkit", "mini-magic-context"), { recursive: true });
     return dir;
 }
 

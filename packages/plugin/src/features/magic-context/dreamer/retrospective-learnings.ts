@@ -187,7 +187,7 @@ export function applyRetrospectiveLearnings(args: {
                 category: learning.category,
                 content: learning.content,
                 sourceSessionId: args.sourceSessionId,
-                sourceType: "dreamer",
+                sourceType: "agent",
                 metadataJson: JSON.stringify({ source: "retrospective" }),
             });
             result.memoryWritten += 1;

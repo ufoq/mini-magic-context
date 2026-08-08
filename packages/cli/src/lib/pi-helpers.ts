@@ -8,7 +8,7 @@ export interface PiBinaryInfo {
     source: "path" | "home";
 }
 
-export const PI_PACKAGE_SOURCE = "npm:@cortexkit/pi-magic-context";
+export const PI_PACKAGE_SOURCE = "npm:@ufoq/pi-mini-magic-context";
 
 export interface PiCommandInvocation {
     command: string;

@@ -122,7 +122,7 @@ function getClearModelEmbeddingsStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getDistinctStoredModelIdsStatement(db: Database): PreparedStatement {
+function _getDistinctStoredModelIdsStatement(db: Database): PreparedStatement {
     let stmt = getDistinctStoredModelIdsStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(

@@ -2,12 +2,10 @@ export type RustAuthorityDomain = "memories" | "notes";
 export type RustAuthorityState = "TS" | "PREPARING" | "MODULE" | "DRAINING";
 
 export interface RustNoteToolRequest {
-    /** Host MCP tool-use id; absent only for legacy THALAMUS callers. */
     commandId?: string;
     sessionId: string;
     projectRoot: string;
     projectPath: string;
-    /** MC identity; projectRoot stays transport-only. */
     memoryProject: string;
     action: "write" | "read" | "update" | "dismiss";
     content?: string;
@@ -19,12 +17,10 @@ export interface RustNoteToolRequest {
 }
 
 export interface RustMemoryToolRequest {
-    /** Host MCP tool-use id; absent only for legacy THALAMUS callers. */
     commandId?: string;
     sessionId: string;
     projectRoot: string;
     projectPath: string;
-    /** MC identity; projectRoot stays transport-only. */
     memoryProject: string;
     action: "write" | "update" | "archive" | "merge" | "get";
     content?: string;
@@ -62,11 +58,8 @@ export interface RustToolBackends {
         projectRoot: string;
         domain: RustAuthorityDomain;
     }) => Promise<RustAuthorityState | null>;
-    /** Route ctx_note only after notes authority reports MODULE. */
     note?: (args: RustNoteToolRequest) => Promise<unknown>;
-    /** Route ctx_memory only after memories authority reports MODULE. */
     memory?: (args: RustMemoryToolRequest) => Promise<unknown>;
-    /** Smart-note writes fail closed when the host evaluator cannot send note.evaluate for this project. */
     noteEvaluationAvailable?: (projectPath: string) => boolean;
     memorySync?: (sessionId: string) => void;
 }

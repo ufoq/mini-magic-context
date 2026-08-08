@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import { detectConfigFile, parseJsonc } from "../shared/jsonc-parser";
-import { migrateLegacyAgentEnabledInMemory } from "./agent-disable";
 import {
     cortexKitProjectConfigBasePath,
     cortexKitUserConfigBasePath,
@@ -9,8 +8,6 @@ import {
     resolveLegacyConfigSources,
     resolveLegacyConfigSourcesForHarness,
 } from "./migrate-config-location";
-import { migrateDreamerV2 } from "./migrate-dreamer-v2";
-import { migrateLegacyExperimental } from "./migrate-experimental";
 import {
     constrainProjectThresholdOverrides,
     dropInheritedEmbeddingKeyOnRedirect,
@@ -18,7 +15,6 @@ import {
 } from "./project-security";
 import { pruneNestedConfigLeaf } from "./prune-config-leaf";
 import { type MagicContextConfig, MagicContextConfigSchema } from "./schema/magic-context";
-import { resolveTransformMode } from "./transform-mode";
 import { substituteConfigVariables } from "./variable";
 
 export interface MagicContextPluginConfig extends MagicContextConfig {
@@ -222,14 +218,7 @@ function parsePluginConfig(
     // Pre-Zod shim: reshape legacy experimental.* graduated keys so the user's
     // opt-in/out state survives upgrades even when they never run `doctor`.
     const preMigrationWarnings: string[] = [];
-    const migratedExperimental = migrateLegacyExperimental(rawConfig, preMigrationWarnings);
-    // Dreamer v2: convert the legacy v1 dreamer shape (window schedule, tasks
-    // array, user_memories/pin_key_files blocks) into the per-task `tasks` record.
-    // Runs AFTER migrate-experimental so experimental.user_memories (already
-    // relocated to dreamer.user_memories above) is folded into the v2 tasks here.
-    const migratedDreamer = migrateDreamerV2(migratedExperimental, preMigrationWarnings);
-    const migrated = migrateLegacyAgentEnabledInMemory(migratedDreamer, preMigrationWarnings);
-    const parsed = MagicContextConfigSchema.safeParse(migrated);
+    const parsed = MagicContextConfigSchema.safeParse(rawConfig);
     const disabledHooks = Array.isArray(rawConfig.disabled_hooks)
         ? rawConfig.disabled_hooks.filter((value): value is string => typeof value === "string")
         : undefined;
@@ -248,7 +237,6 @@ function parsePluginConfig(
     }
 
     // Full parse failed — recover field-by-field using defaults for invalid fields.
-    // Agent configs (historian, dreamer, sidekick) are dropped on error rather than defaulted
     // because wrong model config could run expensive models or fail silently.
     const defaults = MagicContextConfigSchema.parse({});
     const warnings: string[] = [];
@@ -286,8 +274,7 @@ function parsePluginConfig(
     const patched: Record<string, unknown> = { ...rawConfig };
     for (const key of errorPaths) {
         recoveredTopLevelKeys.push(key);
-        const isAgentConfig = key === "historian" || key === "dreamer" || key === "sidekick";
-        if (isAgentConfig) {
+        if (key === "historian") {
             // Drop agent configs entirely on error — don't default them
             delete patched[key];
             warnings.push(
@@ -347,16 +334,7 @@ function parsePluginConfig(
         );
     }
 
-    // Re-run migration on the field-recovered patched config so legacy
-    // experimental + dreamer-v1 blocks still migrate on the recovery path.
-    const retryMigrated = migrateLegacyAgentEnabledInMemory(
-        migrateDreamerV2(
-            migrateLegacyExperimental(patched, preMigrationWarnings),
-            preMigrationWarnings,
-        ),
-        preMigrationWarnings,
-    );
-    const retryParsed = MagicContextConfigSchema.safeParse(retryMigrated);
+    const retryParsed = MagicContextConfigSchema.safeParse(patched);
     if (retryParsed.success) {
         return {
             ...retryParsed.data,
@@ -391,13 +369,6 @@ export function loadPluginConfig(
     // substitutionFailures) are simply dropped for callers that only need the
     // config + warnings.
     return loadPluginConfigDetailed(directory).config;
-}
-
-function hasUserTierSubcConfig(config: Record<string, unknown> | undefined): boolean {
-    const subc = config?.subc;
-    if (typeof subc !== "object" || subc === null || Array.isArray(subc)) return false;
-    const connectionFile = (subc as Record<string, unknown>).connection_file;
-    return typeof connectionFile === "string" && connectionFile.trim().length > 0;
 }
 
 function collectEmptyStringPaths(value: unknown, prefix = ""): string[] {
@@ -504,7 +475,7 @@ export function loadPluginConfigDetailed(directory: string): LoadResultDetailed 
 
     if (userLegacyFallback.source) {
         allWarnings.push(
-            `[user config] reading legacy config from ${userLegacyFallback.source.path} until migration completes; run \`npx @cortexkit/magic-context doctor\` to consolidate into the shared CortexKit location.`,
+            `[user config] reading legacy config from ${userLegacyFallback.source.path} until migration completes; run \`npx @ufoq/mini-magic-context doctor\` to consolidate into the shared CortexKit location.`,
         );
     } else if (legacyUserUnmigrated) {
         allWarnings.push(
@@ -514,7 +485,7 @@ export function loadPluginConfigDetailed(directory: string): LoadResultDetailed 
 
     if (projectLegacyFallback.source) {
         allWarnings.push(
-            `[project config] reading legacy config from ${projectLegacyFallback.source.path} until migration completes; run \`npx @cortexkit/magic-context doctor\` to consolidate into the shared CortexKit location.`,
+            `[project config] reading legacy config from ${projectLegacyFallback.source.path} until migration completes; run \`npx @ufoq/mini-magic-context doctor\` to consolidate into the shared CortexKit location.`,
         );
     } else if (legacyProjectUnmigrated) {
         allWarnings.push(
@@ -561,13 +532,6 @@ export function loadPluginConfigDetailed(directory: string): LoadResultDetailed 
             }),
         );
     }
-
-    const resolvedTransformMode = resolveTransformMode({
-        configured: config.transform_mode,
-        userTierHasSubc: hasUserTierSubcConfig(userLoaded?.config),
-    });
-    config.transform_mode = resolvedTransformMode.mode;
-    allWarnings.push(...resolvedTransformMode.warnings.map((warning) => `[config] ${warning}`));
 
     if (allWarnings.length > 0) {
         config.configWarnings = allWarnings;

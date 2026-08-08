@@ -21,7 +21,6 @@ import {
 import { getMemoriesByProjects, insertMemory, isMemoryRow } from "./memory/storage-memory";
 import { getMemoryVerifications } from "./memory/storage-memory-verifications";
 import { runMigrations } from "./migrations";
-import { resolveMemoriesByIdsForSearch, unifiedSearch } from "./search";
 import { initializeDatabase } from "./storage-db";
 
 function db(): Database {
@@ -2078,7 +2077,7 @@ describe("memory authority protocol", () => {
         ).toEqual({ superseded_by_memory_id: null });
     });
 
-    test("foreign archived expired and unshareable rows stay hidden on the id search path", () => {
+    test("foreign archived expired and unshareable rows stay hidden", () => {
         const database = db();
         const now = Date.now();
         database
@@ -2112,16 +2111,6 @@ describe("memory authority protocol", () => {
         );
         const contents = rows.map((row) => row.content).sort();
         expect(contents).toEqual(["foreign visible", "own archived"]);
-        const idPath = resolveMemoriesByIdsForSearch({
-            db: database,
-            projectPath: "/own",
-            ids: [1, 2, 3, 4, 5],
-            limit: 10,
-        });
-        expect(idPath?.map((hit) => hit.content).sort()).toEqual([
-            "foreign visible",
-            "own archived",
-        ]);
     });
 
     test("note evaluation bridges are scoped per project", async () => {
@@ -2142,30 +2131,5 @@ describe("memory authority protocol", () => {
             verdict: true,
         });
         expect(calls).toEqual(["eval-a"]);
-    });
-
-    test("module-managed memory search skips retrieval_count writes", async () => {
-        const database = db();
-        installAuthorityManagedMarker(database, "/repo");
-        withPrivilegedWriter(database, () => {
-            database
-                .prepare(
-                    "INSERT INTO memories(project_path, category, content, normalized_hash, first_seen_at, created_at, updated_at, last_seen_at, status) VALUES (?, 'CONSTRAINTS', 'search me unique-token-xyz', 'h', 0, 0, 0, 0, 'active')",
-                )
-                .run("/repo");
-        });
-        const before = database
-            .prepare("SELECT retrieval_count AS c FROM memories WHERE id = 1")
-            .get() as { c: number };
-        const results = await unifiedSearch(database, "session", "/repo", "unique-token-xyz", {
-            memoryEnabled: true,
-            embeddingEnabled: false,
-            countRetrievals: true,
-        });
-        expect(results.some((result) => result.source === "memory")).toBe(true);
-        const after = database
-            .prepare("SELECT retrieval_count AS c FROM memories WHERE id = 1")
-            .get() as { c: number };
-        expect(after.c).toBe(before.c);
     });
 });

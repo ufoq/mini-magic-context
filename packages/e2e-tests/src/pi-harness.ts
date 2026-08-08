@@ -191,7 +191,7 @@ export class PiTestHarness {
   }
 
   contextDbPath(): string {
-    return join(this.env.dataDir, "cortexkit", "magic-context", "context.db");
+        return join(this.env.dataDir, "cortexkit", "mini-magic-context", "context.db");
   }
 
   contextDb(): Database {

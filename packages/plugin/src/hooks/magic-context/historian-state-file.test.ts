@@ -38,15 +38,15 @@ describe("maybeWriteHistorianStateFile", () => {
         ).toBeUndefined();
     });
 
-    test("writes large state to <project>/.cortexkit/magic-context/historian/", () => {
+    test("writes large state to <project>/.cortexkit/mini-magic-context/historian/", () => {
         // The whole point of the project-local move: OpenCode's
         // external_directory permission system trusts paths inside the project
-        // boundary. Confirm the file lands under .cortexkit/magic-context/historian/.
+        // boundary. Confirm the file lands under .cortexkit/mini-magic-context/historian/.
         const big = "y".repeat(HISTORIAN_STATE_INLINE_THRESHOLD + 1);
         const stateFile = maybeWriteHistorianStateFile("ses_abc", big, tempProjectDir);
         expect(stateFile).toBeDefined();
         expect(stateFile!).toContain(
-            path.join(tempProjectDir, ".cortexkit", "magic-context", "historian"),
+            path.join(tempProjectDir, ".cortexkit", "mini-magic-context", "historian"),
         );
         expect(stateFile!).toContain("state-ses_abc-");
         expect(stateFile!).toMatch(/\.xml$/);
@@ -55,10 +55,10 @@ describe("maybeWriteHistorianStateFile", () => {
         // The transient dump dir is git-ignored via a fenced .cortexkit/.gitignore.
         const gi = path.join(tempProjectDir, ".cortexkit", ".gitignore");
         expect(existsSync(gi)).toBe(true);
-        expect(readFileSync(gi, "utf8")).toContain("magic-context/");
+        expect(readFileSync(gi, "utf8")).toContain("mini-magic-context/");
     });
 
-    test("creates .cortexkit/magic-context/historian/ recursively on fresh project", () => {
+    test("creates .cortexkit/mini-magic-context/historian/ recursively on fresh project", () => {
         // Fresh projects have no .cortexkit/ subtree at all. The helper must
         // mkdir -p so it works without any prior setup.
         expect(existsSync(path.join(tempProjectDir, ".cortexkit"))).toBe(false);
@@ -66,7 +66,7 @@ describe("maybeWriteHistorianStateFile", () => {
         const stateFile = maybeWriteHistorianStateFile("ses_def", big, tempProjectDir);
         expect(stateFile).toBeDefined();
         expect(
-            existsSync(path.join(tempProjectDir, ".cortexkit", "magic-context", "historian")),
+            existsSync(path.join(tempProjectDir, ".cortexkit", "mini-magic-context", "historian")),
         ).toBe(true);
     });
 

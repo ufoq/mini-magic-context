@@ -7,9 +7,8 @@
  * ctx_search for full context, not to provide the answer itself.
  *
  * Compression strategy per source:
- *   - memory → caveman-ultra via `cavemanCompress()` (token-dense)
- *   - git_commit → raw commit subject (already terse); prefixed with SHA + age
  *   - message → caveman-ultra, role tag
+ *   - compartment → snippet/title, caveman-ultra
  *
  * Guardrails:
  *   - Per-fragment token cap (~20 tokens, ~80 chars) with ellipsis truncation
@@ -25,7 +24,6 @@ import { cavemanCompress } from "./caveman";
 const MAX_FRAGMENTS = 3;
 const FRAGMENT_CHAR_CAP = 80; // ~20 tokens at 3.5 chars/token
 const MAX_HINT_CHARS = 800; // ~200 tokens hard ceiling
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export interface AutoSearchHintOptions {
     maxFragments?: number;
@@ -38,34 +36,8 @@ function truncate(text: string, limit: number): string {
     return `${normalized.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 }
 
-function formatAge(committedAtMs: number): string {
-    const delta = Date.now() - committedAtMs;
-    if (delta < 0) return "future";
-    const days = Math.floor(delta / MS_PER_DAY);
-    if (days <= 0) return "today";
-    if (days === 1) return "1d ago";
-    if (days < 30) return `${days}d ago`;
-    const months = Math.floor(days / 30);
-    if (months === 1) return "1mo ago";
-    if (months < 12) return `${months}mo ago`;
-    const years = Math.floor(days / 365);
-    return years === 1 ? "1y ago" : `${years}y ago`;
-}
-
 function renderFragment(result: UnifiedSearchResult, charCap: number): string {
     switch (result.source) {
-        case "memory": {
-            const compressed = cavemanCompress(result.content, "ultra");
-            return truncate(compressed, charCap);
-        }
-        case "git_commit": {
-            // Use only the subject line (first line) — bodies add noise without
-            // changing the recall trigger. Preserve the short SHA + relative age
-            // so the agent can decide if the age is even relevant.
-            const subject = result.content.split(/\r?\n/)[0] ?? result.content;
-            const body = truncate(subject, Math.max(10, charCap - 20));
-            return `commit ${result.shortSha} ${formatAge(result.committedAtMs)}: ${body}`;
-        }
         case "message": {
             const compressed = cavemanCompress(result.content, "ultra");
             return truncate(compressed, charCap);
@@ -73,14 +45,6 @@ function renderFragment(result: UnifiedSearchResult, charCap: number): string {
         case "compartment": {
             const source = result.snippet ?? result.title;
             const compressed = cavemanCompress(source, "ultra");
-            return truncate(compressed, charCap);
-        }
-        case "primer": {
-            const compressed = cavemanCompress(result.content, "ultra");
-            return truncate(compressed, charCap);
-        }
-        case "note": {
-            const compressed = cavemanCompress(result.content, "ultra");
             return truncate(compressed, charCap);
         }
     }

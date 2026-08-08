@@ -22,27 +22,21 @@ import {
 } from "@magic-context/core/features/magic-context/memory/embedding";
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import {
-	parseIdShapedQuery,
-	resolveMemoriesByIdsForSearch,
 	type UnifiedSearchResult,
 	unifiedSearch,
 } from "@magic-context/core/features/magic-context/search";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
-import { getVisibleMemoryIds } from "@magic-context/core/hooks/magic-context/inject-compartments";
 import { CTX_SEARCH_DESCRIPTION } from "@magic-context/core/tools/ctx-search/constants";
 import { unwrapImitatedReducedArgs } from "@magic-context/core/tools/unwrap-imitated-reduced-args";
 import { type Static, Type } from "typebox";
 
 const DEFAULT_LIMIT = 10;
-const NOTE_EXPAND_HINT =
-	"Use ctx_expand(start=N-10, end=N) around any note @msg anchor above to read the surrounding conversation context.";
-
 const ParamsSchema = Type.Object(
 	{
 		query: Type.Optional(
 			Type.String({
 				description:
-					"Search query. Matches against memory content, Primers, git commit messages, and raw user/assistant message text.",
+					"Search query. Matches against raw user/assistant message text and semantic historian compartments.",
 			}),
 		),
 		limit: Type.Optional(
@@ -51,19 +45,10 @@ const ParamsSchema = Type.Object(
 			}),
 		),
 		sources: Type.Optional(
-			Type.Array(
-				Type.Union([
-					Type.Literal("memory"),
-					Type.Literal("message"),
-					Type.Literal("git_commit"),
-					Type.Literal("primer"),
-					Type.Literal("note"),
-				]),
-				{
-					description:
-						'Optional. Restrict to specific sources. Examples: ["primer"] for standing project explanations, ["git_commit"] for "when did we change X", ["memory"] for naming conventions, ["message"] for "did we discuss this earlier", ["note"] for parked decisions or follow-ups, ["git_commit","message"] for regression hunts. Omit for a broad search across all enabled sources.',
-				},
-			),
+			Type.Array(Type.Literal("message"), {
+				description:
+					"Optional. Restrict to message history. Omit for message history; pass [] to search no sources.",
+			}),
 		),
 	},
 	{ additionalProperties: true },
@@ -77,61 +62,11 @@ function normalizeLimit(limit?: number): number {
 	return Math.max(1, Math.floor(limit));
 }
 
-function formatAge(committedAtMs: number): string {
-	const ageMs = Date.now() - committedAtMs;
-	if (ageMs < 0) return "future";
-	const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
-	if (days <= 0) return "today";
-	if (days === 1) return "1d ago";
-	if (days < 30) return `${days}d ago`;
-	const months = Math.floor(days / 30);
-	if (months === 1) return "1mo ago";
-	if (months < 12) return `${months}mo ago`;
-	const years = Math.floor(days / 365);
-	return years === 1 ? "1y ago" : `${years}y ago`;
-}
-
 function formatResult(
 	result: UnifiedSearchResult,
 	index: number,
-	currentSessionId: string,
+	_currentSessionId: string,
 ): string {
-	if (result.source === "memory") {
-		// `source=` attributes a foreign workspace member's memory to its origin
-		// project (parity with OpenCode ctx-search/tools.ts); empty for own-project.
-		const source = result.sourceName ? ` source=${result.sourceName}` : "";
-		return [
-			`[${index}] [memory] score=${result.score.toFixed(2)} id=${result.memoryId} category=${result.category}${source} match=${result.matchType}`,
-			result.content,
-		].join("\n");
-	}
-
-	if (result.source === "git_commit") {
-		return [
-			`[${index}] [git_commit] score=${result.score.toFixed(2)} sha=${result.shortSha} ${formatAge(result.committedAtMs)} match=${result.matchType}`,
-			result.content,
-		].join("\n");
-	}
-
-	if (result.source === "primer") {
-		return [
-			`[${index}] [primer] score=${result.score.toFixed(2)} id=${result.primerId} support=${result.support} match=${result.matchType}`,
-			result.content,
-		].join("\n");
-	}
-
-	if (result.source === "note") {
-		const anchor =
-			result.anchorOrdinal !== null &&
-			result.sourceSessionId === currentSessionId
-				? ` @msg ${result.anchorOrdinal}`
-				: "";
-		return [
-			`[${index}] [note] score=${result.score.toFixed(2)} id=#${result.noteId} status=${result.status} ${formatAge(result.createdAt)}${anchor}`,
-			result.content,
-		].join("\n");
-	}
-
 	if (result.source === "compartment") {
 		return [
 			`[${index}] [message] score=${result.score.toFixed(2)} compartment_id=${result.compartmentId} range=${result.startOrdinal}-${result.endOrdinal} match=${result.matchType} title=${result.title}`,
@@ -153,7 +88,7 @@ function formatSearchResults(
 	currentSessionId: string,
 ): string {
 	if (results.length === 0) {
-		return `No results found for "${query}" across notes, memories, primers, git commits, or message history.`;
+		return `No results found for "${query}" in compacted message history.`;
 	}
 	const bodyParts = results.map((result, index) =>
 		formatResult(result, index + 1, currentSessionId),
@@ -168,16 +103,6 @@ function formatSearchResults(
 			"Use ctx_expand(start, end) with the range from any message result above to read the full conversation context.",
 		);
 	}
-	if (
-		results.some(
-			(result) =>
-				result.source === "note" &&
-				result.anchorOrdinal !== null &&
-				result.sourceSessionId === currentSessionId,
-		)
-	) {
-		bodyParts.push(NOTE_EXPAND_HINT);
-	}
 	const body = bodyParts.join("\n\n");
 	return `Found ${results.length} result${results.length === 1 ? "" : "s"} for "${query}":\n\n${body}`;
 }
@@ -188,9 +113,7 @@ export interface CtxSearchToolDeps {
 		directory: string,
 		db: ContextDatabase,
 	) => Promise<void>;
-	memoryEnabled?: boolean;
 	embeddingEnabled?: boolean;
-	gitCommitsEnabled?: boolean;
 }
 
 export function createCtxSearchTool(
@@ -214,8 +137,8 @@ export function createCtxSearchTool(
 				sources: {
 					type: "array",
 					items: "string",
-					maxItems: 5,
-					values: ["memory", "message", "git_commit", "primer", "note"],
+					maxItems: 1,
+					values: ["message"],
 				},
 			});
 			const query = params.query?.trim();
@@ -243,13 +166,9 @@ export function createCtxSearchTool(
 			}
 			await deps.ensureProjectRegistered?.(ctx.cwd, deps.db);
 			const snapshot = getProjectEmbeddingSnapshot(projectIdentity);
-			const memoryEnabled =
-				snapshot?.features.memoryEnabled ?? deps.memoryEnabled;
 			const embeddingEnabled = snapshot
 				? snapshot.enabled || snapshot.gitCommitEnabled
 				: deps.embeddingEnabled;
-			const gitCommitsEnabled =
-				snapshot?.gitCommitEnabled ?? deps.gitCommitsEnabled ?? false;
 
 			// Only search message history up to the last compartment boundary —
 			// anything after that (the live tail, including the current turn) is
@@ -266,36 +185,6 @@ export function createCtxSearchTool(
 			const messageOrdinalCutoff =
 				lastCompartmentEnd >= 0 ? lastCompartmentEnd : 0;
 
-			// Hard-filter memories already rendered in <session-history>.
-			const visibleMemoryIds = getVisibleMemoryIds(deps.db, sessionId);
-
-			// ID-shaped short-circuit (parity with OpenCode ctx_search): when the
-			// whole query is one or more memory ids, bypass the lexical+semantic
-			// lanes and look the ids up directly. If nothing resolves we fall
-			// through to the normal lanes so a numeric query with no matching
-			// memory still searches text.
-			const idShape = parseIdShapedQuery(query);
-			if (idShape && memoryEnabled) {
-				const idResults = resolveMemoriesByIdsForSearch({
-					db: deps.db,
-					projectPath: projectIdentity,
-					ids: idShape,
-					limit: Math.max(normalizeLimit(params.limit), idShape.length),
-					visibleMemoryIds,
-				});
-				if (idResults !== null) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: formatSearchResults(query, idResults, sessionId),
-							},
-						],
-						details: undefined,
-					};
-				}
-			}
-
 			const results = await unifiedSearch(
 				deps.db,
 				sessionId,
@@ -303,7 +192,6 @@ export function createCtxSearchTool(
 				query,
 				{
 					limit: normalizeLimit(params.limit),
-					memoryEnabled,
 					embeddingEnabled,
 					embedQuery: async (text, signal) => {
 						const result = await embedTextForProject(
@@ -312,13 +200,11 @@ export function createCtxSearchTool(
 							signal,
 							"query",
 						);
-						return result?.vector ?? null;
+						return result;
 					},
 					isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
 					maxMessageOrdinal: messageOrdinalCutoff,
-					gitCommitsEnabled,
-					sources: params.sources,
-					visibleMemoryIds,
+					sources: params.sources ?? ["message"],
 					// Explicit agent search → literal-probe multi-query recall
 					// (parity with OpenCode's ctx_search). Pi auto-search leaves
 					// this off to protect its latency budget.

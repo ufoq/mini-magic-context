@@ -4,14 +4,14 @@
 # doctor flows after a release, driven interactively (e.g. via a PTY). Unlike
 # Dockerfile.opencode / Dockerfile.pi (which copy the locally-built dist and run
 # a scripted smoke), this image installs the REAL published
-# `@cortexkit/magic-context@latest` from npm, so what you test is exactly what a
+# `@ufoq/mini-magic-context@latest` from npm, so what you test is exactly what a
 # user gets. Rebuild after each release to pick up the newest version.
 #
 # It deliberately has NO entrypoint script: it drops you into a shell so you can
 # run the wizard yourself and inspect where config + state actually land:
-#   - user config   →  ~/.config/cortexkit/magic-context.jsonc
-#   - project config →  <project>/.cortexkit/magic-context.jsonc
-#   - shared DB      →  ~/.local/share/cortexkit/magic-context/context.db
+#   - user config   →  ~/.config/cortexkit/mini-magic-context.jsonc
+#   - project config →  <project>/.cortexkit/mini-magic-context.jsonc
+#   - shared DB      →  ~/.local/share/cortexkit/mini-magic-context/context.db
 #
 # Build + run (use the helper, which forces a fresh @latest fetch):
 #   tests/docker/setup-sandbox.sh
@@ -74,8 +74,8 @@ RUN git config --global user.email "sandbox@cortexkit.local" && \
 ARG MC_VERSION=latest
 ARG CACHE_BUST=0
 RUN echo "cache-bust=${CACHE_BUST}" \
-    && npm install -g "@cortexkit/magic-context@${MC_VERSION}" \
-    && magic-context --version
+    && npm install -g "@ufoq/mini-magic-context@${MC_VERSION}" \
+    && mini-magic-context --version
 
 # A help banner on every interactive shell so the manual test steps are obvious.
 # Sourced from .bashrc only (the login shell sources .bashrc via /etc/profile on

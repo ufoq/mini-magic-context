@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { getOpenCodePluginCacheDir } from "./paths";
 
-export const OPENCODE_PLUGIN_NAME = "@cortexkit/opencode-magic-context";
+export const OPENCODE_PLUGIN_NAME = "@ufoq/opencode-mini-magic-context";
 export const OPENCODE_PLUGIN_ENTRY_WITH_VERSION = `${OPENCODE_PLUGIN_NAME}@latest`;
 
 export function getOpenCodePluginCacheRoots(): string[] {

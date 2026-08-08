@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cortexKitUserConfigBasePath } from "../config/migrate-config-location";
 import {
     _resetProjectEmbeddingRegistryForTests,
     getProjectEmbeddingSnapshot,
 } from "../features/magic-context/memory/embedding";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
 import { closeDatabase, openDatabase } from "../features/magic-context/storage";
-import { ensureProjectRegisteredFromOpenCodeDirectory } from "./embedding-bootstrap";
+import {
+    ensureProjectRegisteredFromOpenCodeDirectory,
+    miniEmbeddingConfig,
+} from "./embedding-bootstrap";
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
@@ -58,5 +62,75 @@ describe("ensureProjectRegisteredFromOpenCodeDirectory", () => {
         const snapshot = getProjectEmbeddingSnapshot(projectIdentity);
         expect(snapshot?.enabled).toBe(true);
         expect(snapshot?.runtimeFingerprint).not.toStartWith("observation:");
+    });
+
+    it("registers provider 'off' as a disabled no-op snapshot", async () => {
+        const projectDir = tempDir("mc-off-boot-");
+        process.env.HOME = tempDir("mc-off-home-");
+        process.env.XDG_CONFIG_HOME = tempDir("mc-off-config-");
+        process.env.XDG_DATA_HOME = tempDir("mc-off-data-");
+        const userConfigBase = cortexKitUserConfigBasePath();
+        mkdirSync(join(userConfigBase, ".."), { recursive: true });
+        writeFileSync(`${userConfigBase}.jsonc`, '{"embedding":{"provider":"off"}}');
+        const db = openDatabase();
+        const projectIdentity = resolveProjectIdentity(projectDir);
+
+        await ensureProjectRegisteredFromOpenCodeDirectory(projectDir, db);
+
+        const snapshot = getProjectEmbeddingSnapshot(projectIdentity);
+        expect(snapshot?.enabled).toBe(false);
+        expect(snapshot?.modelId).toBe("off");
+        expect(snapshot?.chunkModelId).toBe("off");
+        expect(snapshot?.provider).toBe("off");
+        expect(snapshot?.runtimeFingerprint).not.toStartWith("observation:");
+    });
+
+    it("ignores stale subc shadow memory and git embedding lanes", async () => {
+        const projectDir = tempDir("mc-mini-stale-embedding-boot-");
+        process.env.HOME = tempDir("mc-mini-stale-embedding-home-");
+        process.env.XDG_CONFIG_HOME = tempDir("mc-mini-stale-embedding-config-");
+        process.env.XDG_DATA_HOME = tempDir("mc-mini-stale-embedding-data-");
+        writeFileSync(
+            join(projectDir, "magic-context.jsonc"),
+            JSON.stringify({
+                embedding: { provider: "synapse", model: "stale", fallback_provider: "off" },
+                subc: { connection_file: "/tmp/stale-subc.json" },
+                shadow_embedding: { enabled: true },
+                memory: { enabled: true, git_commit_indexing: { enabled: true } },
+            }),
+        );
+        const db = openDatabase();
+        const projectIdentity = resolveProjectIdentity(projectDir);
+
+        await ensureProjectRegisteredFromOpenCodeDirectory(projectDir, db);
+
+        const snapshot = getProjectEmbeddingSnapshot(projectIdentity);
+        expect(snapshot?.provider).not.toBe("synapse");
+        expect(snapshot?.features).toEqual({ memoryEnabled: false, gitCommitEnabled: false });
+        expect(snapshot?.gitCommitEnabled).toBe(false);
+    });
+
+    it("preserves OpenAI-compatible fields", async () => {
+        expect(
+            miniEmbeddingConfig({
+                provider: "openai-compatible",
+                model: "qwen3",
+                endpoint: "https://embeddings.example/v1",
+                api_key: "secret-key",
+                input_type: "document",
+                query_input_type: "query",
+                truncate: "END",
+                max_input_tokens: 2048,
+            }),
+        ).toEqual({
+            provider: "openai-compatible",
+            model: "qwen3",
+            endpoint: "https://embeddings.example/v1",
+            api_key: "secret-key",
+            input_type: "document",
+            query_input_type: "query",
+            truncate: "END",
+            max_input_tokens: 2048,
+        });
     });
 });

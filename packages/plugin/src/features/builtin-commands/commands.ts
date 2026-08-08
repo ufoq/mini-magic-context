@@ -2,6 +2,11 @@ import type { BuiltinCommandConfig } from "./types";
 
 export function getMagicContextBuiltinCommands(): BuiltinCommandConfig {
     return {
+        "mc-import-context": {
+            template: "mc-import-context",
+            description:
+                "Import this session's legacy Magic Context compartments into mini-magic-context",
+        },
         "ctx-status": {
             template: "ctx-status",
             description: "Show magic context status, pending queue, cache TTL, and debug info",
@@ -15,22 +20,9 @@ export function getMagicContextBuiltinCommands(): BuiltinCommandConfig {
             template: "ctx-wrapup",
             description: "Compact older live history while keeping the newest messages raw",
         },
-        "ctx-session-upgrade": {
-            template: "ctx-session-upgrade",
-            description:
-                "Upgrade this session to the latest history format: rebuild compartments and migrate project memories",
-        },
         "ctx-flush": {
             template: "ctx-flush",
             description: "Force-process all pending magic context operations immediately",
-        },
-        "ctx-aug": {
-            template: "ctx-aug",
-            description: "Augment your prompt with project memory context via sidekick agent",
-        },
-        "ctx-dream": {
-            template: "ctx-dream",
-            description: "Run the hidden dreamer maintenance pass for this project now",
         },
         "ctx-embed": {
             template: "ctx-embed",

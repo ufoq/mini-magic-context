@@ -2,7 +2,7 @@
 #
 # Build + run the interactive Magic Context setup/doctor sandbox.
 #
-# Installs the PUBLISHED @cortexkit/magic-context (latest by default) in a clean
+# Installs the PUBLISHED @ufoq/mini-magic-context (latest by default) in a clean
 # container with OpenCode + Pi present, then drops you into a shell to drive the
 # setup/doctor wizards by hand and inspect where config lands (the CortexKit
 # location). Rebuild after a release to pick up the newest published version.
@@ -35,7 +35,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-echo "Building $IMAGE (magic-context@$MC_VERSION, fresh npm fetch)..."
+echo "Building $IMAGE (mini-magic-context@$MC_VERSION, fresh npm fetch)..."
 docker build \
   --platform "$PLATFORM" \
   --build-arg "MC_VERSION=$MC_VERSION" \

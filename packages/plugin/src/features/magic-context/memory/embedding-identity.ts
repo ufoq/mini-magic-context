@@ -1,6 +1,5 @@
 import type { EmbeddingConfig } from "../../../config/schema/magic-context";
 import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "../../../config/schema/magic-context";
-import { getSynapseLaneIdentity } from "./embedding-synapse";
 import { computeNormalizedHash } from "./normalize-hash";
 
 function normalizeEndpoint(endpoint?: string): string {
@@ -16,22 +15,7 @@ function normalizeEndpoint(endpoint?: string): string {
  * leak secret material into logs or persisted model ids.
  */
 export function getEmbeddingProviderIdentity(config: EmbeddingConfig): string {
-    if (config.provider === "off") {
-        return "embedding-provider:off";
-    }
-
-    if (config.provider === "synapse") {
-        const resolved = config as EmbeddingConfig & {
-            model?: string;
-            synapse_fingerprint?: string;
-        };
-        if (!resolved.model || !resolved.synapse_fingerprint) return "synapse:v1:pending";
-        return getSynapseLaneIdentity(resolved.model, resolved.synapse_fingerprint);
-    }
-
-    if (config.provider !== "local" && config.provider !== "openai-compatible") {
-        throw new Error("Unknown embedding provider");
-    }
+    if (config.provider === "off") return "embedding-provider:off";
 
     const truncate = config.provider === "openai-compatible" ? config.truncate?.trim() : undefined;
     const identityInput =

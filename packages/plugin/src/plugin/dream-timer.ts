@@ -1,30 +1,13 @@
 import { statSync } from "node:fs";
 
-import type { DreamerConfig } from "../config/schema/magic-context";
 import type { ClassifyModuleClient } from "../features/magic-context/dreamer/classify";
 import { acquireLease, releaseLease } from "../features/magic-context/dreamer/lease";
 import { openOpenCodeDb } from "../features/magic-context/dreamer/open-opencode-db";
-import {
-    PRIVACY_SENSITIVE_CHILD_TASKS,
-    PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES,
-    retrospectiveOrphanStaleMs,
-    sweepOrphanedRetrospectiveChildren,
-} from "../features/magic-context/dreamer/retrospective-orphan-sweep";
-import {
-    OpenCodeRetrospectiveRawProvider,
-    type RetrospectiveRawProvider,
-} from "../features/magic-context/dreamer/retrospective-raw-provider";
+import type { RetrospectiveRawProvider } from "../features/magic-context/dreamer/retrospective-raw-provider";
 import { deleteTaskScheduleRowsForProject } from "../features/magic-context/dreamer/storage-task-schedule";
-import {
-    buildDreamTaskRuntimeConfigs,
-    userMemoryCollectionEnabled,
-} from "../features/magic-context/dreamer/task-config";
-import { createDreamTaskExecutor } from "../features/magic-context/dreamer/task-executor";
 import { leaseKeyFor } from "../features/magic-context/dreamer/task-registry";
-import { runDueTasksForProject } from "../features/magic-context/dreamer/task-scheduler";
 import {
     acquireGitSweepLease,
-    embedUnembeddedCommits,
     GIT_SWEEP_LEASE_RENEWAL_MS,
     indexCommitsForProject,
     markGitSweepSuccessAndRelease,
@@ -32,15 +15,9 @@ import {
     releaseGitSweepLease,
     renewGitSweepLease,
 } from "../features/magic-context/git-commits";
-import {
-    embedUnembeddedMemoriesForProject,
-    getProjectEmbeddingSnapshot,
-} from "../features/magic-context/memory/embedding";
+import { getProjectEmbeddingSnapshot } from "../features/magic-context/memory/embedding";
 import { sweepOrphanedOpenCodeMessageIndexes } from "../features/magic-context/message-index";
-import {
-    drainCommitBacklogForProject,
-    sweepStaleEmbeddingIdentitiesForProject,
-} from "../features/magic-context/project-embedding-registry";
+import { sweepStaleEmbeddingIdentitiesForProject } from "../features/magic-context/project-embedding-registry";
 import { runDueCompiledSmartNoteChecks } from "../features/magic-context/smart-notes/runner";
 import {
     openDatabase,
@@ -51,14 +28,11 @@ import type { RawMessageProvider } from "../hooks/magic-context/read-session-chu
 import { getErrorMessage } from "../shared/error-message";
 import { log } from "../shared/logger";
 import type { Database } from "../shared/sqlite";
-import { closeQuietly } from "../shared/sqlite-helpers";
 import { beginBootQuietPeriod, scheduleAfterBootQuiet } from "./boot-quiet";
 import type { PluginContext } from "./types";
 
 /** Check interval for dream schedule (15 minutes). */
 const DREAM_TIMER_INTERVAL_MS = 15 * 60 * 1000;
-/** Wall-clock budget for post-sweep commit backlog drain (matches indexer embed sweep). */
-const GIT_COMMIT_BACKLOG_DRAIN_MAX_MS = 5 * 60 * 1000;
 /** First maintenance passes are spread across 30 seconds after boot quiet ends. */
 const BOOT_PROJECT_JITTER_SLOT_MS = 1_000;
 
@@ -72,7 +46,6 @@ interface ProjectRegistration {
     directory: string;
     projectIdentity: string;
     client: PluginContext["client"];
-    dreamerConfig?: DreamerConfig;
     language?: string;
     gitCommitIndexing?: {
         enabled: boolean;
@@ -180,7 +153,6 @@ export async function startDreamScheduleTimer(
     beginBootQuietPeriod();
     const db = openTimerDatabaseOrNull("schedule timer registration");
     if (!db) return;
-    const dreamingEnabled = Boolean(args.dreamerConfig && args.dreamerConfig.disable !== true);
     const embeddingSweepEnabled = args.memoryEnabled === true;
     const commitIndexingEnabled = args.gitCommitIndexing?.enabled === true;
 
@@ -202,7 +174,7 @@ export async function startDreamScheduleTimer(
 
     if (isNewRegistration) {
         log(
-            `[dreamer] registered project ${args.projectIdentity} (dreaming=${dreamingEnabled} embeddings=${embeddingSweepEnabled} commits=${commitIndexingEnabled}; total=${registeredProjects.size})`,
+            `[maintenance] registered project ${args.projectIdentity} (embeddings=${embeddingSweepEnabled} commits=${commitIndexingEnabled}; total=${registeredProjects.size})`,
         );
     }
 
@@ -325,23 +297,10 @@ async function runProjectMaintenance(
     db: Database,
 ): Promise<void> {
     const projectMaintenanceEnabled =
-        Boolean(reg.dreamerConfig && reg.dreamerConfig.disable !== true) ||
-        reg.memoryEnabled === true ||
-        reg.gitCommitIndexing?.enabled === true;
+        reg.memoryEnabled === true || reg.gitCommitIndexing?.enabled === true;
     if (!projectMaintenanceEnabled) return;
 
     await reg.ensureRegistered(reg.directory, db);
-    const memorySnapshot = getProjectEmbeddingSnapshot(reg.projectIdentity);
-    if (memorySnapshot?.enabled) {
-        const embeddedCount = await embedUnembeddedMemoriesForProject(db, reg.projectIdentity);
-        if (embeddedCount > 0) {
-            log(
-                `[magic-context] proactively embedded ${embeddedCount} ${embeddedCount === 1 ? "memory" : "memories"} for project ${reg.projectIdentity}`,
-            );
-        }
-        // Compartment-chunk backfill remains demand-driven to avoid bursty
-        // requests to local embedding endpoints.
-    }
     await sweepProject(reg, origin, db);
 }
 
@@ -355,7 +314,7 @@ async function runProjectMaintenance(
  */
 async function sweepProject(
     reg: ProjectRegistration,
-    origin: "startup" | "interval",
+    _origin: "startup" | "interval",
     db: Database,
     gitCommitEnabled?: boolean,
 ): Promise<void> {
@@ -398,8 +357,6 @@ async function sweepProject(
         );
     }
 
-    const dreamerConfig = reg.dreamerConfig;
-    const dreamingEnabled = Boolean(dreamerConfig && dreamerConfig.disable !== true);
     if (commitIndexingEnabled && reg.gitCommitIndexing) {
         await sweepGitCommits({
             directory: reg.directory,
@@ -408,85 +365,9 @@ async function sweepProject(
             db,
         });
     }
-
-    if (!dreamingEnabled || !dreamerConfig) {
-        return;
-    }
-
-    try {
-        await runCompiledSmartNoteSweep(reg, db);
-
-        // Dreamer v2: per-task cron scheduling. The scheduler seeds/reads
-        // task_schedule_state, evaluates each task's cron + activity gate, and
-        // runs due tasks grouped by conflict-domain under keyed leases. The
-        // executor runs in THIS registration's own checkout (not a sibling
-        // worktree the shared git:<sha> identity might resolve to).
-        const runtimeConfigs = buildDreamTaskRuntimeConfigs(dreamerConfig, reg.language);
-        const executor = createDreamTaskExecutor({
-            client: reg.client,
-            sessionDirectory: reg.directory,
-            openOpenCodeDb,
-            // Each registration brings its own provider factory (Pi supplies the
-            // JSONL provider); default to OpenCode when none is given.
-            retrospectiveRawProvider:
-                reg.retrospectiveRawProvider ??
-                ((db) => new OpenCodeRetrospectiveRawProvider({ contextDb: db, openOpenCodeDb })),
-            // Pi-only: scheduled refresh-primers needs the JSONL factory to render
-            // the open-book seed. OpenCode omits it (buildPrimerSeed reads
-            // opencode.db directly). Without this the scheduled Pi task ran
-            // closed-book, defeating the open-book primer redesign.
-            primerRawProviderFactory: reg.primerRawProviderFactory,
-            userMemoryCollectionEnabled: userMemoryCollectionEnabled(dreamerConfig),
-            ensureProjectRegistered: reg.ensureRegistered,
-            language: reg.language,
-            dreamerModel: dreamerConfig.model,
-            experimentalMural: reg.experimentalMural,
-            memoryInjectionBudgetTokens: reg.memoryInjectionBudgetTokens,
-            transformMode: reg.transformMode,
-            moduleClient: reg.moduleClient,
-        });
-        const ran = await runDueTasksForProject({
-            db,
-            projectIdentity: reg.projectIdentity,
-            tasks: runtimeConfigs,
-            executor,
-        });
-        if (ran > 0) {
-            log(`[dreamer] timer tick (${origin}) ${reg.projectIdentity} — ran ${ran} task(s)`);
-        }
-
-        // PRIVACY backstop: remove crash-orphaned children carrying raw user or
-        // project text only after the longest swept task's timeout has elapsed.
-        // OpenCode-only (Pi subprocess children die with their process); skip
-        // when no opencode.db.
-        const privacySweepTimeouts = runtimeConfigs
-            .filter((c) => (PRIVACY_SENSITIVE_CHILD_TASKS as readonly string[]).includes(c.task))
-            .map((c) => c.timeoutMinutes);
-        const ocDb = openOpenCodeDb();
-        if (ocDb) {
-            try {
-                await sweepOrphanedRetrospectiveChildren({
-                    opencodeDb: ocDb,
-                    client: reg.client,
-                    sessionDirectory: reg.directory,
-                    staleMs: retrospectiveOrphanStaleMs(privacySweepTimeouts),
-                    titleMatches: PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES,
-                });
-            } catch (sweepError) {
-                log(
-                    `[dreamer] retrospective orphan sweep failed for ${reg.projectIdentity}:`,
-                    sweepError,
-                );
-            } finally {
-                closeQuietly(ocDb);
-            }
-        }
-    } catch (error) {
-        log(`[dreamer] timer-triggered task scheduling failed for ${reg.projectIdentity}:`, error);
-    }
 }
 
-async function runCompiledSmartNoteSweep(reg: ProjectRegistration, db: Database): Promise<void> {
+async function _runCompiledSmartNoteSweep(reg: ProjectRegistration, db: Database): Promise<void> {
     const leaseKey = leaseKeyFor("evaluate-smart-notes", reg.projectIdentity);
     const holderId = crypto.randomUUID();
     if (!acquireLease(db, holderId, leaseKey)) return;
@@ -569,11 +450,6 @@ async function sweepGitCommits(args: {
             }
             return;
         }
-        // Drain any remaining embedding backlog from this sweep (indexer caps per run).
-        let drainedEmbeddings = 0;
-        if (result.embedded > 0) {
-            drainedEmbeddings = await embedUnembeddedCommits(db, projectIdentity);
-        }
         const cooldownMarked = markGitSweepSuccessAndRelease(db, projectIdentity, holderId);
         if (!cooldownMarked) {
             releaseGitSweepLease(db, projectIdentity, holderId);
@@ -582,25 +458,9 @@ async function sweepGitCommits(args: {
             );
         }
 
-        const memorySnapshot = getProjectEmbeddingSnapshot(projectIdentity);
-        let backlogDrained = 0;
-        if (memorySnapshot?.gitCommitEnabled) {
-            try {
-                backlogDrained = await drainCommitBacklogForProject(
-                    db,
-                    projectIdentity,
-                    Date.now() + GIT_COMMIT_BACKLOG_DRAIN_MAX_MS,
-                );
-            } catch (error) {
-                log(
-                    `[git-commits] commit backlog drain failed for ${projectIdentity}: ${error instanceof Error ? error.message : String(error)}`,
-                );
-            }
-        }
-
         const elapsedMs = Date.now() - startedAt;
         log(
-            `[git-commits] sweep finished for ${projectIdentity} in ${elapsedMs}ms: scanned=${result.scanned} inserted=${result.inserted} updated=${result.updated} evicted=${result.evicted} embedded=${result.embedded} drained=${drainedEmbeddings} backlogDrained=${backlogDrained}`,
+            `[git-commits] sweep finished for ${projectIdentity} in ${elapsedMs}ms: scanned=${result.scanned} inserted=${result.inserted} updated=${result.updated} evicted=${result.evicted} embedded=${result.embedded}`,
         );
     } catch (error) {
         releaseGitSweepLease(db, projectIdentity, holderId);

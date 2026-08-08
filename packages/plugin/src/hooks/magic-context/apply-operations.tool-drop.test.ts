@@ -674,7 +674,7 @@ describe("apply operations for tool drops", () => {
             expect(didMutate).toBe(true);
             expect(getTagById(db, "ses-1", userMsgTagId!)?.status).toBe("dropped");
 
-            const text = (messages[0]?.parts[0] as { text: string }).text;
+            const text = (messages[0].parts[0] as { text: string }).text;
             // ONE canonical placeholder — byte-identical regardless of role/content
             // so it can never flip across passes and bust the prompt cache.
             expect(text).toBe(`[dropped §${userMsgTagId}§]`);
@@ -708,7 +708,7 @@ describe("apply operations for tool drops", () => {
             const didMutate = applyFlushedStatuses("ses-1", db, targets);
 
             expect(didMutate).toBe(true);
-            const text = (messages[0]?.parts[0] as { text: string }).text;
+            const text = (messages[0].parts[0] as { text: string }).text;
             // Flushed-status replay produces the SAME canonical placeholder as the
             // execute-pass drop — byte-identical, no flip across passes.
             expect(text).toBe(`[dropped §${userMsgTagId}§]`);
@@ -763,7 +763,7 @@ describe("apply operations for tool drops", () => {
             queuePendingOp(db, "ses-1", userMsgTagId!, "drop");
             applyPendingOperations("ses-1", db, targets);
 
-            const text = (messages[0]?.parts[0] as { text: string }).text;
+            const text = (messages[0].parts[0] as { text: string }).text;
             expect(text).toBe(`[dropped §${userMsgTagId}§]`);
         });
     });

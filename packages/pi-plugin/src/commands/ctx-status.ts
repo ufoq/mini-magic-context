@@ -1,16 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import { getMostRecentTaskRunAt } from "@magic-context/core/features/magic-context/dreamer/storage-task-schedule";
-import { getMemoryCount } from "@magic-context/core/features/magic-context/memory/storage-memory";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
 import { getPendingOps } from "@magic-context/core/features/magic-context/storage";
 import { getOrCreateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
-import { getNotes } from "@magic-context/core/features/magic-context/storage-notes";
 import { getTagsBySession } from "@magic-context/core/features/magic-context/storage-tags";
 import { executeStatus } from "@magic-context/core/hooks/magic-context/execute-status";
-import { formatBytes } from "@magic-context/core/hooks/magic-context/format-bytes";
 import { describeError } from "@magic-context/core/shared/error-message";
-import { showStatusDialog } from "../dialogs/status-dialog";
 import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
 
 export interface RegisterCtxStatusDeps {
@@ -32,7 +27,6 @@ export interface RegisterCtxStatusDeps {
 		default?: number;
 		[modelKey: string]: number | undefined;
 	};
-	dreamer?: { runnable?: boolean; scheduleSummary?: string };
 }
 
 export type CtxStatusRuntimeDeps = Omit<
@@ -50,13 +44,6 @@ export interface CtxStatusDetails {
 	lastExecuteThreshold: number;
 	compartmentCount: number;
 	lastCompartmentRange: string | null;
-	memoryCount: number;
-	noteCount: number;
-	dreamer: {
-		enabled: boolean;
-		scheduleSummary: string | null;
-		lastRunAt: number | null;
-	};
 	historian: {
 		lastFireCount: number;
 		inProgress: boolean;
@@ -89,11 +76,6 @@ export function registerCtxStatusCommand(
 			}
 
 			try {
-				if (ctx.hasUI) {
-					await showStatusDialog(pi, ctx, currentDeps);
-					return;
-				}
-
 				const usage = ctx.getContextUsage?.();
 				const modelKey = ctx.model
 					? `${ctx.model.provider}/${ctx.model.id}`
@@ -150,23 +132,6 @@ function buildStatusDetails(
 		lastCompartmentRange: lastCompartment
 			? `${lastCompartment.startMessage}-${lastCompartment.endMessage}`
 			: null,
-		memoryCount: getMemoryCount(deps.db, deps.projectIdentity),
-		noteCount:
-			getNotes(deps.db, { sessionId, type: "session", status: "active" })
-				.length +
-			getNotes(deps.db, {
-				projectPath: deps.projectIdentity,
-				type: "smart",
-				status: ["pending", "ready"],
-			}).length,
-		dreamer: {
-			enabled: deps.dreamer?.runnable === true,
-			scheduleSummary: deps.dreamer?.scheduleSummary ?? null,
-			// Dreamer V2 retired the V1 dream_state['last_dream_at'] field; the
-			// live "last successful run" is MAX(last_run_at) across the project's
-			// task_schedule_state rows (issue #194).
-			lastRunAt: getMostRecentTaskRunAt(deps.db, deps.projectIdentity),
-		},
 		historian: readHistorianState(deps.db, sessionId, meta),
 	};
 }

@@ -60,16 +60,13 @@ import {
 	adoptPiFallbackMessageTag,
 	adoptPiFallbackToolOwnerTag,
 	type ContextDatabase,
-	casChannel2NudgeState,
 	clearPendingPiCompactionMarkerStateIf,
 	deriveTagLoadFloor,
 	findAdoptableFallbackTags,
 	findPiFallbackToolOwnerTags,
 	getActiveTagsBySession,
-	getActiveTagTokenAggregate,
 	getHistorianFailureState,
 	getMaxDroppedTagNumber,
-	getOldestActiveUnprotectedToolTags,
 	getPendingOps,
 	getPendingPiCompactionMarkerState,
 	getPersistedToolTagAccounting,
@@ -89,14 +86,9 @@ import {
 	clearEmergencyRecovery,
 	clearHistorianFailureState,
 	clearPersistedReasoningWatermark,
-	getAutoSearchHintDecisions,
-	getNoteNudgeAnchors,
 	getOverflowState,
 	type PendingPiCompactionMarker,
 	peekDeferredExecutePending,
-	pruneAutoSearchHintDecisions,
-	pruneNoteNudgeAnchors,
-	resetLastNudgeCycleIfTailShrank,
 	setDeferredExecutePendingIfAbsent,
 } from "@magic-context/core/features/magic-context/storage-meta-persisted";
 import { getSourceContents } from "@magic-context/core/features/magic-context/storage-source";
@@ -122,18 +114,11 @@ import {
 } from "@magic-context/core/hooks/magic-context/boundary-execution";
 import { replayCavemanCompression } from "@magic-context/core/hooks/magic-context/caveman-cleanup";
 import { checkCompartmentTrigger } from "@magic-context/core/hooks/magic-context/compartment-trigger";
-import { shouldTriggerChannel2 } from "@magic-context/core/hooks/magic-context/ctx-reduce-nudge";
 import { deriveTriggerBudget } from "@magic-context/core/hooks/magic-context/derive-budgets";
 import {
 	DEFAULT_CONTEXT_LIMIT,
 	resolveExecuteThreshold,
 } from "@magic-context/core/hooks/magic-context/event-resolvers";
-import { getVisibleMemoryIds } from "@magic-context/core/hooks/magic-context/inject-compartments";
-import {
-	markNoteNudgeDelivered,
-	onNoteTrigger,
-	peekNoteNudgeText,
-} from "@magic-context/core/hooks/magic-context/note-nudger";
 import {
 	getRawHistoryEligibility,
 	hasRunnableCompartmentWindow,
@@ -177,11 +162,6 @@ import {
 	hasPiTransformTimingObserver,
 	recordPiTransformTiming,
 } from "./context-perf-hooks";
-import {
-	clearPiChannel1State,
-	computeTailTokenEstimatePi,
-	setPiChannel1Baseline,
-} from "./ctx-reduce-nudge-pi";
 import { detectRecentCommit } from "./detect-recent-commit";
 import { ensureProjectRegisteredFromPiDirectory } from "./embedding-bootstrap";
 import {
@@ -196,7 +176,6 @@ import {
 	type PiM0M1InjectionResult as PiInjectionResult,
 	trimPiMessagesToCachedBoundary,
 } from "./inject-compartments-pi";
-import { hasVisibleNoteReadCallPi } from "./note-visibility-pi";
 import { type PiHistorianDeps, runPiHistorian } from "./pi-historian-runner";
 import { injectSyntheticTodowriteForPi } from "./pi-todo-inject";
 import {
@@ -1022,7 +1001,7 @@ export interface PiContextHandlerOptions {
 	/**
 	 * Per-project config resolver (Pi `/cd` / multi-root). Pi can switch
 	 * projects mid-process; a switched-into checkout may carry its own
-	 * `.cortexkit/magic-context.jsonc` (different protected_tags, thresholds,
+	 * `.cortexkit/mini-magic-context.jsonc` (different protected_tags, thresholds,
 	 * memory/key-files toggles, historian model). Without this, every
 	 * context pass after a switch would run with the LAUNCH project's
 	 * settings (config bleed). When provided, the handler calls it once per
@@ -2787,40 +2766,8 @@ export function registerPiContextHandler(
 				tHistorianScheduling,
 			);
 
-			// Step 4b.4: nudge + note-nudge + auto-search hint. All three
-			// run AFTER tagging/drops finish so they see the post-mutation
-			// message shape. Each is independently optional and fail-open —
-			// any thrown error is logged and the pipeline returns the
-			// already-mutated messages unchanged.
 			const tPostTransform = performance.now();
 			let outputMessages = result.messages as PiAgentMessage[];
-
-			const tNoteNudges = performance.now();
-			try {
-				outputMessages = applyNoteNudges({
-					sessionId,
-					db: options.db,
-					messages: outputMessages,
-					projectIdentity,
-					entryIds: strictEntryIds,
-					// Post-commit/post-splice ref-map (see sticky reminder above).
-					entryIdByRef: result.postCommitEntryIdByRef,
-					// Same signal OpenCode uses to gate sticky-anchor GC
-					// (isCacheBustingPass = history-refresh OR work executed).
-					isCacheBusting: isCacheBusting || result.executedWorkThisPass,
-					// Id-less synthetic injections present in outputMessages: the
-					// m[0]/m[1] prepends. (The rolling-nudge synthetic was removed in
-					// the ctx_reduce nudge redesign.) Excluded from the anchor-GC
-					// denominator.
-					syntheticLeadingCount: result.syntheticLeadingCount,
-				});
-			} catch (err) {
-				sessionLog(
-					sessionId,
-					`note nudges failed: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-			logTransformTiming(sessionId, "noteNudges", tNoteNudges);
 
 			const tAutoSearch = performance.now();
 			if (options.autoSearch?.enabled) {
@@ -2842,8 +2789,6 @@ export function registerPiContextHandler(
 							scoreThreshold: options.autoSearch.scoreThreshold,
 							minPromptChars: options.autoSearch.minPromptChars,
 							projectPath: projectIdentity,
-							visibleMemoryIds:
-								getVisibleMemoryIds(options.db, sessionId) ?? null,
 						},
 					});
 				} catch (err) {
@@ -2905,145 +2850,6 @@ export function registerPiContextHandler(
 				);
 			}
 			logTransformTiming(sessionId, "todoCapture", tTodoCapture);
-
-			// Channel 1 baseline snapshot + Channel 2 ceiling trigger. Mirrors
-			// OpenCode's transform.ts end-of-pass block. Computed from the final
-			// `outputMessages` (already trimmed to the live tail), refreshing here
-			// (a proven transform boundary) zeroes the per-turn accumulator. The
-			// `tool_result` handler in index.ts reads this baseline. Primary-only:
-			// a missing baseline is how Channel 1 stays off for subagents.
-			const tChannelAccounting = performance.now();
-			try {
-				const sessionMetaForCh1 = getOrCreateSessionMeta(options.db, sessionId);
-				// Gate on ctx_reduce being callable. Primary Pi sessions register the
-				// tool; subagents do not, so a baseline/nudge there would point at a
-				// missing session-scoped tool. A missing baseline is also how Channel 1
-				// stays off.
-				if (!sessionMetaForCh1.isSubagent) {
-					// Resolve through the SCHEDULER config (the real execute
-					// threshold), not options.historian — when historian is disabled
-					// the historian threshold falls back to 65 and ignores the user's
-					// execute_threshold_percentage / _tokens.
-					const resolvedExecuteThresholdPct = resolveExecuteThreshold(
-						schedulerConfig.executeThresholdPercentage ?? 65,
-						liveModelBySession.get(sessionId),
-						65,
-						{
-							tokensConfig: schedulerConfig.executeThresholdTokens,
-							contextLimit: usageContextLimit ?? 0,
-						},
-					);
-					const historyBudgetTokens = resolveHistoryBudgetTokensForPi({
-						historyBudgetPercentage: options.historian?.historyBudgetPercentage,
-						usagePercentage,
-						usageInputTokens,
-						usageContextLimit,
-						// Execute threshold from the SCHEDULER config (its real
-						// home), so the budget denominator matches the threshold
-						// used for Channel severity even when historian is disabled.
-						executeThresholdPercentage:
-							schedulerConfig.executeThresholdPercentage,
-						executeThresholdTokens: schedulerConfig.executeThresholdTokens,
-						modelKey: liveModelBySession.get(sessionId),
-					});
-					// Real-tokenizer counts from the durable tag store (injected
-					// m[0]/m[1] blocks are never tagged → injected-free live tail).
-					// reclaimable = non-dropped tool OUTPUT; liveTail = conv + tool
-					// I/O. Falls back to a byte-approx live-tail walk only if the store read
-					// fails. Mirrors OpenCode's transform path exactly.
-					let tailToolTokens: number;
-					let liveTailTokens: number;
-					try {
-						// reclaimable (toolOutput) excludes the protected top-N tags
-						// (parity with OpenCode) — the agent can't ctx_reduce those, so
-						// counting them would nag forever about undroppable tail output.
-						const agg = getActiveTagTokenAggregate(
-							options.db,
-							sessionId,
-							options.protectedTags ?? 20,
-						);
-						tailToolTokens = agg.toolOutput;
-						liveTailTokens = agg.conversation + agg.toolCall;
-					} catch {
-						const estimate = computeTailTokenEstimatePi(
-							outputMessages as unknown[],
-						);
-						tailToolTokens = estimate.tailToolTokens;
-						liveTailTokens = estimate.liveTailTokens;
-					}
-					// usable = executeThresholdTokens − inputTokens + liveTail (the
-					// agent's working range). Computed BEFORE the baseline write so
-					// it persists with the same measurement — Channel-2 delivery
-					// revalidates the full trigger predicate from this snapshot.
-					const executeThresholdTokensPi = Math.round(
-						((usageContextLimit ?? 0) * resolvedExecuteThresholdPct) / 100,
-					);
-					const usableTokensPi = Math.max(
-						0,
-						executeThresholdTokensPi - usageInputTokens + liveTailTokens,
-					);
-					// Same rationale as OpenCode: a historian publish, emergency drop,
-					// or pending-op replay can shrink the tail without a ctx_reduce
-					// tool call, so a regrowth must not inherit a stale persisted band.
-					resetLastNudgeCycleIfTailShrank(
-						options.db,
-						sessionId,
-						tailToolTokens,
-					);
-					const oldestReclaimableToolTags = getOldestActiveUnprotectedToolTags(
-						options.db,
-						sessionId,
-						options.protectedTags ?? 20,
-					);
-					setPiChannel1Baseline(sessionId, {
-						tailToolTokens,
-						historyBudgetTokens: historyBudgetTokens ?? 0,
-						contextLimit: usageContextLimit ?? 0,
-						executeThresholdPercentage: resolvedExecuteThresholdPct,
-						lastInputTokens: usageInputTokens,
-						turnToolTokens: 0,
-						usableTokens: usableTokensPi,
-						reducedSinceRefresh: false,
-						oldestReclaimableToolTags,
-					});
-
-					// Channel 2 (ceiling) trigger — fire when reclaimable tool output
-					// is at least a third of the usable working range (the gap
-					// between fixed overhead and the execute-threshold ceiling).
-					// Delivery happens on `agent_end`/`tool_result` via a hidden
-					// pi.sendMessage custom message. Only escalate from '' so an
-					// in-flight claim/delivery is never reset.
-					if (
-						usageContextLimit &&
-						usageContextLimit > 0 &&
-						resolvedExecuteThresholdPct > 0
-					) {
-						const channel2ShouldTrigger = shouldTriggerChannel2({
-							reclaimableTokens: tailToolTokens,
-							usableTokens: usableTokensPi,
-						});
-						if (channel2ShouldTrigger) {
-							casChannel2NudgeState(options.db, sessionId, "", "pending");
-						} else {
-							// Cancel stale, undelivered intents when fresh metrics say the
-							// trigger no longer holds; claimed/delivered are never reset.
-							casChannel2NudgeState(options.db, sessionId, "pending", "");
-						}
-					}
-				} else {
-					clearPiChannel1State(sessionId);
-				}
-			} catch (err) {
-				sessionLog(
-					sessionId,
-					`channel1 baseline / channel2 trigger failed: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-			logTransformTiming(
-				sessionId,
-				"channelNudgeAccounting",
-				tChannelAccounting,
-			);
 
 			// Work-metrics update runs on EVERY transform pass (not just
 			// execute passes). The Pi compute helper is pure-read on
@@ -4215,11 +4021,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	const alreadyRanHeuristicsThisTurn =
 		currentTurnId !== null &&
 		lastHeuristicsTurnIdBySession.get(args.sessionId) === currentTurnId;
-	// Pi's primary process always registers ctx_reduce. Hidden/no-session child
-	// processes do not use this context handler; if a future path marks a session
-	// as subagent here, suppress visible tags and nudges so the prompt never points
-	// at a missing session-scoped tool.
-	const ctxReduceCallable = !args.sessionMeta.isSubagent;
+	const ctxReduceCallable = false;
 	// Mid-turn-aware gate for consuming DEFERRED publication signals — mirrors
 	// OpenCode's canConsumeDeferredOnThisPass. `args.schedulerDecision` is ALREADY
 	// the mid-turn-adjusted decision (applyMidTurnDeferral downgrades execute→defer
@@ -4402,23 +4204,9 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	);
 	logTransformTiming(args.sessionId, "tagMessages", tTag);
 
-	// 1b. Note-nudge `commit_detected` trigger. Mirrors OpenCode's logic
-	// in `tag-messages.ts` + `transform.ts:677-690`: only fire on the
-	// RISING edge (this pass saw a commit, previous pass did not, and a
-	// previous pass actually ran). First-pass detection silently sets
-	// the baseline so a fresh restart over an old session that already
-	// committed doesn't surface a stale trigger.
-	//
-	// Subagents never deliver note nudges (gated in postprocess), so
-	// skip accumulating orphan trigger state.
 	try {
 		if (!args.sessionMeta.isSubagent) {
 			const hasRecentCommit = detectRecentCommit(args.messages);
-			const hadPriorCommitState = commitSeenLastPass.has(args.sessionId);
-			const sawCommitLastPass = commitSeenLastPass.get(args.sessionId) ?? false;
-			if (hadPriorCommitState && hasRecentCommit && !sawCommitLastPass) {
-				onNoteTrigger(args.db, args.sessionId, "commit_detected");
-			}
 			commitSeenLastPass.set(args.sessionId, hasRecentCommit);
 		}
 	} catch (err) {
@@ -5351,192 +5139,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Nudge / note-nudge helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Note-nudge + Channel 1/2 helpers.
- *
- * The rolling/iteration nudge and the tool-heavy sticky reminder were removed
- * in the ctx_reduce nudge redesign — replaced by Channel 1 (in-turn tool-result
- * append via `pi.on("tool_result")`, see `ctx-reduce-nudge-pi.ts`) and Channel 2
- * (the hidden `sendMessage` ceiling). `appendReminderToUserMessageByIdPi` /
- * `appendReminderToPiUserMessage` below are retained — they back the note-nudge
- * and auto-search hint paths, which still inject into user messages.
- */
-/**
- * Apply note-nudge replay + delivery. Mirrors OpenCode's
- * `transform-postprocess-phase.ts` (around lines 611-650).
- *
- * Two paths:
- *   1. Sticky replay: a previously-delivered nudge anchored to a user
- *      message id replays into that same message every pass (idempotent
- *      because `appendReminderToUserMessageById` checks for the exact
- *      reminder text before appending).
- *   2. Fresh delivery: when a note trigger has fired since the last
- *      delivery and the agent hasn't already read the note state,
- *      append a `<instruction name="deferred_notes">…` block to the
- *      latest user message and mark delivered.
- *
- * Both paths fail-open: if no eligible user message exists, the call
- * simply returns the messages unchanged.
- */
-function applyNoteNudges(args: {
-	sessionId: string;
-	db: ContextDatabase;
-	messages: PiAgentMessage[];
-	projectIdentity: string;
-	entryIds: readonly (string | undefined)[] | null;
-	/**
-	 * Splice-safe message→entryId map keyed by AgentMessage reference. Resolved
-	 * against branch entries and correct even though `messages` was spliced since
-	 * `entryIds` (positional) was computed. Takes precedence over `entryIds`.
-	 */
-	entryIdByRef?: ReadonlyMap<object, string> | null;
-	/**
-	 * Whether THIS pass is cache-busting. Sticky-anchor pruning is storage-only
-	 * and must run ONLY on cache-busting passes (parity with OpenCode
-	 * transform-postprocess `args.fullFeatureMode && isCacheBustingPass`). On a
-	 * defer pass the persisted sticky state must not change, or future replay
-	 * bytes could shift and bust the prompt cache.
-	 */
-	isCacheBusting: boolean;
-	/**
-	 * Count of ALL id-less synthetic messages present in `messages` — the
-	 * m[0]/m[1] prepends plus the rolling-nudge synthetic if it fired this pass.
-	 * Excluded from the anchor-GC `allResolved` denominator (see below) since none
-	 * of them resolve to a real entry id. Position is irrelevant; only the count
-	 * matters for the denominator.
-	 */
-	syntheticLeadingCount?: number;
-}): PiAgentMessage[] {
-	const { sessionId, db, messages, projectIdentity, entryIds, entryIdByRef } =
-		args;
-
-	const tNoteIndexMaps = performance.now();
-	const messageIdByIndex = buildPiMessageIdByIndex(
-		messages,
-		entryIds,
-		false,
-		entryIdByRef,
-	);
-	const replayMessageIdByIndex = buildPiMessageIdByIndex(
-		messages,
-		entryIds,
-		true,
-		entryIdByRef,
-	);
-	logTransformTiming(sessionId, "noteIndexMaps", tNoteIndexMaps);
-
-	const tStickyReplay = performance.now();
-	for (const anchor of getNoteNudgeAnchors(db, sessionId)) {
-		appendReminderToUserMessageByIdPi(
-			messages,
-			replayMessageIdByIndex,
-			anchor.messageId,
-			anchor.text,
-		);
-	}
-	for (const decision of getAutoSearchHintDecisions(db, sessionId)) {
-		if (decision.decision === "hint") {
-			appendReminderToUserMessageByIdPi(
-				messages,
-				replayMessageIdByIndex,
-				decision.messageId,
-				decision.text,
-			);
-		}
-	}
-	logTransformTiming(sessionId, "stickyReplayDecisions", tStickyReplay);
-
-	// Path 2: fresh delivery. Use the latest user message id (or null if
-	// no user messages yet) as the trigger-message hint to peekNoteNudgeText.
-	//
-	// Visibility-aware suppression: peekNoteNudgeText suppresses the
-	// nudge when the agent already ran ctx_note(read) since the latest
-	// note activity AND that read is still visible in the current
-	// message context. Once the read has aged out / been dropped, we
-	// re-surface the nudge at the next work-boundary trigger so the
-	// agent regains visibility into deferred intentions. Mirrors
-	// OpenCode's transform-postprocess-phase.ts:647 wiring.
-	const latestUser = findLatestUserMessageIdPi(messages, messageIdByIndex);
-	const latestUserId = latestUser?.messageId ?? null;
-	const noteReadStillVisible = hasVisibleNoteReadCallPi(messages);
-	const deferredNoteText = peekNoteNudgeText(
-		db,
-		sessionId,
-		latestUserId,
-		projectIdentity,
-		noteReadStillVisible,
-	);
-	if (deferredNoteText) {
-		if (entryIds === null) {
-			sessionLog(
-				sessionId,
-				"Pi note-nudge: strict resolution failed; deferring delivery to next pass",
-			);
-			return messages;
-		}
-		const noteInstruction = `\n\n<instruction name="deferred_notes">${deferredNoteText}</instruction>`;
-		const anchoredId = latestUser?.messageId ?? null;
-		if (!anchoredId) {
-			sessionLog(
-				sessionId,
-				"Pi note-nudge: latest user message has no resolved SessionEntry id; deferring delivery to next pass",
-			);
-			return messages;
-		}
-		const outcome = markNoteNudgeDelivered(
-			db,
-			sessionId,
-			noteInstruction,
-			anchoredId,
-		);
-		if (latestUser && outcome.ok) {
-			appendReminderToPiUserMessage(
-				messages[latestUser.index] as PiAgentMessage,
-				noteInstruction,
-			);
-		} else if (!outcome.ok) {
-			sessionLog(
-				sessionId,
-				`Pi note-nudge delivery skipped wire append: ${outcome.kind}`,
-			);
-		}
-	}
-
-	// Storage-only GC of stale sticky anchors — gated on cache-busting passes
-	// ONLY (parity with OpenCode). Pruning on a defer pass would mutate persisted
-	// sticky-injection state and could shift future replay bytes.
-	//
-	// The visible set MUST reflect the CURRENT (post-splice) messages, not the
-	// stale positional `entryIds`: pruning against pre-splice positions could
-	// drop an anchor whose message is still present (just shifted) and therefore
-	// erase a still-needed replay. We derive it from `messageIdByIndex`, which is
-	// reference-resolved against the current array. Only prune when every current
-	// message resolved to a real id (a partial map could miss a present message
-	// and wrongly prune its anchor).
-	if (args.isCacheBusting) {
-		const visibleIds = new Set<string>(messageIdByIndex.values());
-		// "All REAL messages resolved" — exclude injection's synthetic id-less
-		// m[0]/m[1] prepends from the denominator (they never resolve to a real
-		// entry id). Without this, allResolved is permanently false on every
-		// injected pass and the prune never runs → unbounded anchor growth.
-		const realMessageCount = Math.max(
-			0,
-			messages.length - (args.syntheticLeadingCount ?? 0),
-		);
-		const allResolved = messageIdByIndex.size === realMessageCount;
-		if (allResolved && visibleIds.size > 0) {
-			pruneNoteNudgeAnchors(db, sessionId, visibleIds);
-			pruneAutoSearchHintDecisions(db, sessionId, visibleIds);
-		}
-	}
-
-	return messages;
-}
-
 /** Returns true when the message is a user role with non-empty text content. */
 function hasMeaningfulUserTextPi(message: PiAgentMessage): boolean {
 	if (message.role !== "user") return false;
@@ -5661,7 +5263,7 @@ function findLatestUserMessageIdPi(
  * `appendReminderToUserMessageById` from OpenCode's
  * `transform-message-helpers.ts:54`.
  */
-function appendReminderToUserMessageByIdPi(
+function _appendReminderToUserMessageByIdPi(
 	messages: PiAgentMessage[],
 	messageIdByIndex: PiMessageIdByIndex,
 	messageId: string,
@@ -5787,7 +5389,6 @@ export function clearContextHandlerSession(sessionId: string): void {
 	piTextIdentitySourceCacheBySession.delete(sessionId);
 	piBranchProjectionBySession.delete(sessionId);
 	clearPiInjectionTokenCountCache(sessionId);
-	clearPiChannel1State(sessionId);
 	lastHeuristicsTurnIdBySession.delete(sessionId);
 	lastSeenProjectIdentityBySession.delete(sessionId);
 	for (const [projectIdentity, sessions] of sessionsByProject) {

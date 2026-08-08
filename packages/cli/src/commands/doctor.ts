@@ -10,25 +10,14 @@
  * do I want to nuke?" prompt rather than two separate flows.
  */
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { getMagicContextStorageDir } from "@magic-context/core/shared/data-path";
 import { getInstalledAdapters } from "../adapters";
 import type { HarnessAdapter } from "../adapters/types";
-import {
-    openExistingContextDatabase,
-    openExistingContextDatabaseForMutation,
-} from "../lib/database-access";
 import { resolveAdaptersForCommand } from "../lib/harness-select";
 import { confirm, intro, log, outro, selectMany, spinner } from "../lib/prompts";
-import {
-    hasV22Command,
-    runV22BackfillCommands,
-    type V22BackfillCommandArgs,
-} from "../lib/v22-backfill-commands";
 import { runDoctor as runOpenCodeDoctor } from "./doctor-opencode";
 import { doctor as runPiDoctor } from "./doctor-pi";
 
-export interface RunDoctorOptions extends V22BackfillCommandArgs {
+export interface RunDoctorOptions {
     force?: boolean;
     issue?: boolean;
     clear?: boolean;
@@ -49,35 +38,6 @@ export async function runDoctor(options: RunDoctorOptions): Promise<number> {
         return 0;
     }
 
-    // The v22 backfill commands operate on the SHARED cortexkit DB (harness-
-    // agnostic — there is no per-harness shard for backfill state). Run them
-    // exactly ONCE here, not once per adapter: dispatching to both an OpenCode
-    // and a Pi adapter would run the same rekey/retry/check against the same
-    // physical DB twice, producing confusing doubled output (e.g. the second
-    // pass reports "Re-keyed 0 row(s)" because the first already moved them).
-    if (hasV22Command(options)) {
-        let v22Db: ReturnType<typeof openExistingContextDatabase> = null;
-        const result = await runV22BackfillCommands(
-            {
-                name: "Magic Context",
-                openDatabase: (readonly = true) => {
-                    const dbPath = join(getMagicContextStorageDir(), "context.db");
-                    v22Db = readonly
-                        ? openExistingContextDatabase(dbPath, { readonly: true })
-                        : openExistingContextDatabaseForMutation(dbPath);
-                    return v22Db;
-                },
-                closeDatabase: () => {
-                    v22Db?.close();
-                    v22Db = null;
-                },
-                log,
-            },
-            options,
-        );
-        if (result.handled) return result.exitCode;
-    }
-
     let anyFailure = false;
     for (const adapter of adapters) {
         log.step(`Running doctor for ${adapter.displayName}…`);
@@ -89,9 +49,6 @@ export async function runDoctor(options: RunDoctorOptions): Promise<number> {
 
 async function dispatchDoctor(adapter: HarnessAdapter, options: RunDoctorOptions): Promise<number> {
     switch (adapter.kind) {
-        // v22 backfill flags are handled once in runDoctor (shared DB), so the
-        // per-harness doctors below are NOT forwarded them — that's what
-        // prevented the doubled-output bug when both harnesses are installed.
         case "opencode": {
             return runOpenCodeDoctor({
                 force: options.force,

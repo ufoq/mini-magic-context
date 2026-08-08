@@ -136,7 +136,7 @@ export interface TranscriptPart {
     /**
      * Non-mutating read of this tool invocation's input object, or null for
      * non-tool parts / parts without an input. Used by smart-drops supersession
-     * selection (read `ctx_note`'s action, an edit's `filePath`) without
+     * selection (read an edit's `filePath`) without
      * touching the wire. Returns the live object reference; callers must NOT
      * mutate it.
      */

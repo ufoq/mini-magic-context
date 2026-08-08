@@ -12,7 +12,6 @@ import {
 import { detectConflicts } from "@magic-context/core/shared/conflict-detector";
 import { fixConflicts } from "@magic-context/core/shared/conflict-fixer";
 import { getMagicContextStorageDir } from "@magic-context/core/shared/data-path";
-import { ensureTuiPluginEntry } from "@magic-context/core/shared/tui-config";
 import { parse, stringify } from "comment-json";
 
 import {
@@ -22,10 +21,7 @@ import {
 } from "../adapters/opencode";
 import { writeFileAtomic } from "../lib/atomic-write";
 import { migrateConfigLocationsForCli } from "../lib/config-location-migration";
-import {
-    openExistingContextDatabase,
-    openExistingContextDatabaseForMutation,
-} from "../lib/database-access";
+import { openExistingContextDatabase } from "../lib/database-access";
 import { collectDiagnostics } from "../lib/diagnostics-opencode";
 import {
     checkLocalEmbeddingRuntime,
@@ -33,8 +29,6 @@ import {
     isLocalEmbeddingRuntimeBroken,
 } from "../lib/embedding-runtime";
 import { bundleIssueReport } from "../lib/logs-opencode";
-import { migrateDreamerV2ForDoctor } from "../lib/migrate-dreamer-v2-doctor";
-import { migrateExperimentalPinKeyFilesForDoctor } from "../lib/migrate-experimental-doctor";
 import { detectOpenCodeInstallations } from "../lib/opencode-detect";
 import {
     describeOpenCodeInstallations,
@@ -52,11 +46,9 @@ import {
     sanitizeDiagnosticText,
     sanitizePathString,
 } from "../lib/redaction";
-import { runV22BackfillCommands, type V22BackfillCommandArgs } from "../lib/v22-backfill-commands";
-import { reportAuthorityMarkers } from "./doctor-authority";
 import { clearPluginCache } from "./doctor-opencode-cache";
 
-const CLI_PACKAGE_NAME = "@cortexkit/magic-context";
+const CLI_PACKAGE_NAME = "@ufoq/mini-magic-context";
 
 export interface DoctorMigrationLogSink {
     success(message: string): void;
@@ -312,7 +304,7 @@ async function runIssueFlow(): Promise<number> {
                     "issue",
                     "create",
                     "-R",
-                    "cortexkit/magic-context",
+                    "ufoq/mini-magic-context",
                     "--title",
                     title,
                     "--body-file",
@@ -332,7 +324,7 @@ async function runIssueFlow(): Promise<number> {
             log.warn("gh CLI not found — falling back to browser");
         }
 
-        const url = `https://github.com/cortexkit/magic-context/issues/new?title=${encodeURIComponent(title)}&template=bug_report.yml`;
+        const url = `https://github.com/ufoq/mini-magic-context/issues/new?title=${encodeURIComponent(title)}&template=bug_report.yml`;
         log.info(
             `Open this URL and paste the contents of ${bundled.path} into the Diagnostics field:`,
         );
@@ -575,35 +567,12 @@ function logOpenCodeInstallationTable(installations: OpenCodeInstallationReport[
 }
 
 export async function runDoctor(
-    options: { force?: boolean; issue?: boolean } & V22BackfillCommandArgs = {},
+    options: { force?: boolean; issue?: boolean } = {},
 ): Promise<number> {
     migrateConfigLocationsForCli(process.cwd(), log);
 
     if (options.issue) {
         return runIssueFlow();
-    }
-
-    let v22Db: ReturnType<typeof openExistingContextDatabase> = null;
-    const v22Result = await runV22BackfillCommands(
-        {
-            name: "OpenCode",
-            openDatabase: (readonly = true) => {
-                const dbPath = join(getMagicContextStorageDir(), "context.db");
-                v22Db = readonly
-                    ? openExistingContextDatabase(dbPath, { readonly: true })
-                    : openExistingContextDatabaseForMutation(dbPath);
-                return v22Db;
-            },
-            closeDatabase: () => {
-                v22Db?.close();
-                v22Db = null;
-            },
-            log,
-        },
-        options,
-    );
-    if (v22Result.handled) {
-        return v22Result.exitCode;
     }
 
     intro("Magic Context Doctor");
@@ -628,23 +597,6 @@ export async function runDoctor(
         failCount++;
         issues++;
     };
-
-    const authorityDbPath = join(getMagicContextStorageDir(), "context.db");
-    let authorityDb: ReturnType<typeof openExistingContextDatabase> = null;
-    try {
-        authorityDb = openExistingContextDatabase(authorityDbPath, { readonly: true });
-        if (authorityDb) {
-            await reportAuthorityMarkers({ db: authorityDb, info: log.info, warn });
-        } else {
-            log.info("Authority: no context database found");
-        }
-    } catch (error) {
-        warn(
-            `Authority check unavailable: ${error instanceof Error ? error.message : String(error)}`,
-        );
-    } finally {
-        authorityDb?.close();
-    }
 
     // 1. Check OpenCode is installed. Keep every rung so a stale CLI cannot
     // hide a newer install that the user actually runs.
@@ -747,232 +699,13 @@ export async function runDoctor(
         log.info("  Run 'setup' to create one with model recommendations");
     }
 
-    // 3b. Migrate deprecated experimental config keys in magic-context.jsonc
-    if (existsSync(paths.magicContextConfig)) {
-        try {
-            const mcRaw = readFileSync(paths.magicContextConfig, "utf-8");
-            const mcConfig = parse(mcRaw) as Record<string, unknown>;
-            let mcChanged = false;
-
-            // Remove deprecated compaction_markers config — always-on since v0.21.4.
-            //
-            // The flag lived in two places across releases:
-            //   - `experimental.compaction_markers` (early experimental phase)
-            //   - top-level `compaction_markers` (graduated stable, default true,
-            //     v0.9.0+)
-            //
-            // As of v0.21.4 the feature is mandatory and the knob is gone from
-            // the schema. We clean BOTH locations so users don't see a
-            // "compaction_markers is not allowed" warning at plugin load.
-            //
-            // Intentional: comment-json stores comments on hidden Symbol keys
-            // attached to the parent object via their associated key. Deleting
-            // a key drops its immediately-preceding "before-property" comment.
-            // We accept that single-comment loss; the rest of the user's
-            // comments (block comments, other properties' before-comments,
-            // trailing comments on sibling keys) survive untouched. We do NOT
-            // delete the `experimental` object even when it becomes empty,
-            // because its header comment is anchored there.
-            const experimental = mcConfig.experimental as Record<string, unknown> | undefined;
-            if (experimental && "compaction_markers" in experimental) {
-                delete experimental.compaction_markers;
-                mcChanged = true;
-                log.success(
-                    "Removed deprecated experimental.compaction_markers (always-on since v0.21.4)",
-                );
-                fixed++;
-            }
-            if ("compaction_markers" in mcConfig) {
-                delete mcConfig.compaction_markers;
-                mcChanged = true;
-                log.success("Removed deprecated compaction_markers (always-on since v0.21.4)");
-                fixed++;
-            }
-
-            // Remove deprecated auto_drop_tool_age / drop_tool_structure — Phase 2
-            // replaced need-blind routine tool drops with the tiered target-headroom
-            // emergency drop (always full-drop), so both knobs are gone from the
-            // schema and would trigger a "not allowed" warning at plugin load.
-            for (const deadKey of ["auto_drop_tool_age", "drop_tool_structure"]) {
-                if (deadKey in mcConfig) {
-                    delete mcConfig[deadKey];
-                    mcChanged = true;
-                    log.success(
-                        `Removed deprecated ${deadKey} (replaced by tiered emergency drop)`,
-                    );
-                    fixed++;
-                }
-            }
-
-            const agentEnabledMigration = migrateLegacyAgentEnabledConfigForDoctor(mcConfig, log);
-            if (agentEnabledMigration.changed) {
-                mcChanged = true;
-                fixed += agentEnabledMigration.fixes;
-            }
-
-            // Migrate experimental.user_memories → dreamer.user_memories.
-            // The feature is now stable and lives under dreamer config (since
-            // dreamer owns candidate review and promotion). We preserve the
-            // user's existing enabled state so users who had it enabled keep
-            // it enabled, and users who had it explicitly disabled stay opted
-            // out. New users (no existing setting) get the new default:
-            // enabled=true under dreamer.user_memories.
-            if (experimental && "user_memories" in experimental) {
-                const dreamer = (mcConfig.dreamer as Record<string, unknown> | undefined) ?? {};
-                const oldUM = experimental.user_memories;
-                const existingUM = dreamer.user_memories;
-                if (existingUM === undefined) {
-                    // No dreamer.user_memories yet — move the old value over.
-                    // Coerce primitives (e.g., `experimental.user_memories: true`)
-                    // to object shape so the Zod schema accepts them. Without
-                    // this coercion, a primitive would trip schema validation
-                    // and silently fall back to defaults — losing the user's
-                    // explicit opt-in/out state.
-                    if (typeof oldUM === "boolean") {
-                        dreamer.user_memories = { enabled: oldUM };
-                    } else {
-                        dreamer.user_memories = oldUM;
-                    }
-                } else if (
-                    typeof oldUM === "object" &&
-                    oldUM !== null &&
-                    typeof existingUM === "object" &&
-                    existingUM !== null
-                ) {
-                    // Both blocks exist — merge field-by-field so we don't drop
-                    // sub-fields like `promotion_threshold` that the user set
-                    // under experimental. Existing dreamer.user_memories fields
-                    // win (user already graduated them).
-                    const merged = {
-                        ...(oldUM as Record<string, unknown>),
-                        ...(existingUM as Record<string, unknown>),
-                    };
-                    dreamer.user_memories = merged;
-                } else if (typeof oldUM === "object" && oldUM !== null) {
-                    // Old block is a proper object but new block is a malformed
-                    // primitive (e.g., user wrote `dreamer.user_memories: true`
-                    // as a shortcut). Without this branch we'd silently drop
-                    // the old block's sub-fields like `promotion_threshold`.
-                    // Coerce the primitive to { enabled: <primitive-as-bool> }
-                    // shape, then merge — old sub-fields fill in, new enabled
-                    // preserves what the user literally typed.
-                    const coerced: Record<string, unknown> = {
-                        ...(oldUM as Record<string, unknown>),
-                        enabled: Boolean(existingUM),
-                    };
-                    dreamer.user_memories = coerced;
-                    log.warn(
-                        `Coerced malformed dreamer.user_memories (${typeof existingUM}) to object form while merging sub-fields from experimental.user_memories`,
-                    );
-                }
-                // else: both are primitive/malformed — nothing safe to merge.
-                mcConfig.dreamer = dreamer;
-                delete experimental.user_memories;
-                mcChanged = true;
-                log.success(
-                    "Migrated experimental.user_memories → dreamer.user_memories (now default: enabled)",
-                );
-                fixed++;
-            }
-
-            if (experimental && migrateExperimentalPinKeyFilesForDoctor(mcConfig)) {
-                mcChanged = true;
-                log.success(
-                    "Migrated experimental.pin_key_files → dreamer.pin_key_files (preserved user enabled state)",
-                );
-                fixed++;
-            }
-
-            // Relocate graduated feature flags out of the (retired) experimental.*
-            // namespace to their new homes:
-            //   - temporal_awareness / caveman_text_compression → top-level keys
-            //   - auto_search / git_commit_indexing → memory.* (recall features)
-            // We preserve the user's explicit values so opt-ins/opt-outs survive;
-            // the destination wins when a user has already started graduating,
-            // merging sub-fields so partial settings aren't dropped.
-            const relocateGraduated = (
-                key: string,
-                dest: Record<string, unknown>,
-                destLabel: string,
-            ): void => {
-                if (!experimental || !(key in experimental)) return;
-                const oldValue = experimental[key];
-                const existing = dest[key];
-                if (existing === undefined) {
-                    dest[key] = oldValue;
-                } else if (
-                    typeof oldValue === "object" &&
-                    oldValue !== null &&
-                    typeof existing === "object" &&
-                    existing !== null
-                ) {
-                    dest[key] = {
-                        ...(oldValue as Record<string, unknown>),
-                        ...(existing as Record<string, unknown>),
-                    };
-                }
-                delete experimental[key];
-                mcChanged = true;
-                log.success(`Migrated experimental.${key} → ${destLabel}${key} (graduated)`);
-                fixed++;
-            };
-            if (experimental) {
-                relocateGraduated("temporal_awareness", mcConfig, "");
-                relocateGraduated("caveman_text_compression", mcConfig, "");
-                const memoryDest = (mcConfig.memory as Record<string, unknown> | undefined) ?? {};
-                relocateGraduated("auto_search", memoryDest, "memory.");
-                relocateGraduated("git_commit_indexing", memoryDest, "memory.");
-                if (Object.keys(memoryDest).length > 0) {
-                    mcConfig.memory = memoryDest;
-                }
-                // The experimental.* namespace is fully retired; drop the now-empty
-                // block so it does not linger as obsolete clutter. (Accepts the loss
-                // of the block's anchored header comment — the block no longer exists.)
-                if (Object.keys(experimental).length === 0 && "experimental" in mcConfig) {
-                    delete mcConfig.experimental;
-                    mcChanged = true;
-                }
-            }
-
-            // Dreamer v2: convert the legacy v1 dreamer shape (window schedule,
-            // tasks array, user_memories/pin_key_files blocks) into the per-task
-            // `tasks` record. Runs AFTER the experimental migrations above so a
-            // relocated dreamer.user_memories/pin_key_files is folded into tasks.
-            if (migrateDreamerV2ForDoctor(mcConfig)) {
-                mcChanged = true;
-                log.success(
-                    "Migrated legacy dreamer scheduling → per-task dreamer.tasks (window→cron, blocks→tasks)",
-                );
-                fixed++;
-            }
-
-            // Remove `compartment_token_budget` — replaced by auto-derivation from
-            // main/historian model context in later versions. The value is no longer
-            // read; leaving it in config is harmless but misleading.
-            if ("compartment_token_budget" in mcConfig) {
-                delete mcConfig.compartment_token_budget;
-                mcChanged = true;
-                log.success(
-                    "Removed deprecated compartment_token_budget (auto-derived from model context now)",
-                );
-                fixed++;
-            }
-
-            if (mcChanged) {
-                writeFileAtomic(paths.magicContextConfig, `${stringify(mcConfig, null, 2)}\n`);
-            }
-        } catch {
-            log.warn("Could not migrate deprecated config keys in magic-context.jsonc");
-        }
-    }
-
     // 4. Check plugin is in opencode.json
     if (paths.opencodeConfigFormat !== "none") {
         try {
             const raw = readFileSync(paths.opencodeConfig, "utf-8");
             const config = parse(raw) as Record<string, unknown>;
             // Operate on the raw plugin array. Entries can be:
-            //   • a string  "@cortexkit/opencode-magic-context@latest"
+            //   • a string  "@ufoq/opencode-mini-magic-context@latest"
             //   • a tuple   ["@pkg/name@latest", { ...options }]
             //   • a dev URL "file:///abs/path/.../packages/plugin"
             // We MUST preserve every entry shape on write — filtering out
@@ -1085,100 +818,6 @@ export async function runDoctor(
         pass("No conflicts detected (compaction, DCP, OMO hooks)");
     }
 
-    // 6. Check tui.json
-    const tuiAdded = ensureTuiPluginEntry();
-    if (tuiAdded) {
-        pass("Added TUI sidebar plugin to tui.json");
-        warn("Restart OpenCode to see the sidebar");
-        fixed++;
-    } else if (existsSync(paths.tuiConfig)) {
-        // Check for pinned version in tui config. Same tuple/dev-path rules
-        // as the main opencode config — preserve every entry shape on write.
-        try {
-            const tuiRaw = readFileSync(paths.tuiConfig, "utf-8");
-            const tuiConfig = parse(tuiRaw) as Record<string, unknown>;
-            const tuiRawPlugins: unknown[] = Array.isArray(tuiConfig?.plugin)
-                ? tuiConfig.plugin
-                : [];
-            const tuiIdx = tuiRawPlugins.findIndex(
-                (entry) => matchesPluginEntry(entry, PLUGIN_NAME) || isDevPathPluginEntry(entry),
-            );
-            if (
-                tuiRawPlugins.some(
-                    (entry) =>
-                        isLocalPathPluginEntry(entry) &&
-                        String(entry).includes("magic-context") &&
-                        !isDevPathPluginEntry(entry),
-                )
-            ) {
-                warn(
-                    "An unverifiable local TUI plugin path was ignored because its package name is not Magic Context",
-                );
-            }
-            const tuiEntryAsString = (entry: unknown): string => {
-                if (typeof entry === "string") return entry;
-                if (Array.isArray(entry) && typeof entry[0] === "string") return entry[0];
-                return "";
-            };
-            if (tuiIdx >= 0) {
-                const tuiEntry = tuiRawPlugins[tuiIdx];
-                const tuiEntryStr = tuiEntryAsString(tuiEntry);
-                if (isDevPathPluginEntry(tuiEntry)) {
-                    pass(`TUI sidebar plugin configured (dev path: ${tuiEntryStr})`);
-                } else {
-                    const tuiPinned = isPinnedOpenCodePluginSpecifier(tuiEntryStr);
-                    if (tuiPinned && !options.force) {
-                        warn(
-                            `TUI plugin pinned to ${tuiEntryStr} — use 'doctor --force' to upgrade`,
-                        );
-                    } else if (tuiPinned && options.force) {
-                        // Preserve tuple options when upgrading.
-                        if (Array.isArray(tuiEntry) && tuiEntry.length >= 1) {
-                            const replacement = [...tuiEntry];
-                            replacement[0] = PLUGIN_ENTRY_WITH_VERSION;
-                            tuiRawPlugins[tuiIdx] = replacement;
-                        } else {
-                            tuiRawPlugins[tuiIdx] = PLUGIN_ENTRY_WITH_VERSION;
-                        }
-                        tuiConfig.plugin = tuiRawPlugins;
-                        writeFileAtomic(paths.tuiConfig, `${stringify(tuiConfig, null, 2)}\n`);
-                        pass(`Upgraded TUI plugin: ${tuiEntryStr} → ${PLUGIN_ENTRY_WITH_VERSION}`);
-                        fixed++;
-                    } else {
-                        pass("TUI sidebar plugin configured");
-                    }
-                }
-            } else {
-                fail("TUI sidebar plugin is missing after the repair attempt");
-            }
-        } catch (error) {
-            fail(
-                `Could not verify TUI sidebar config: ${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
-    } else {
-        fail("Could not create or verify the TUI sidebar config");
-    }
-
-    // 7. Check user memories + dreamer compatibility.
-    // In v2, user-memory collection is gated by the `review-user-memories` task
-    // schedule (non-empty = enabled), replacing the v1 `dreamer.user_memories`
-    // block. The task needs the dreamer to actually run to promote candidates,
-    // so warn loudly when the combination is wrong.
-    if (existsSync(paths.magicContextConfig)) {
-        try {
-            const mcRaw = readFileSync(paths.magicContextConfig, "utf-8");
-            const mcConfig = parse(mcRaw) as Record<string, unknown>;
-            const warning = checkUserMemoriesDreamerCompatibility(mcConfig);
-            if (warning) {
-                log.warn(warning);
-                issues++;
-            }
-        } catch {
-            // Config parse failed — skip this check
-        }
-    }
-
     // 7b. Validate embedding configuration — runs a real probe against the
     // configured endpoint so users catch misconfigured URL / missing env var /
     // wrong provider issues before relying on semantic memory search.
@@ -1220,13 +859,7 @@ export async function runDoctor(
                 // Row counts across the major tables — informational, not pass/fail.
                 try {
                     const counts: Record<string, number> = {};
-                    for (const table of [
-                        "tags",
-                        "compartments",
-                        "memories",
-                        "notes",
-                        "dream_runs",
-                    ]) {
+                    for (const table of ["tags", "compartments", "session_meta"]) {
                         try {
                             const row = db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get() as
                                 | { c?: number }
@@ -1324,7 +957,7 @@ export async function runDoctor(
         log.info(`Log file: ${logPath} (not yet created)`);
     }
 
-    // Historian dumps live per-project under `<dir>/.cortexkit/magic-context/historian/`.
+    // Historian dumps live per-project under `<dir>/.cortexkit/mini-magic-context/historian/`.
     // We surface them grouped by project so users can see which session's dumps are
     // where. Falls back to the legacy tmp-dir layout when collectDiagnostics returns
     // empty buckets (Node-only runs, no OpenCode DB, no historian has run yet under

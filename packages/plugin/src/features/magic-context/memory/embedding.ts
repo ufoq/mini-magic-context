@@ -7,7 +7,6 @@ import { getEmbeddingProviderIdentity } from "./embedding-identity";
 import { LocalEmbeddingProvider } from "./embedding-local";
 import { OpenAICompatibleEmbeddingProvider } from "./embedding-openai";
 import type { EmbeddingProvider } from "./embedding-provider";
-import { SynapseEmbeddingProvider } from "./embedding-synapse";
 
 export type {
     EmbeddingFeatures,
@@ -19,24 +18,11 @@ export {
     contentSha256,
     embedBatchForProject,
     embedItemsForProject,
-    embedShadowTextForProject,
     embedTextForProject,
-    embedUnembeddedCompartmentChunksForProject,
-    embedUnembeddedMemoriesForProject,
-    enqueueShadowEmbeddingItems,
-    flushShadowEmbeddingBacklog,
-    getPrimaryEmbeddingMeasurementCohort,
     getProjectEmbeddingSnapshot,
-    getShadowBackfillRemaining,
-    getShadowBackfillStopReason,
-    getShadowEmbeddingMeasurementCohort,
     markProjectLoadUntrusted,
     registerProjectEmbedding,
     registerProjectInObservationMode,
-    registerProjectShadowEmbedding,
-    type ShadowEmbeddingMeasurementCohort,
-    sweepAllRegisteredProjects,
-    unregisterProjectEmbedding,
 } from "../project-embedding-registry";
 
 const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
@@ -84,16 +70,7 @@ function resolveEmbeddingConfig(config?: EmbeddingConfig): EmbeddingConfig {
                 : {}),
         };
     }
-
-    if (config.provider === "off") {
-        return { provider: "off" };
-    }
-
-    if (config.provider === "synapse") {
-        return { ...config, max_input_tokens: 8192 };
-    }
-
-    throw new Error("Unknown embedding provider");
+    throw new Error("Unsupported embedding provider");
 }
 
 function resolveProviderIdentity(config: EmbeddingConfig): string {
@@ -101,10 +78,6 @@ function resolveProviderIdentity(config: EmbeddingConfig): string {
 }
 
 function createProvider(config: EmbeddingConfig): EmbeddingProvider | null {
-    if (config.provider === "off") {
-        return null;
-    }
-
     if (config.provider === "openai-compatible") {
         return new OpenAICompatibleEmbeddingProvider({
             endpoint: config.endpoint,
@@ -120,31 +93,7 @@ function createProvider(config: EmbeddingConfig): EmbeddingProvider | null {
     if (config.provider === "local") {
         return new LocalEmbeddingProvider(config.model, config.max_input_tokens);
     }
-
-    if (config.provider === "synapse") {
-        const synapse = config as EmbeddingConfig & {
-            model?: string;
-            synapse_connection_file?: string;
-            synapse_fingerprint?: string;
-            synapse_table_epoch?: number;
-            synapse_dims?: number;
-            synapse_recommended_batch?: number;
-            synapse_provenance?: unknown;
-        };
-        return new SynapseEmbeddingProvider({
-            connectionFile: synapse.synapse_connection_file ?? "",
-            projectRoot: "",
-            session: "embedding",
-            model: synapse.model,
-            fingerprint: synapse.synapse_fingerprint,
-            tableEpoch: synapse.synapse_table_epoch,
-            dims: synapse.synapse_dims,
-            recommendedBatch: synapse.synapse_recommended_batch,
-            provenance: synapse.synapse_provenance,
-        });
-    }
-
-    throw new Error("Unknown embedding provider");
+    throw new Error("Unsupported embedding provider");
 }
 
 function getOrCreateProvider(): EmbeddingProvider | null {
@@ -179,7 +128,7 @@ export function initializeEmbedding(config: EmbeddingConfig): void {
 }
 
 export function isEmbeddingEnabled(): boolean {
-    return embeddingConfig.provider !== "off";
+    return true;
 }
 
 export async function ensureEmbeddingModel(): Promise<boolean> {
@@ -205,7 +154,7 @@ export async function embedText(text: string, signal?: AbortSignal): Promise<Flo
 }
 
 export function getEmbeddingModelId(): string {
-    return getOrCreateProvider()?.modelId ?? "off";
+    return getOrCreateProvider()?.modelId ?? "unavailable";
 }
 
 export { cosineSimilarity };

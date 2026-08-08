@@ -1,12 +1,5 @@
 import * as crypto from "node:crypto";
 import {
-    type AuthorityModuleClient,
-    checksumAuthoritySeedRows,
-    drainAuthority,
-    ensureContextStoreUuid,
-    getAuthorityManagedMarker,
-} from "../../features/magic-context/context-authority";
-import {
     resolveProjectIdentity,
     resolveProjectIdentityForSession,
     takeDubiousOwnershipProjectIdentityWarning,
@@ -19,18 +12,15 @@ import {
     type ContextDatabase,
     deriveTagLoadFloor,
     getActiveTagsBySession,
-    getActiveTagTokenAggregate,
     getActiveTagTokenTotalsByMessage,
     getHistorianFailureState,
     getMaxDroppedTagNumber,
-    getOldestActiveUnprotectedToolTags,
     getOrCreateSessionMeta,
     getTagsByNumbers,
     loadPersistedUsage,
     updateSessionMeta,
 } from "../../features/magic-context/storage";
 import {
-    casChannel2NudgeState,
     clearDetectedContextLimit,
     clearEmergencyDropSample,
     clearEmergencyRecovery,
@@ -39,22 +29,20 @@ import {
     getOverflowState,
     loadProtectedTailMeta,
     recordOverflowDetected,
-    resetLastNudgeCycleIfTailShrank,
     resetProtectedTailNoEligibleHead,
     setDeferredExecutePendingIfAbsent,
 } from "../../features/magic-context/storage-meta-persisted";
-import { bumpProjectMemoryEpoch } from "../../features/magic-context/storage-project-state";
 import type { Tagger } from "../../features/magic-context/tagger";
 import {
     clearOpenCodePendingTransformDecision,
     normalizeMaterializeReason,
     recordPendingTransformDecision,
 } from "../../features/magic-context/transform-decision-log";
-import type { ContextUsage, SchedulerDecision } from "../../features/magic-context/types";
+import type { ContextUsage } from "../../features/magic-context/types";
 import type { PluginContext } from "../../plugin/types";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
 import { getErrorMessage } from "../../shared/error-message";
-import { log, sessionLog } from "../../shared/logger";
+import { sessionLog } from "../../shared/logger";
 import { getSdkContextLimit } from "../../shared/models-dev-cache";
 import { applyMidTurnDeferral, detectMidTurnBypassReason } from "./boundary-execution";
 import { canConsumeDeferredOnThisPass } from "./cache-busting-signals";
@@ -71,8 +59,6 @@ import {
     resolveTodowriteAvailabilityFromMessages,
     type ToolAvailabilityVerdict,
 } from "./ctx-reduce-availability";
-import { computeTailTokenEstimate, shouldTriggerChannel2 } from "./ctx-reduce-nudge";
-import { DEFAULT_HISTORY_BUDGET_TOKENS } from "./decay-render";
 import { deriveTriggerBudget } from "./derive-budgets";
 import { EmergencyFailClosedError } from "./emergency-fail-closed";
 import {
@@ -88,7 +74,6 @@ import {
 } from "./inject-compartments";
 import { captureLkgSlot, projectLkgEntry, resolveLkgModelKeys } from "./lkg-replay";
 import { dropSlot } from "./lkg-slot";
-import { onNoteTrigger } from "./note-nudger";
 import { createPassOutcome } from "./pass-outcome";
 import {
     createDefaultBoundarySnapshotForTests,
@@ -101,7 +86,6 @@ import {
 import { readRawSessionMessages } from "./read-session-chunk";
 import { findLastAssistantModelFromOpenCodeDb, isMidTurn } from "./read-session-db";
 import { extractInMemoryMessageViews } from "./read-session-raw";
-import { createRustModeTransform, type RustModeModuleClient } from "./rust-mode-transform";
 import { sendIgnoredMessage } from "./send-session-notification";
 import { modelAcceptsEmptyContent } from "./sentinel";
 import {
@@ -294,154 +278,6 @@ function findNewestUserModel(
     return null;
 }
 
-type TsAuthorityRecoveryOutcome = "completed" | "retryable";
-
-const tsAuthorityRecoveryStateByProject = new Map<string, "running" | "complete">();
-const tsAuthorityMismatchLoggedProjects = new Set<string>();
-const tsAuthorityUnreachableLoggedProjects = new Set<string>();
-
-function authorityModuleForProject(
-    module: RustModeModuleClient,
-    projectRoot: string,
-): AuthorityModuleClient {
-    if (!module.authorityStatus || !module.authorityDrain || !module.mirrorPull) {
-        throw new Error(
-            "the module does not expose authority.status, authority.drain, and mirror.pull",
-        );
-    }
-    return {
-        authorityStatus: (request) => module.authorityStatus!({ ...request, projectRoot }),
-        authorityPrepare: (request) => {
-            if (!module.authorityPrepare) {
-                throw new Error("the module does not expose authority.prepare");
-            }
-            return module.authorityPrepare({ ...request, projectRoot });
-        },
-        authorityDrain: (request) => module.authorityDrain!({ ...request, projectRoot }),
-        mirrorPull: (request) => module.mirrorPull!({ ...request, projectRoot }),
-    };
-}
-
-/**
- * Restore a project to TypeScript ownership after its transform_mode setting no
- * longer selects Rust. The durable marker keeps writes fenced until the module
- * confirms every module-owned domain has drained back through its normal protocol.
- */
-export async function recoverTsAuthorityProject(args: {
-    db: ContextDatabase;
-    projectPath: string;
-    projectRoot: string;
-    module: RustModeModuleClient;
-}): Promise<TsAuthorityRecoveryOutcome> {
-    const module = authorityModuleForProject(args.module, args.projectRoot);
-    const domains = ["memories", "notes"] as const;
-    const statuses = await Promise.all(
-        domains.map(async (domain) => ({
-            domain,
-            authority: (
-                await module.authorityStatus({
-                    context_store_uuid: ensureContextStoreUuid(args.db),
-                    project: args.projectPath,
-                    domain,
-                })
-            ).authority,
-        })),
-    );
-
-    let drainedDomain = false;
-    for (const { domain, authority } of statuses) {
-        if (!authority || authority.state === "TS") continue;
-        // The module's begin route owns MODULE → DRAINING. Calling drainAuthority
-        // preserves the lease, mirror replay, checksum, and recovery choreography.
-        if (authority.state !== "MODULE" && authority.state !== "DRAINING") {
-            return "retryable";
-        }
-        let drained: Awaited<ReturnType<typeof drainAuthority>> | undefined;
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-            drained = await drainAuthority({
-                db: args.db,
-                projectPath: args.projectPath,
-                domain,
-                module,
-                checksum: () => {
-                    const table = domain === "memories" ? "memories" : "notes";
-                    const rows = args.db
-                        .prepare(`SELECT * FROM ${table} WHERE project_path = ? ORDER BY id ASC`)
-                        .all(args.projectPath)
-                        .filter(
-                            (row): row is Record<string, unknown> =>
-                                row !== null && typeof row === "object",
-                        );
-                    return checksumAuthoritySeedRows(rows);
-                },
-            });
-            if (!("code" in drained)) break;
-        }
-        if (!drained || "code" in drained) return "retryable";
-        drainedDomain = true;
-    }
-
-    // drainAuthority removes the shared marker only after every domain is TS.
-    // After a completed replay, bump the project memory epoch once so the memory
-    // view re-renders any changes mirrored during recovery.
-    if (drainedDomain && !getAuthorityManagedMarker(args.db, args.projectPath)) {
-        bumpProjectMemoryEpoch(args.db, args.projectPath);
-        return "completed";
-    }
-    return "retryable";
-}
-
-function scheduleTsAuthorityRecovery(args: {
-    db: ContextDatabase;
-    projectPath: string;
-    projectRoot: string;
-    module?: RustModeModuleClient;
-}): void {
-    if (!getAuthorityManagedMarker(args.db, args.projectPath)) return;
-    if (tsAuthorityRecoveryStateByProject.has(args.projectPath)) return;
-
-    if (!tsAuthorityMismatchLoggedProjects.has(args.projectPath)) {
-        tsAuthorityMismatchLoggedProjects.add(args.projectPath);
-        log(
-            `[magic-context] project ${args.projectPath} is module-authority-managed but transform_mode is TS; draining authority back to TypeScript`,
-        );
-    }
-    if (!args.module) {
-        tsAuthorityRecoveryStateByProject.set(args.projectPath, "complete");
-        if (!tsAuthorityUnreachableLoggedProjects.has(args.projectPath)) {
-            tsAuthorityUnreachableLoggedProjects.add(args.projectPath);
-            log(
-                `[magic-context] authority recovery for ${args.projectPath} cannot reach subc; writes remain fenced. Run magic-context doctor drain-authority ${args.projectRoot} with rust mode or restore subc connectivity.`,
-            );
-        }
-        return;
-    }
-
-    tsAuthorityRecoveryStateByProject.set(args.projectPath, "running");
-    void Promise.resolve()
-        .then(() => recoverTsAuthorityProject({ ...args, module: args.module! }))
-        .then((outcome) => {
-            if (outcome === "completed") {
-                tsAuthorityRecoveryStateByProject.set(args.projectPath, "complete");
-                log(`[magic-context] authority drain complete for project ${args.projectPath}`);
-            } else {
-                // A bounded contention result is durable and resumable. Do not cache it
-                // so the next project setup can resume the module's DRAINING state.
-                tsAuthorityRecoveryStateByProject.delete(args.projectPath);
-            }
-        })
-        .catch((error) => {
-            tsAuthorityRecoveryStateByProject.set(args.projectPath, "complete");
-            if (!tsAuthorityUnreachableLoggedProjects.has(args.projectPath)) {
-                tsAuthorityUnreachableLoggedProjects.add(args.projectPath);
-                log(
-                    `[magic-context] authority recovery for ${args.projectPath} cannot reach subc; writes remain fenced. Run magic-context doctor drain-authority ${args.projectRoot} with rust mode or restore subc connectivity.`,
-                    error,
-                );
-            }
-        });
-}
-
 export interface TransformDeps {
     tagger: Tagger;
     scheduler: Scheduler;
@@ -576,41 +412,14 @@ export interface TransformDeps {
     };
     /** Fire-and-forget active-session embed backfill after transform returns. */
     maybeAutoEmbedSession?: (sessionId: string) => void;
-    /** Resolved project mode. Rust mode bypasses every TS mutation below. */
-    transformMode?: "ts" | "rust";
-    /** Module transport injected by the hook; tests use a deterministic mock. */
-    rustModeModuleClient?: RustModeModuleClient;
-    /** Test-only opt-out for transform-wire fixtures without the authority protocol. */
-    rustModeAllowAuthorityProtocolBypassForTests?: boolean;
-    rustModeProjectRoot?: string;
-    /**
-     * Module route used only to recover a project whose config changed from Rust
-     * transforms back to TypeScript while the durable authority marker remains.
-     */
-    tsAuthorityRecoveryModuleClient?: RustModeModuleClient;
-    onRustModeParked?: (sessionId: string, message: string) => void;
-    onRustModeProjectPrepared?: (projectPath: string) => void;
-    rustMemorySyncRequestedSessions?: Set<string>;
 }
 
 export function createTransform(deps: TransformDeps) {
     const loadedSessions = new Set<string>();
-    const rustModeTransform =
-        deps.transformMode === "rust" && deps.rustModeModuleClient
-            ? createRustModeTransform(deps, {
-                  moduleClient: deps.rustModeModuleClient,
-                  hostClient: deps.client,
-                  projectRoot: deps.rustModeProjectRoot,
-                  notifyParked: deps.onRustModeParked,
-                  onProjectPrepared: deps.onRustModeProjectPrepared,
-                  memorySyncRequestedSessions: deps.rustMemorySyncRequestedSessions,
-                  allowAuthorityProtocolBypassForTests:
-                      deps.rustModeAllowAuthorityProtocolBypassForTests,
-              })
-            : undefined;
     const deferredHistoryRefreshSessions = deps.deferredHistoryRefreshSessions ?? new Set<string>();
     const deferredMaterializationSessions =
         deps.deferredMaterializationSessions ?? new Set<string>();
+    const memoryConfig = { enabled: false, autoPromote: false, injectionBudgetTokens: 0 };
 
     const transform = async (
         _input: Record<string, never>,
@@ -659,18 +468,6 @@ export function createTransform(deps: TransformDeps) {
         // event and runs reduced-mode once — harmless for these short sessions.)
         if (deps.internalChildSessions?.has(sessionId)) {
             sessionLog(sessionId, "transform skipped (internal magic-context child session)");
-            return;
-        }
-
-        // Rust mode is an authority adapter, not a second implementation of the
-        // TypeScript renderer. Internal children returned above retain their identity
-        // in both modes; every other rust-mode session is handed to the module here.
-        if (deps.transformMode === "rust") {
-            if (!rustModeTransform) {
-                sessionLog(sessionId, "rust transform unavailable; using raw passthrough");
-                return;
-            }
-            await rustModeTransform.run(sessionId, messages, output, sessionMeta);
             return;
         }
 
@@ -1274,8 +1071,8 @@ export function createTransform(deps: TransformDeps) {
                 historianTwoPass: deps.historianTwoPass,
                 // Issue #44: gate historian-driven memory promotion so users
                 // who disable the feature actually see no memories created.
-                memoryEnabled: deps.memoryConfig?.enabled,
-                autoPromote: deps.memoryConfig?.autoPromote,
+                memoryEnabled: memoryConfig.enabled,
+                autoPromote: memoryConfig.autoPromote,
                 ensureProjectRegistered: deps.ensureProjectRegistered,
                 // Historian publication invalidates the injection cache AND
                 // changes compartments/facts that render into message[0]. We
@@ -1358,10 +1155,10 @@ export function createTransform(deps: TransformDeps) {
         // directory but still does a cache lookup on each call, and the
         // first call per directory in a new process spawns `git rev-list`.
         const memoryProjectDirectory = compartmentDirectory || process.cwd();
-        const projectIdentity = deps.memoryConfig?.enabled
+        const projectIdentity = memoryConfig.enabled
             ? resolveProjectIdentity(memoryProjectDirectory)
             : undefined;
-        if (deps.memoryConfig?.enabled) {
+        if (memoryConfig.enabled) {
             maybeSendProjectIdentityWarning(
                 deps,
                 sessionId,
@@ -1387,21 +1184,6 @@ export function createTransform(deps: TransformDeps) {
             : undefined;
         if (sessionDirectory) {
             maybeSendProjectIdentityWarning(deps, sessionId, sessionDirectory, notificationParams);
-        }
-        // Keep the marker lookup in the same identity vocabulary that Rust authority
-        // setup used: memory-enabled projects use their MC identity, never a raw path.
-        // Scheduling only starts background recovery; this transform continues normally.
-        const authorityProjectPath =
-            (deps.memoryConfig?.enabled ? projectIdentity : undefined) ??
-            deps.projectPath ??
-            sessionProjectIdentity;
-        if (authorityProjectPath) {
-            scheduleTsAuthorityRecovery({
-                db,
-                projectPath: authorityProjectPath,
-                projectRoot: sessionDirectory || memoryProjectDirectory,
-                module: deps.tsAuthorityRecoveryModuleClient,
-            });
         }
         // Persist only host-resolved session bindings. The launch-directory
         // fallback keeps transforms non-fatal, but storing it as ownership would
@@ -1505,7 +1287,7 @@ export function createTransform(deps: TransformDeps) {
                 messages,
                 isCacheBusting,
                 projectIdentity,
-                deps.memoryConfig?.injectionBudgetTokens,
+                memoryConfig.injectionBudgetTokens,
                 deps.experimentalTemporalAwareness,
             );
             logTransformTiming(sessionId, "prepareCompartmentInjection", tInj);
@@ -1549,7 +1331,7 @@ export function createTransform(deps: TransformDeps) {
             { type: string; thinking?: string; text?: string }[]
         >();
         let messageTagNumbers = new Map<MessageLike, number>();
-        let tagNormalizationTargets: TagNormalizationTarget[] = [];
+        let _tagNormalizationTargets: TagNormalizationTarget[] = [];
         let batch: { finalize: () => void } | null = null;
         let hasRecentReduceCall = false;
         // Inject temporal markers before tagging so the §N§ tag prefix wraps
@@ -1602,23 +1384,11 @@ export function createTransform(deps: TransformDeps) {
             targets = result.targets;
             reasoningByMessage = result.reasoningByMessage;
             messageTagNumbers = result.messageTagNumbers;
-            tagNormalizationTargets = result.normalizationTargets;
+            _tagNormalizationTargets = result.normalizationTargets;
             batch = result.batch;
             hasRecentReduceCall = result.hasRecentReduceCall;
-            const hadPriorCommitState = deps.commitSeenLastPass?.has(sessionId) ?? false;
             const sawCommitLastPass = deps.commitSeenLastPass?.get(sessionId) ?? false;
-            // Only trigger on NEW commits — not on first pass after restart where
-            // we have no baseline. First pass establishes the baseline silently.
-            // Subagents never deliver note nudges (gated in postprocess), so skip
-            // accumulating orphan trigger state.
-            if (
-                fullFeatureMode &&
-                hadPriorCommitState &&
-                result.hasRecentCommit &&
-                !sawCommitLastPass
-            ) {
-                onNoteTrigger(db, sessionId, "commit_detected");
-            }
+            void sawCommitLastPass;
             deps.commitSeenLastPass?.set(sessionId, result.hasRecentCommit);
             logTransformTiming(sessionId, "tagMessages", t0);
             taggingSucceeded = true;
@@ -1824,7 +1594,7 @@ export function createTransform(deps: TransformDeps) {
             pendingCompartmentInjection,
             fallbackModelId,
             projectPath: projectIdentity,
-            injectionBudgetTokens: deps.memoryConfig?.injectionBudgetTokens,
+            injectionBudgetTokens: memoryConfig.injectionBudgetTokens,
             getNotificationParams: rawGetNotifParams
                 ? () => rawGetNotifParams(sessionId)
                 : undefined,
@@ -1842,8 +1612,8 @@ export function createTransform(deps: TransformDeps) {
             // Issue #44: forward memory gating so the normal historian path
             // (not just the recovery path above) honors memory.enabled and
             // memory.auto_promote.
-            memoryEnabled: deps.memoryConfig?.enabled,
-            autoPromote: deps.memoryConfig?.autoPromote,
+            memoryEnabled: memoryConfig.enabled,
+            autoPromote: memoryConfig.autoPromote,
             ensureProjectRegistered: deps.ensureProjectRegistered,
             // See startRecoveryRun above for the full rationale —
             // historian/recomp publication signals history rebuild +
@@ -1993,7 +1763,7 @@ export function createTransform(deps: TransformDeps) {
                 projectPath: projectIdentity,
                 projectDirectory: sessionDirectory,
                 injectDocs: deps.injectDocs,
-                memoryInjectionBudgetTokens: deps.memoryConfig?.injectionBudgetTokens,
+                memoryInjectionBudgetTokens: memoryConfig.injectionBudgetTokens,
                 historyBudgetTokens,
                 temporalAwareness: deps.experimentalTemporalAwareness,
                 hardSignals: m0HardSignals,
@@ -2237,139 +2007,7 @@ export function createTransform(deps: TransformDeps) {
             }
         }
 
-        // Channel 1 baseline snapshot (post-drop, post-injection). Computed from
-        // the final `messages` array, which the compartment-injection step has
-        // already trimmed to the live tail — so summing non-dropped tool output
-        // gives the post-boundary undropped tokens directly. Refreshing here (a
-        // proven transform boundary) zeroes the per-turn accumulator without the
-        // chat.message mid-turn race.
-        //
-        // Gated on ctx_reduce being effective (NOT fullFeatureMode): Channel 1
-        // nudges the agent to call ctx_reduce, so it's meaningful exactly when
-        // the agent has the §N§ prefix + the tool — i.e. any session with
-        // ctx_reduce enabled, INCLUDING subagents (which self-manage tool
-        // bloat). It must NOT fire when the session's tool allow-list denies
-        // ctx_reduce. Channel 2 (the synthetic-user ceiling) rides the same gate
-        // — it fires for any ctx_reduce-effective session, subagents included.
-        if (ctxReduceCallable && deps.channel1StateBySession) {
-            try {
-                // Always resolve through resolveExecuteThreshold — even when the
-                // percentage config is a bare number — so an execute_threshold_tokens
-                // override is honored (a per-model absolute cap converts to an
-                // effective %). Skipping it for the numeric case made the Channel
-                // pressure math use the wrong threshold on token-configured models.
-                const resolvedExecuteThresholdPct = resolveExecuteThreshold(
-                    deps.executeThresholdPercentage ?? 65,
-                    deps.getModelKey?.(sessionId),
-                    65,
-                    {
-                        tokensConfig: deps.executeThresholdTokens,
-                        contextLimit: resolvedContextLimit ?? 0,
-                    },
-                );
-                // Real-tokenizer counts from the durable tag store (injected
-                // m[0]/m[1] blocks are never tagged, so this is the injected-free
-                // live tail). reclaimable = non-dropped tool OUTPUT; liveTail =
-                // conversation + tool I/O. Falls back to a byte-approx live-tail walk
-                // only if the store read fails. Replaces the old output-only path.
-                let tailToolTokens: number;
-                let liveTailTokens: number;
-                try {
-                    // reclaimable (toolOutput) excludes the protected top-N tags —
-                    // the agent can't ctx_reduce those, so they must not count
-                    // toward the nudge's "reclaimable" figure (else it nags forever
-                    // about protected-tail output it cannot drop).
-                    const agg = getActiveTagTokenAggregate(db, sessionId, deps.protectedTags);
-                    tailToolTokens = agg.toolOutput;
-                    liveTailTokens = agg.conversation + agg.toolCall;
-                } catch {
-                    const estimate = computeTailTokenEstimate(messages);
-                    tailToolTokens = estimate.tailToolTokens;
-                    liveTailTokens = estimate.liveTailTokens;
-                }
-                const executeThresholdTokens = Math.round(
-                    ((resolvedContextLimit ?? 0) * resolvedExecuteThresholdPct) / 100,
-                );
-                const usableTokens = Math.max(
-                    0,
-                    executeThresholdTokens - contextUsage.inputTokens + liveTailTokens,
-                );
-                // If the measured tail already shrank below the last persisted
-                // watermark before this tool turn (historian publish, emergency
-                // drop, pending-op replay), the old band referred to a pile that
-                // no longer exists. Clear it now so regrowth starts a fresh cycle.
-                resetLastNudgeCycleIfTailShrank(db, sessionId, tailToolTokens);
-                const oldestReclaimableToolTags = getOldestActiveUnprotectedToolTags(
-                    db,
-                    sessionId,
-                    deps.protectedTags,
-                );
-                deps.channel1StateBySession.set(sessionId, {
-                    tailToolTokens,
-                    historyBudgetTokens: historyBudgetTokens ?? 0,
-                    contextLimit: resolvedContextLimit ?? 0,
-                    executeThresholdPercentage: resolvedExecuteThresholdPct,
-                    lastInputTokens: contextUsage.inputTokens,
-                    turnToolTokens: 0,
-                    usableTokens,
-                    reducedSinceRefresh: false,
-                    oldestReclaimableToolTags,
-                });
-
-                // Channel 2 (ceiling) trigger — record a one-shot pending intent
-                // when pressure is near the execute threshold AND a large pile of
-                // reclaimable tool output remains. Delivery happens later from the
-                // event handler (`message.updated`) via the in-process client.
-                // Uses the real post-transform pressure (current usage% / threshold)
-                // and the just-computed tail tokens. Only escalate from the empty
-                // ('') state so we never reset an in-flight claim/delivery; the cap
-                // is one delivery per session lifetime.
-                //
-                // Subagents included: Channel 2 injects a synthetic user message
-                // via promptAsync, which a subagent's run loop picks up at its next
-                // step boundary and addresses like any queued message — verified
-                // safe (a subagent runs under the same in-process client as a
-                // primary). The only gate is ctx_reduce being effectively enabled
-                // (this whole block), so we never nudge toward an uncallable tool.
-                // resolvedContextLimit/threshold known is all that's required.
-                // usable = the agent's working range = the gap between the fixed
-                // overhead floor (everything that ISN'T live tail: system + tool
-                // defs + m[0] + m[1]) and the execute-threshold ceiling. Derived
-                // by identity: executeThresholdTokens − inputTokens + liveTail
-                // (inputTokens − liveTail IS the fixed overhead on the wire). As
-                // pressure rises, usable shrinks toward 0, so the single
-                // reclaimable ≥ usable/3 ratio encodes both "near comparting" and
-                // "big reclaimable pile" without a separate pressure gate.
-                // (executeThresholdTokens/usableTokens computed above, alongside
-                // the Channel-1 baseline they're persisted with.)
-                const channel2MetricsKnown =
-                    resolvedContextLimit !== undefined &&
-                    resolvedContextLimit > 0 &&
-                    resolvedExecuteThresholdPct > 0;
-                if (channel2MetricsKnown) {
-                    const channel2ShouldTrigger = shouldTriggerChannel2({
-                        reclaimableTokens: tailToolTokens,
-                        usableTokens,
-                    });
-                    try {
-                        if (channel2ShouldTrigger) {
-                            casChannel2NudgeState(db, sessionId, "", "pending");
-                        } else {
-                            // Cancel stale, undelivered intents when the same
-                            // trigger predicate no longer holds; never touch an
-                            // in-flight claim or the delivered terminal cap.
-                            casChannel2NudgeState(db, sessionId, "pending", "");
-                        }
-                    } catch (error) {
-                        sessionLog(sessionId, "channel2 trigger CAS failed (ignored):", error);
-                    }
-                }
-            } catch (error) {
-                sessionLog(sessionId, "channel1 baseline snapshot failed (ignored):", error);
-            }
-        } else {
-            deps.channel1StateBySession?.delete(sessionId);
-        }
+        deps.channel1StateBySession?.delete(sessionId);
 
         const elapsed = (performance.now() - startTime).toFixed(1);
         sessionLog(
@@ -2380,14 +2018,7 @@ export function createTransform(deps: TransformDeps) {
         deps.maybeAutoEmbedSession?.(sessionId);
     };
 
-    return Object.assign(transform, {
-        invalidateRustWireState(sessionId: string): void {
-            rustModeTransform?.invalidateWireState(sessionId);
-        },
-        clearRustSession(sessionId: string): void {
-            rustModeTransform?.clearSession(sessionId);
-        },
-    });
+    return transform;
 }
 
 export function resolveHistoryBudgetTokens(

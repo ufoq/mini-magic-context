@@ -12,7 +12,6 @@ import {
 import {
     contentSha256,
     embedItemsForProject,
-    enqueueShadowEmbeddingItems,
     getProjectChunkEmbeddingModelId,
     getProjectEmbeddingMaxInputTokens,
 } from "./project-embedding-registry";
@@ -136,7 +135,6 @@ export async function embedAndStoreCompartmentChunks(
             }
             if (rows.length === windows.length) {
                 replaceCompartmentChunkEmbeddings(db, rows);
-                enqueueShadowEmbeddingItems(projectPath, "chunk", [String(compartment.id)]);
             }
         } catch (error) {
             sessionLog(

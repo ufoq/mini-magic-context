@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { parse as parseJsonc } from "comment-json";
 import { openExistingContextDatabase } from "../lib/database-access";
 import type { PiDiagnosticReport } from "../lib/diagnostics-pi";
 import type { PromptIO, PromptSpinner, SelectOption } from "../lib/prompts";
-import { parseDoctorArgs, type RunDoctorOptions, runDoctor } from "./doctor-pi";
+import { type RunDoctorOptions, runDoctor } from "./doctor-pi";
 
 setDefaultTimeout(30_000);
 
@@ -90,26 +91,26 @@ function writeHealthyFiles(agentDir: string, cwd: string): void {
     writeFileSync(
         join(agentDir, "settings.json"),
         JSON.stringify({
-            packages: ["npm:@cortexkit/pi-magic-context", "npm:other-pi-extension"],
+            packages: ["npm:@ufoq/pi-mini-magic-context", "npm:other-pi-extension"],
         }),
     );
     const configHome = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
     writeFileSync(
-        join(configHome, "cortexkit", "magic-context.jsonc"),
+        join(configHome, "cortexkit", "mini-magic-context.jsonc"),
         JSON.stringify({ embedding: { provider: "local" } }),
     );
     writeFileSync(
-        join(cwd, ".cortexkit", "magic-context.jsonc"),
+        join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
         JSON.stringify({ enabled: true }),
     );
 }
 
 function createInstalledPiPlugin(agentDir: string, withNativeBinding: boolean): void {
-    const pluginDir = join(agentDir, "npm", "node_modules", "@cortexkit", "pi-magic-context");
+    const pluginDir = join(agentDir, "npm", "node_modules", "@ufoq", "pi-mini-magic-context");
     mkdirSync(pluginDir, { recursive: true });
     writeFileSync(
         join(pluginDir, "package.json"),
-        JSON.stringify({ name: "@cortexkit/pi-magic-context", version: "0.0.0" }),
+        JSON.stringify({ name: "@ufoq/pi-mini-magic-context", version: "0.0.0" }),
     );
 
     const onnxDir = join(pluginDir, "node_modules", "onnxruntime-node");
@@ -133,13 +134,13 @@ function writePiCachePackage(cacheRoot: string, version: string): string {
         "extensions",
         "npm",
         "node_modules",
-        "@cortexkit",
+        "@ufoq",
         "pi-magic-context",
     );
     mkdirSync(pluginDir, { recursive: true });
     writeFileSync(
         join(pluginDir, "package.json"),
-        JSON.stringify({ name: "@cortexkit/pi-magic-context", version }),
+        JSON.stringify({ name: "@ufoq/pi-mini-magic-context", version }),
     );
     return pluginDir;
 }
@@ -147,19 +148,16 @@ function writePiCachePackage(cacheRoot: string, version: string): string {
 function createMockDb(): Database {
     const db = new Database(":memory:");
     db.exec(`
-		CREATE TABLE tags (id INTEGER);
-		CREATE TABLE compartments (id INTEGER);
-		CREATE TABLE memories (id INTEGER);
-		CREATE TABLE notes (id INTEGER);
-		CREATE TABLE dream_runs (id INTEGER);
-		INSERT INTO tags VALUES (1);
-		INSERT INTO memories VALUES (1);
+        CREATE TABLE tags (id INTEGER);
+        CREATE TABLE compartments (id INTEGER);
+        CREATE TABLE session_meta (id INTEGER);
+        INSERT INTO tags VALUES (1);
 	`);
     return db;
 }
 
 function baseOptions(root: string, cwd: string, prompts: MockPrompts): RunDoctorOptions {
-    const storageDir = join(root, ".local", "share", "cortexkit", "magic-context");
+    const storageDir = join(root, ".local", "share", "cortexkit", "mini-magic-context");
     mkdirSync(storageDir, { recursive: true });
     writeFileSync(join(storageDir, "context.db"), "mock");
     return {
@@ -200,19 +198,26 @@ afterEach(() => {
 });
 
 describe("Pi doctor", () => {
-    it("parses v22 backfill flags", () => {
-        expect(
-            parseDoctorArgs([
-                "--check-v22-backfill",
-                "--retry-v22-backfill",
-                "--rekey-v22-dir-identity",
-                "/tmp/project",
-            ]),
-        ).toMatchObject({
-            checkV22Backfill: true,
-            retryV22Backfill: true,
-            rekeyV22DirIdentity: "/tmp/project",
-        });
+    it("returns nonzero for retired doctor inputs through the unified CLI", () => {
+        const entrypoint = join(import.meta.dir, "..", "index.ts");
+        const removedInputs = [
+            "--check-v22-backfill",
+            "--retry-v22-backfill",
+            "--rekey-v22-dir-identity",
+            "drain-authority",
+            "merge-identity",
+            "migrate-session",
+            "migrate",
+        ];
+
+        for (const input of removedInputs) {
+            const result = spawnSync(process.execPath, [entrypoint, "doctor", input], {
+                cwd: join(import.meta.dir, "..", ".."),
+                encoding: "utf-8",
+            });
+            expect(result.status).toBe(1);
+            expect(result.stderr).toContain("Unknown doctor command");
+        }
     });
 
     it("passes Phase 1 with a healthy mocked environment", async () => {
@@ -227,10 +232,10 @@ describe("Pi doctor", () => {
         expect(code).toBe(0);
         const output = prompts.messages.join("\n");
         expect(output).toContain("PASS Pi 0.74.0 detected");
-        expect(output).toContain("PASS npm:@cortexkit/pi-magic-context is registered");
+        expect(output).toContain("PASS npm:@ufoq/pi-mini-magic-context is registered");
         expect(output).toContain("PASS SQLite integrity_check: ok");
-        expect(output).toContain("Summary: PASS");
-        expect(output).toContain("FAIL 0");
+        expect(output).toContain("Shared DB row counts: tags=1, compartments=0, session_meta=0");
+        expect(output).toContain("Summary: PASS 13 / WARN 1 / FAIL 0");
     });
 
     it("leaves an older supported shared DB schema unchanged", async () => {
@@ -240,7 +245,14 @@ describe("Pi doctor", () => {
         writeHealthyFiles(agentDir, cwd);
         const prompts = new MockPrompts();
         const options = baseOptions(root, cwd, prompts);
-        const dbPath = join(root, ".local", "share", "cortexkit", "magic-context", "context.db");
+        const dbPath = join(
+            root,
+            ".local",
+            "share",
+            "cortexkit",
+            "mini-magic-context",
+            "context.db",
+        );
         rmSync(dbPath);
         const fixture = new Database(dbPath);
         fixture.exec(`
@@ -248,7 +260,6 @@ describe("Pi doctor", () => {
             INSERT INTO schema_migrations(version) VALUES (50);
             CREATE TABLE tags (id INTEGER);
             CREATE TABLE compartments (id INTEGER);
-            CREATE TABLE memories (id INTEGER);
             CREATE TABLE notes (id INTEGER);
             CREATE TABLE dream_runs (id INTEGER);
         `);
@@ -313,7 +324,7 @@ describe("Pi doctor", () => {
         const agentDir = setEnv(root, cwd);
         writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [] }));
         writeFileSync(
-            join(cwd, ".cortexkit", "magic-context.jsonc"),
+            join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({ enabled: true }),
         );
         const prompts = new MockPrompts();
@@ -327,10 +338,12 @@ describe("Pi doctor", () => {
         const settings = parseJsonc(readFileSync(join(agentDir, "settings.json"), "utf-8")) as {
             packages?: string[];
         };
-        expect(settings.packages).toContain("npm:@cortexkit/pi-magic-context");
-        expect(existsSync(join(root, ".config", "cortexkit", "magic-context.jsonc"))).toBe(true);
+        expect(settings.packages).toContain("npm:@ufoq/pi-mini-magic-context");
+        expect(existsSync(join(root, ".config", "cortexkit", "mini-magic-context.jsonc"))).toBe(
+            true,
+        );
         const output = prompts.messages.join("\n");
-        expect(output).toContain("Added npm:@cortexkit/pi-magic-context");
+        expect(output).toContain("Added npm:@ufoq/pi-mini-magic-context");
         expect(output).toContain("Wrote default Magic Context config");
         expect(output).toContain("Repair attempted; 2 item(s) changed");
     });
@@ -340,11 +353,11 @@ describe("Pi doctor", () => {
         const cwd = makeTempRoot("mc-pi-doctor-cwd-");
         const agentDir = setEnv(root, cwd);
         const settingsPath = join(agentDir, "settings.json");
-        const legacyPath = join(agentDir, "magic-context.jsonc");
+        const legacyPath = join(agentDir, "mini-magic-context.jsonc");
         writeFileSync(settingsPath, JSON.stringify({ packages: [] }));
         writeFileSync(legacyPath, JSON.stringify({ protected_tags: 13 }));
         writeFileSync(
-            join(cwd, ".cortexkit", "magic-context.jsonc"),
+            join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({ enabled: true }),
         );
         const prompts = new MockPrompts();
@@ -355,7 +368,7 @@ describe("Pi doctor", () => {
         });
 
         expect(code).toBe(0);
-        const targetPath = join(root, ".config", "cortexkit", "magic-context.jsonc");
+        const targetPath = join(root, ".config", "cortexkit", "mini-magic-context.jsonc");
         const config = parseJsonc(readFileSync(targetPath, "utf-8")) as {
             protected_tags?: number;
         };
@@ -373,20 +386,20 @@ describe("Pi doctor", () => {
         const agentDir = setEnv(root, cwd);
         writeFileSync(
             join(agentDir, "settings.json"),
-            JSON.stringify({ packages: ["npm:@cortexkit/pi-magic-context"] }),
+            JSON.stringify({ packages: ["npm:@ufoq/pi-mini-magic-context"] }),
         );
         writeFileSync(
-            join(cwd, ".cortexkit", "magic-context.jsonc"),
+            join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({ enabled: true }),
         );
         const opencodeDir = join(root, ".config", "opencode");
         mkdirSync(opencodeDir, { recursive: true });
         writeFileSync(
-            join(opencodeDir, "magic-context.jsonc"),
+            join(opencodeDir, "mini-magic-context.jsonc"),
             JSON.stringify({ protected_tags: 7 }),
         );
         writeFileSync(
-            join(agentDir, "magic-context.jsonc"),
+            join(agentDir, "mini-magic-context.jsonc"),
             JSON.stringify({ protected_tags: 13 }),
         );
         const prompts = new MockPrompts();
@@ -397,7 +410,9 @@ describe("Pi doctor", () => {
         });
 
         expect(code).toBe(0);
-        expect(existsSync(join(root, ".config", "cortexkit", "magic-context.jsonc"))).toBe(false);
+        expect(existsSync(join(root, ".config", "cortexkit", "mini-magic-context.jsonc"))).toBe(
+            false,
+        );
         const output = prompts.messages.join("\n");
         expect(output).toContain("Magic Context user config migration refused");
         expect(output).toContain("Default config repair skipped");
@@ -413,18 +428,18 @@ describe("Pi doctor", () => {
             settingsPath,
             JSON.stringify({
                 packages: [
-                    { name: "npm:@cortexkit/pi-magic-context", version: "1.2.3" },
+                    { name: "npm:@ufoq/pi-mini-magic-context", version: "1.2.3" },
                     { name: "third-party-extension", version: "9.9.9", enabled: true },
                     "npm:other-pi-extension",
                 ],
             }),
         );
         writeFileSync(
-            join(root, ".config", "cortexkit", "magic-context.jsonc"),
+            join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({ embedding: { provider: "local" } }),
         );
         writeFileSync(
-            join(cwd, ".cortexkit", "magic-context.jsonc"),
+            join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({ enabled: true }),
         );
         const prompts = new MockPrompts();
@@ -439,13 +454,13 @@ describe("Pi doctor", () => {
             packages?: unknown[];
         };
         expect(settings.packages).toEqual([
-            { name: "npm:@cortexkit/pi-magic-context", version: "1.2.3" },
+            { name: "npm:@ufoq/pi-mini-magic-context", version: "1.2.3" },
             { name: "third-party-extension", version: "9.9.9", enabled: true },
             "npm:other-pi-extension",
         ]);
         const output = prompts.messages.join("\n");
-        expect(output).toContain("PASS npm:@cortexkit/pi-magic-context is registered");
-        expect(output).not.toContain("Added npm:@cortexkit/pi-magic-context");
+        expect(output).toContain("PASS npm:@ufoq/pi-mini-magic-context is registered");
+        expect(output).not.toContain("Added npm:@ufoq/pi-mini-magic-context");
     });
 
     it("generates a sanitized markdown report in --issue mode without calling gh create", async () => {
@@ -479,27 +494,27 @@ describe("Pi doctor", () => {
                 path: join(agentDir, "settings.json"),
                 exists: true,
                 hasMagicContextPackage: true,
-                packages: ["npm:@cortexkit/pi-magic-context"],
+                packages: ["npm:@ufoq/pi-mini-magic-context"],
             },
             configPaths: {
                 agentDir,
-                userConfig: join(root, ".config", "cortexkit", "magic-context.jsonc"),
-                projectConfig: join(cwd, ".cortexkit", "magic-context.jsonc"),
+                userConfig: join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
+                projectConfig: join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
             },
             userConfig: {
-                path: join(root, ".config", "cortexkit", "magic-context.jsonc"),
+                path: join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
                 exists: true,
                 flags: { embedding: { provider: "local" } },
             },
             projectConfig: {
-                path: join(cwd, ".cortexkit", "magic-context.jsonc"),
+                path: join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
                 exists: true,
                 flags: { enabled: true },
             },
-            loadedConfigPaths: ["<HOME>/.config/cortexkit/magic-context.jsonc"],
+            loadedConfigPaths: ["<HOME>/.config/cortexkit/mini-magic-context.jsonc"],
             loadWarnings: [],
             storageDir: {
-                path: join(root, ".local", "share", "cortexkit", "magic-context"),
+                path: join(root, ".local", "share", "cortexkit", "mini-magic-context"),
                 exists: true,
                 contextDbSizeBytes: 4,
             },
@@ -616,7 +631,7 @@ describe("Pi doctor", () => {
         const agentDir = setEnv(root, cwd);
         writeHealthyFiles(agentDir, cwd);
         writeFileSync(
-            join(root, ".config", "cortexkit", "magic-context.jsonc"),
+            join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({
                 embedding: {
                     provider: "openai-compatible",
@@ -661,7 +676,7 @@ describe("Pi doctor", () => {
         const agentDir = setEnv(root, cwd);
         writeHealthyFiles(agentDir, cwd);
         writeFileSync(
-            join(root, ".config", "cortexkit", "magic-context.jsonc"),
+            join(root, ".config", "cortexkit", "mini-magic-context.jsonc"),
             JSON.stringify({
                 embedding: {
                     provider: "openai-compatible",

@@ -324,7 +324,7 @@ describe("detectConflicts", () => {
     });
 
     it("returns no conflicts for unrelated plugins", () => {
-        writeProjectConfig(["@cortexkit/opencode-magic-context@latest", "some-other-plugin"]);
+        writeProjectConfig(["@ufoq/opencode-mini-magic-context@latest", "some-other-plugin"]);
         const result = detectConflicts(projectDir);
         expect(result.hasConflict).toBe(false);
     });
@@ -337,7 +337,7 @@ describe("detectConflicts", () => {
     describe("tuple plugin entries (issue #49)", () => {
         it("does not crash when a plugin is defined as a [name, options] tuple", () => {
             writeProjectConfig([
-                "@cortexkit/opencode-magic-context@latest",
+                "@ufoq/opencode-mini-magic-context@latest",
                 ["@plannotator/opencode@latest", { workflow: "plan-agent" }],
             ]);
             expect(() => detectConflicts(projectDir)).not.toThrow();
@@ -345,7 +345,7 @@ describe("detectConflicts", () => {
 
         it("detects DCP conflict when DCP is expressed as a tuple", () => {
             writeProjectConfig([
-                "@cortexkit/opencode-magic-context@latest",
+                "@ufoq/opencode-mini-magic-context@latest",
                 ["@tarquinen/opencode-dcp@latest", {}],
             ]);
             const result = detectConflicts(projectDir);
@@ -365,7 +365,7 @@ describe("detectConflicts", () => {
                     "@plannotator/opencode@latest",
                     { workflow: "plan-agent", planningAgents: ["plan"] },
                 ],
-                "@cortexkit/opencode-magic-context@latest",
+                "@ufoq/opencode-mini-magic-context@latest",
             ]);
             const result = detectConflicts(projectDir);
             expect(result.hasConflict).toBe(false);

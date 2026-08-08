@@ -5,13 +5,10 @@ import {
 	getCompartments,
 	getSessionFacts,
 } from "@magic-context/core/features/magic-context/compartment-storage";
-import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
-import { getMemoriesByProject } from "@magic-context/core/features/magic-context/memory/storage-memory";
 import {
 	getHistorianFailureState,
 	getOverflowState,
 	getPendingPiCompactionMarkerState,
-	getPersistedNoteNudge,
 	loadProtectedTailMeta,
 	recordOverflowDetected,
 	reserveProtectedTailDrainTokens,
@@ -417,14 +414,9 @@ describe("runPiHistorian", () => {
 			userMemoriesEnabled: true,
 		});
 		try {
-			expect(getUserMemoryCandidates(db)).toEqual([
-				expect.objectContaining({
-					content: "User prefers concise answers.",
-					sessionId: "ses-historian",
-					sourceCompartmentStart: 1,
-					sourceCompartmentEnd: 2,
-				}),
-			]);
+			// Mini: the historian publishes compartments only — user observations
+			// are not persisted as memory candidates.
+			expect(getUserMemoryCandidates(db)).toEqual([]);
 		} finally {
 			closeQuietly(db);
 		}
@@ -440,7 +432,7 @@ describe("runPiHistorian", () => {
 			closeQuietly(db);
 		}
 	});
-	it("runs the Pi subagent, parses output, and publishes compartments and facts", async () => {
+	it("runs the Pi subagent, parses output, and publishes compartments", async () => {
 		const { db, runner } = await runHistorianWith({ outputs: [successXml()] });
 		try {
 			expect(runner.run).toHaveBeenCalledTimes(1);
@@ -452,13 +444,9 @@ describe("runPiHistorian", () => {
 					title: "Initial Pi slice",
 				}),
 			]);
-			// v2 faithful fact lifecycle: facts are NOT written to session_facts
-			// (no REPLACE). They flow to project memory via promotion.
+			// Mini: facts are NOT written to session_facts and NOT promoted to
+			// project memory (no memories table). Compartment publication only.
 			expect(getSessionFacts(db, "ses-historian")).toEqual([]);
-			const projectPath = resolveProjectIdentity(process.cwd());
-			expect(
-				getMemoriesByProject(db, projectPath).map((m) => m.content),
-			).toContain("Pi historian facts can promote to memory.");
 		} finally {
 			closeQuietly(db);
 		}
@@ -615,18 +603,19 @@ describe("runPiHistorian", () => {
 				.get("ses-historian") as { harness: string };
 
 			expect(compartmentHarness.harness).toBe("pi");
-			// v2 faithful facts: no session_facts rows are written anymore;
-			// facts are promoted to project memory instead.
+			// Mini: the session_facts table is retired; facts are not stored.
 			const factRow = db
-				.prepare("SELECT harness FROM session_facts WHERE session_id = ?")
-				.get("ses-historian");
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_facts'",
+				)
+				.get();
 			expect(factRow).toBeNull();
 		} finally {
 			closeQuietly(db);
 		}
 	});
 
-	it("fires note-nudge trigger and onPublished after successful publication", async () => {
+	it("fires onPublished after successful publication", async () => {
 		const onPublished = mock(() => undefined);
 		const { db } = await runHistorianWith({
 			outputs: [successXml()],
@@ -634,9 +623,6 @@ describe("runPiHistorian", () => {
 		});
 		try {
 			expect(onPublished).toHaveBeenCalledTimes(1);
-			expect(getPersistedNoteNudge(db, "ses-historian").triggerPending).toBe(
-				true,
-			);
 		} finally {
 			closeQuietly(db);
 		}
@@ -659,17 +645,13 @@ describe("runPiHistorian", () => {
 			expect(
 				loadProtectedTailMeta(db, "ses-historian").priorBoundaryOrdinal,
 			).toBe(3);
-			const projectPath = resolveProjectIdentity(process.cwd());
-			expect(
-				getMemoriesByProject(db, projectPath).map((memory) => memory.content),
-			).toContain("Pi durable fact survives registration outage.");
+			// Mini: historian_runs telemetry is not persisted (recordHistorianRun
+			// is a no-op), so no rows are ever written.
 			expect(
 				db
-					.prepare(
-						"SELECT status FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-					)
+					.prepare("SELECT status FROM historian_runs WHERE session_id = ?")
 					.get("ses-historian"),
-			).toEqual({ status: "success" });
+			).toBeNull();
 		} finally {
 			closeQuietly(db);
 		}
@@ -704,7 +686,6 @@ describe("runPiHistorian", () => {
 	});
 
 	it("downgrades forced final keep on token-capped chunks so discard-last healing still applies", async () => {
-		const projectPath = resolveProjectIdentity(process.cwd());
 		const longMessages = rawMessages(10).map((message) => ({
 			...message,
 			parts: [
@@ -729,14 +710,11 @@ describe("runPiHistorian", () => {
 		try {
 			// The downgrade proof is the HEALING: an un-downgraded forced keep
 			// would persist both compartments. The token-capped chunk instead
-			// drops the provisional tail, and discard-last runs skip unanchored
-			// promotion by long-standing design (the discarded range re-reads
-			// next iteration; reworded facts would double-store).
+			// drops the provisional tail.
 			expect(getCompartments(midLoop.db, "ses-historian")).toHaveLength(1);
 			expect(getCompartments(midLoop.db, "ses-historian")[0]?.endMessage).toBe(
 				2,
 			);
-			expect(getMemoriesByProject(midLoop.db, projectPath)).toEqual([]);
 		} finally {
 			closeQuietly(midLoop.db);
 		}
@@ -747,25 +725,20 @@ describe("runPiHistorian", () => {
 		});
 		try {
 			expect(getCompartments(finalChunk.db, "ses-historian")).toHaveLength(1);
-			expect(getMemoriesByProject(finalChunk.db, projectPath)).toEqual([]);
 		} finally {
 			closeQuietly(finalChunk.db);
 		}
 	});
 
-	it("promotes memories only when memoryEnabled and autoPromote allow it", async () => {
-		const projectPath = resolveProjectIdentity(process.cwd());
+	it("does not promote facts to memories regardless of memoryEnabled/autoPromote", async () => {
 		const allowed = await runHistorianWith({
 			outputs: [successXml("Promote this Pi fact.")],
 			memoryEnabled: true,
 			autoPromote: true,
 		});
 		try {
-			expect(
-				getMemoriesByProject(allowed.db, projectPath).map(
-					(memory) => memory.content,
-				),
-			).toContain("Promote this Pi fact.");
+			// Mini: the historian publishes compartments only — no fact promotion.
+			expect(getCompartments(allowed.db, "ses-historian")).toHaveLength(1);
 		} finally {
 			closeQuietly(allowed.db);
 		}
@@ -776,7 +749,7 @@ describe("runPiHistorian", () => {
 			autoPromote: true,
 		});
 		try {
-			expect(getMemoriesByProject(blocked.db, projectPath)).toEqual([]);
+			expect(getCompartments(blocked.db, "ses-historian")).toHaveLength(1);
 		} finally {
 			closeQuietly(blocked.db);
 		}
@@ -810,11 +783,10 @@ describe("runPiHistorian", () => {
 					2,
 					expect.not.objectContaining({ fallbackModels: expect.anything() }),
 				);
-				// Editor output won — the promoted fact is from the editor.
-				const projectPath = resolveProjectIdentity(process.cwd());
-				expect(
-					getMemoriesByProject(db, projectPath).map((m) => m.content),
-				).toContain("Edited fact replaced the draft.");
+				// Editor output won the publish — compartments reflect the editor pass.
+				expect(getCompartments(db, "ses-historian")).toEqual([
+					expect.objectContaining({ title: "Initial Pi slice" }),
+				]);
 			} finally {
 				closeQuietly(db);
 			}
@@ -829,11 +801,6 @@ describe("runPiHistorian", () => {
 			});
 			try {
 				expect(runner.run).toHaveBeenCalledTimes(2);
-				// Draft fact is promoted despite editor failure (no data loss).
-				const projectPath = resolveProjectIdentity(process.cwd());
-				expect(
-					getMemoriesByProject(db, projectPath).map((m) => m.content),
-				).toContain("Original draft fact.");
 				// Compartments still persisted.
 				expect(getCompartments(db, "ses-historian")).toEqual([
 					expect.objectContaining({ title: "Initial Pi slice" }),

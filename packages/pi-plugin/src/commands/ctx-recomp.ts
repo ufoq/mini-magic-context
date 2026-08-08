@@ -312,7 +312,7 @@ function executeRecompUpgradeStub(
 		"## Magic Recomp Upgrade",
 		"",
 		`Found ${legacyCount} legacy compartment${legacyCount === 1 ? "" : "s"} for this session.`,
-		"The `--upgrade` flag is deprecated. Run `/ctx-session-upgrade` to upgrade this session.",
+		"The `--upgrade` flag is no longer supported.",
 	].join("\n");
 }
 

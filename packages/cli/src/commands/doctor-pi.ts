@@ -24,10 +24,7 @@ import {
     hasUserConfigLocationMigrationRefusal,
     migrateConfigLocationsForCli,
 } from "../lib/config-location-migration";
-import {
-    openExistingContextDatabase,
-    openExistingContextDatabaseForMutation,
-} from "../lib/database-access";
+import { openExistingContextDatabase } from "../lib/database-access";
 import { collectDiagnostics } from "../lib/diagnostics-pi";
 import {
     checkLocalEmbeddingRuntimeByResolution,
@@ -56,15 +53,19 @@ import {
 } from "../lib/pi-package-entry";
 import { type PromptIO, promptIO } from "../lib/prompts";
 import { sanitizeDiagnosticEndpoint, sanitizeDiagnosticText } from "../lib/redaction";
-import { runV22BackfillCommands, type V22BackfillCommandArgs } from "../lib/v22-backfill-commands";
 import { writePiSettingsPackage } from "./setup-pi";
 
-const PACKAGE_NAME = "@cortexkit/pi-magic-context";
+const PACKAGE_NAME = "@ufoq/pi-mini-magic-context";
+const REMOVED_DOCTOR_FLAGS = new Set([
+    "--check-v22-backfill",
+    "--retry-v22-backfill",
+    "--rekey-v22-dir-identity",
+]);
 // Pi 0.74.0 renamed the npm package scope from `@mariozechner/pi-coding-agent`
 // to `@earendil-works/pi-coding-agent`. Magic Context's peerDependency targets
 // the new scope, so older Pi installs cannot load this extension.
 const MIN_PI_VERSION = "0.74.0";
-const ROW_COUNT_TABLES = ["tags", "compartments", "memories", "notes", "dream_runs"];
+const ROW_COUNT_TABLES = ["tags", "compartments", "session_meta"];
 
 type CheckStatus = "pass" | "warn" | "fail" | "info";
 
@@ -101,7 +102,7 @@ interface DoctorDeps {
     spawnSync: typeof spawnSync;
 }
 
-export interface RunDoctorOptions extends V22BackfillCommandArgs {
+export interface RunDoctorOptions {
     force?: boolean;
     issue?: boolean;
     help?: boolean;
@@ -141,15 +142,6 @@ function printDoctorHelp(): void {
     console.log("    magic-context-pi doctor          Run health checks");
     console.log("    magic-context-pi doctor --force  Repair safe issues, then re-check");
     console.log("    magic-context-pi doctor --issue  Create a sanitized bug report");
-    console.log(
-        "    magic-context-pi doctor --check-v22-backfill  Show v22 memory backfill status",
-    );
-    console.log(
-        "    magic-context-pi doctor --retry-v22-backfill  Retry failed v22 memory backfill rows",
-    );
-    console.log(
-        "    magic-context-pi doctor --rekey-v22-dir-identity <path>  Re-key legacy dir identity rows",
-    );
     console.log("    magic-context-pi doctor --help   Show this help");
     console.log("");
 }
@@ -642,7 +634,9 @@ async function runHealthChecks(options: {
             userRaw ?? undefined,
         );
     }
-    if (mergedEmbedding.provider === "openai-compatible") {
+    if (mergedEmbedding.provider === "off") {
+        add(results, "info", "Embedding provider disabled — semantic journal search is off");
+    } else if (mergedEmbedding.provider === "openai-compatible") {
         const endpoint =
             typeof mergedEmbedding.endpoint === "string" ? mergedEmbedding.endpoint.trim() : "";
         const model = typeof mergedEmbedding.model === "string" ? mergedEmbedding.model.trim() : "";
@@ -682,8 +676,6 @@ async function runHealthChecks(options: {
                 );
             }
         }
-    } else if (loadedConfig.config.embedding.provider === "off") {
-        add(results, "info", "Embedding provider disabled");
     } else {
         // Local (default) provider: verify the native ONNX runtime
         // (onnxruntime-node) actually resolves + has its platform binary. On
@@ -784,7 +776,7 @@ async function runHealthChecks(options: {
         add(results, "info", `No plugin log file yet at ${logPath}`);
     }
 
-    // Historian dumps now live per-project under `<dir>/.cortexkit/magic-context/historian/`
+    // Historian dumps now live per-project under `<dir>/.cortexkit/mini-magic-context/historian/`
     // and are surfaced grouped by project. The legacy harness-scoped tmp-dir
     // layout is still listed when no project-local dumps exist (older plugin
     // versions or fresh installs).
@@ -829,7 +821,7 @@ function writeDefaultMagicContextConfig(path: string): void {
     mkdirSync(dirname(path), { recursive: true });
     const config = {
         $schema:
-            "https://raw.githubusercontent.com/cortexkit/magic-context/master/assets/magic-context.schema.json",
+            "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
         ...MagicContextConfigSchema.parse({}),
     };
     writeFileAtomic(path, `${stringifyJsonc(config, null, 2)}\n`);
@@ -957,7 +949,7 @@ async function runIssueFlow(options: {
                         "issue",
                         "create",
                         "-R",
-                        "cortexkit/magic-context",
+                        "ufoq/mini-magic-context",
                         "--title",
                         `[pi] ${title}`,
                         "--body-file",
@@ -980,7 +972,7 @@ async function runIssueFlow(options: {
 
         console.log(bundled.bodyMarkdown);
         options.prompts.log.info(
-            `Open https://github.com/cortexkit/magic-context/issues/new and attach ${bundled.path}`,
+            `Open https://github.com/ufoq/mini-magic-context/issues/new and attach ${bundled.path}`,
         );
         options.prompts.outro("Issue report ready");
         return 0;
@@ -1006,29 +998,6 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<number>
 
     if (options.issue) {
         return runIssueFlow({ cwd, prompts, deps });
-    }
-
-    let v22Db: ReturnType<typeof openExistingContextDatabase> = null;
-    const v22Result = await runV22BackfillCommands(
-        {
-            name: "Pi",
-            openDatabase: (readonly = true) => {
-                const dbPath = join(getMagicContextStorageDir(), "context.db");
-                v22Db = readonly
-                    ? openExistingContextDatabase(dbPath, { readonly: true })
-                    : openExistingContextDatabaseForMutation(dbPath);
-                return v22Db;
-            },
-            closeDatabase: () => {
-                v22Db?.close();
-                v22Db = null;
-            },
-            log: prompts.log,
-        },
-        options,
-    );
-    if (v22Result.handled) {
-        return v22Result.exitCode;
     }
 
     prompts.intro("Magic Context for Pi Doctor");
@@ -1069,30 +1038,17 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<number>
     return first.fail > 0 ? 1 : 0;
 }
 
-function valueAfter(args: string[], flag: string): string | null {
-    const index = args.indexOf(flag);
-    if (index === -1) return null;
-    // Reject a flag-shaped value: `--rekey-v22-dir-identity --force` must NOT
-    // consume `--force` as the project path. Returning null drops the option
-    // (parseDoctorArgs gates on `!== null`) so the doctor proceeds normally
-    // instead of rekeying against a bogus `dir:<hash of cwd/--force>` identity.
-    const next = args[index + 1];
-    if (next === undefined || next.startsWith("--")) return null;
-    return next;
-}
-
 export function parseDoctorArgs(args: string[]): RunDoctorOptions {
-    const rekeyV22DirIdentity = valueAfter(args, "--rekey-v22-dir-identity");
     return {
         force: args.includes("--force"),
         issue: args.includes("--issue"),
         help: args.includes("--help") || args.includes("-h"),
-        checkV22Backfill: args.includes("--check-v22-backfill"),
-        retryV22Backfill: args.includes("--retry-v22-backfill"),
-        ...(rekeyV22DirIdentity !== null ? { rekeyV22DirIdentity } : {}),
     };
 }
 
 export function doctor(args: string[] = []): Promise<number> {
+    if (args.some((argument) => REMOVED_DOCTOR_FLAGS.has(argument))) {
+        return Promise.resolve(1);
+    }
     return runDoctor(parseDoctorArgs(args));
 }

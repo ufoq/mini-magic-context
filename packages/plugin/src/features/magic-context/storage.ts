@@ -9,50 +9,13 @@ export {
     type SessionFact,
 } from "./compartment-storage";
 export {
-    clearCompressionDepth,
-    getAverageCompressionDepth,
-    getMaxCompressionDepth,
-    incrementCompressionDepth,
-} from "./compression-depth-storage";
-export {
-    AUTHORITY_DOMAINS,
-    type AuthorityDomain,
-    type AuthorityManagedMarker,
-    type AuthorityModuleClient,
-    type AuthorityState,
-    type AuthorityStatus,
-    applyMirrorPage,
-    type ChangefeedPage,
-    type ChangefeedRow,
-    ensureContextStoreUuid,
-    getAuthorityManagedMarker,
-    getContextStoreUuid,
-    getMirrorCursor,
-    installAuthorityManagedMarker,
-    listAuthorityManagedMarkers,
-    type PrepareAuthorityArgs,
-    prepareAuthority,
-    pullAndApplyMirrorPage,
-    reconcileAuthorityMarker,
-    removeAuthorityManagedMarker,
-} from "./context-authority";
-export {
     clearIndexedMessages,
     deleteIndexedMessage,
 } from "./message-index";
-export { runMigrations } from "./migrations";
 export {
     computeProjectDocsHash,
     readProjectDocsCanonical,
 } from "./project-docs-hash";
-export {
-    normalizeStoredProjectPath,
-    ProjectIdentityError,
-    type ProjectIdentityErrorClass,
-    resolveProjectIdentity,
-    resolveProjectIdentityStrict,
-    storedPathBelongsToIdentity,
-} from "./project-identity";
 export {
     type CloneCompartmentRow,
     type CloneSessionStateFilter,
@@ -77,23 +40,6 @@ export {
     schemaVersionIsSupported,
     setSqlitePragmaConfig,
 } from "./storage-db";
-export {
-    beginSynapseBatchLedger,
-    type EmbeddingMeasurementInput,
-    type EmbeddingMeasurementRow,
-    finishSynapseBatchLedger,
-    listEmbeddingMeasurements,
-    normalizedQueryHash,
-    recordEmbeddingMeasurement,
-    type SynapseBatchLedgerInput,
-} from "./storage-embedding-measurements";
-export {
-    deleteIdentityRekeyMap,
-    getIdentityRekeyMap,
-    type IdentityRekeyMapRow,
-    listIdentityRekeyMaps,
-    upsertIdentityRekeyMap,
-} from "./storage-identity-rekey-map";
 export {
     clearM0MutationsForSession,
     deleteM0Mutation,
@@ -248,7 +194,6 @@ export {
     queuePendingOp,
     removePendingOp,
 } from "./storage-ops";
-export * from "./storage-primers";
 export {
     bumpProjectMemoryEpoch,
     bumpProjectUserProfileVersion,
@@ -264,15 +209,6 @@ export {
     replaceSourceContent,
     saveSourceContent,
 } from "./storage-source";
-export {
-    getSubagentInvocations,
-    getSubagentTotalsBySubagent,
-    recordSubagentInvocation,
-    type SubagentInvocationInput,
-    type SubagentInvocationRow,
-    type SubagentKind,
-    type SubagentTotals,
-} from "./storage-subagent-invocations";
 export {
     type ActiveTagTokenAggregate,
     AGE_RECLAIM_MIN_TOKENS,
@@ -310,15 +246,6 @@ export {
     updateTagMessageId,
     updateTagStatus,
 } from "./storage-tags";
-export {
-    clearV22BackfillFailures,
-    deleteV22BackfillFailure,
-    getV22BackfillFailure,
-    listV22BackfillFailures,
-    recordV22BackfillFailure,
-    type V22BackfillErrorClass,
-    type V22BackfillFailureRow,
-} from "./storage-v22-backfill-failures";
 export {
     bumpEpochsForWorkspaceMemberSet,
     bumpEpochsForWorkspaceMembers,

@@ -25,42 +25,17 @@
  *     historyRefreshSessions signal.
  */
 
-import {
-	getMaxMemoryIdForProjects,
-	getMemoriesByProject,
-	getMemoriesByProjects,
-	readNewMemoriesForM1Union,
-} from "@magic-context/core/features/magic-context/memory/storage-memory";
 import type { Memory } from "@magic-context/core/features/magic-context/memory/types";
-import { resolveMuralWire } from "@magic-context/core/features/magic-context/mural/render-trigger";
-import type { MuralWireOptions } from "@magic-context/core/features/magic-context/mural/resolve-mural";
 import {
 	type ContextDatabase,
 	clearCachedM0M1,
-	escapeXmlContent,
-	GLOBAL_USER_PROFILE_PROJECT_PATH,
 	getCompartments,
 	getMaxM0MutationId,
-	getMaxMemoryMutationId,
-	getMaxMemoryMutationIdForProjects,
-	getMemoryMutationsForRender,
-	getMemoryMutationsForRenderByProjects,
 	getOrCreateSessionMeta,
-	getProjectState,
 	persistCachedM0,
 	readProjectDocsCanonical,
 } from "@magic-context/core/features/magic-context/storage";
-import {
-	getActiveUserMemories,
-	type UserMemory,
-} from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
-import {
-	computeWorkspaceEpochFingerprint,
-	expandWorkspaceIdentitySetWithAliases,
-	resolveWorkspaceIdentitySet,
-	resolveWorkspaceShareCategories,
-	sourceNameForMemory,
-} from "@magic-context/core/features/magic-context/workspaces";
+import type { UserMemory } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import {
 	COMPARTMENT_RENDER_EPOCH,
 	decodeCachedM0UpgradeIdentity,
@@ -73,16 +48,7 @@ import {
 	renderDecayedCompartments,
 } from "@magic-context/core/hooks/magic-context/decay-render";
 import {
-	DEFAULT_MEMORY_BUDGET_TOKENS,
-	DEFAULT_USER_PROFILE_BUDGET_TOKENS,
-	type MemoryRenderOptions,
-	type PreparedCompartmentInjection,
-	prepareCompartmentInjection,
-	renderMemoryBlockV2,
 	stripMemoryMuralBlock,
-	trimMemoriesToBudgetV2,
-	trimUserMemoriesToBudget,
-	trimWorkspaceMemoriesToBudgetV2,
 	type WorkspaceRenderContext,
 } from "@magic-context/core/hooks/magic-context/inject-compartments";
 
@@ -114,6 +80,29 @@ type PiToolResultMessage = {
 	timestamp?: number;
 };
 type PiAgentMessage = PiUserMessage | PiAssistantMessage | PiToolResultMessage;
+
+/** Wire options for the m0 mural-image fold: whether the feature is on, whether
+ *  the fold's model accepts images, and (when both hold) the rendered data URL
+ *  plus its content hash. Mirrors the type previously imported from the removed
+ *  `mural/resolve-mural` module. */
+interface PiMuralWireOptions {
+	enabled: boolean;
+	supportsVision: boolean;
+	dataUrl?: string;
+	contentHash?: string;
+}
+
+function emptyWorkspaceRenderContextPi(): WorkspaceRenderContext {
+	return {
+		identities: [],
+		expandedIdentities: [],
+		ownIdentities: [],
+		shareCategories: null,
+		namesByIdentity: new Map(),
+		canonicalIdentityByStoredPath: new Map(),
+		isWorkspaced: false,
+	};
+}
 
 /**
  * Resolve the cross-pass-stable id for the i-th Pi message.
@@ -164,7 +153,7 @@ function resolveStableId(
  * local to the projection and we map the resulting cutoff back to Pi
  * messages ourselves.
  */
-function buildMessageLikeProjection(
+function _buildMessageLikeProjection(
 	piMessages: PiAgentMessage[],
 	entryIds: readonly (string | undefined)[] | undefined,
 ): MessageLike[] {
@@ -381,7 +370,7 @@ export const __test = {
  *
  * Returns true when an injection happened.
  */
-function injectHistoryBlockIntoFirstUserMessage(
+function _injectHistoryBlockIntoFirstUserMessage(
 	piMessages: PiAgentMessage[],
 	historyBlock: string,
 ): boolean {
@@ -490,22 +479,6 @@ function historySliceTokensPi(m0Text: string): number {
 	return slice ? estimateTokens(slice) : 0;
 }
 
-/**
- * Fail-open wrapper around getActiveUserMemories (parity with OpenCode's
- * safeGetActiveUserMemories). On a DB that predates the user_memories table
- * (unmigrated / partially-initialized), the raw call throws "no such table:
- * user_memories"; OpenCode degrades to an empty profile, so Pi must too —
- * otherwise m[0] materialization crashes the whole transform on such DBs.
- */
-function safeGetActiveUserMemoriesPi(db: ContextDatabase): UserMemory[] {
-	try {
-		return getActiveUserMemories(db);
-	} catch (error) {
-		if (String(error).includes("no such table: user_memories")) return [];
-		throw error;
-	}
-}
-
 export interface PiM0M1State {
 	sessionId: string;
 	projectIdentity: string;
@@ -535,7 +508,7 @@ export interface PiM0M1State {
 	muralEnabled?: boolean;
 	/** Explicit mural wire options for tests. When set, skips on-demand resolve
 	 *  during HARD materialization (mirrors OpenCode `M0M1RenderOptions.mural`). */
-	mural?: MuralWireOptions;
+	mural?: PiMuralWireOptions;
 }
 
 const EMPTY_PI_PROJECT_DOCS: PiProjectDocsRender = {
@@ -547,83 +520,6 @@ function readProjectDocsForPiM0(state: PiM0M1State): PiProjectDocsRender {
 	return state.injectDocs !== false
 		? readProjectDocsCanonical(state.projectDirectory)
 		: EMPTY_PI_PROJECT_DOCS;
-}
-
-/**
- * The project path used for MEMORY reads only. Returns undefined when
- * `memory.enabled=false`, so every memory read short-circuits to its empty
- * value (mirrors OpenCode passing `projectPath: undefined`). Project docs use
- * the independent injectDocs flag.
- */
-function memoryProjectPath(state: PiM0M1State): string | undefined {
-	return state.memoryEnabled === false ? undefined : state.projectIdentity;
-}
-
-function resolveWorkspaceRenderContextPi(
-	state: PiM0M1State,
-	db: ContextDatabase,
-): WorkspaceRenderContext {
-	const memPath = memoryProjectPath(state);
-	if (!memPath) {
-		return {
-			identities: [],
-			expandedIdentities: [],
-			ownIdentities: [],
-			shareCategories: null,
-			namesByIdentity: new Map(),
-			canonicalIdentityByStoredPath: new Map(),
-			isWorkspaced: false,
-		};
-	}
-	const identitySet = resolveWorkspaceIdentitySet(db, memPath);
-	const isWorkspaced = identitySet.identities.length > 1;
-	const expanded = expandWorkspaceIdentitySetWithAliases(
-		db,
-		identitySet.identities,
-	);
-	const expandedIdentities = isWorkspaced
-		? expanded.expandedIdentities
-		: identitySet.identities;
-	const canonicalIdentityByStoredPath = isWorkspaced
-		? expanded.canonicalIdentityByStoredPath
-		: new Map(identitySet.identities.map((identity) => [identity, identity]));
-	let ownIdentities = expandedIdentities.filter(
-		(identity) => canonicalIdentityByStoredPath.get(identity) === memPath,
-	);
-	if (ownIdentities.length === 0 && expandedIdentities.includes(memPath)) {
-		ownIdentities = [memPath];
-	}
-	return {
-		identities: identitySet.identities,
-		expandedIdentities,
-		ownIdentities,
-		shareCategories: isWorkspaced
-			? resolveWorkspaceShareCategories(db, memPath)
-			: null,
-		namesByIdentity: identitySet.namesByIdentity,
-		canonicalIdentityByStoredPath,
-		isWorkspaced,
-	};
-}
-
-function sourceNamesForPiMemories(args: {
-	memories: readonly Memory[];
-	projectPath?: string;
-	workspace: WorkspaceRenderContext;
-}): Map<number, string> | undefined {
-	if (!args.projectPath || !args.workspace.isWorkspaced) return undefined;
-	const names = new Map<number, string>();
-	for (const memory of args.memories) {
-		const source = sourceNameForMemory(
-			memory.projectPath,
-			args.projectPath,
-			args.workspace.identities,
-			args.workspace.namesByIdentity,
-			args.workspace.canonicalIdentityByStoredPath,
-		);
-		if (source) names.set(memory.id, source);
-	}
-	return names.size > 0 ? names : undefined;
 }
 
 export interface PiM0SnapshotMarkers {
@@ -713,7 +609,7 @@ function rememberPiMuralPayload(
 
 function rememberPiMural(
 	sessionId: string,
-	mural: MuralWireOptions | undefined,
+	mural: PiMuralWireOptions | undefined,
 ): void {
 	rememberPiMuralPayload(
 		sessionId,
@@ -722,7 +618,7 @@ function rememberPiMural(
 	);
 }
 
-function muralForWire(sessionId: string): MuralWireOptions | undefined {
+function muralForWire(sessionId: string): PiMuralWireOptions | undefined {
 	const cached = cachedMuralBySession.get(sessionId);
 	if (!cached?.dataUrl) return undefined;
 	return {
@@ -738,28 +634,6 @@ function piImageFromDataUrl(dataUrl: string): PiImageContent | null {
 	const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(dataUrl);
 	if (!match) return null;
 	return { type: "image", mimeType: match[1], data: match[2] };
-}
-
-/**
- * Resolve mural wire options for a HARD fold. Explicit test `state.mural` wins;
- * otherwise gate on `muralEnabled` + vision capability via resolveMuralWire.
- * Returns undefined when the feature is off so renderM0Pi skips the block.
- */
-function resolveMuralForM0Pi(
-	state: PiM0M1State,
-	db: ContextDatabase,
-	modelKey: string,
-	budgetTokens: number,
-): MuralWireOptions | undefined {
-	if (state.mural) return state.mural;
-	if (!state.muralEnabled) return undefined;
-	return resolveMuralWire(
-		db,
-		memoryProjectPath(state),
-		modelKey,
-		true,
-		budgetTokens,
-	);
 }
 
 function cachedInjectionTokenCounts(
@@ -1006,20 +880,6 @@ function readCurrentMarkersFromCompartments(
 	compartments: readonly PiCompartment[],
 	projectDocsHash?: string,
 ): PiM0SnapshotMarkers {
-	const memPath = memoryProjectPath(state);
-	const workspace = resolveWorkspaceRenderContextPi(state, db);
-	const maxMemoryId = memPath
-		? workspace.isWorkspaced
-			? getMaxMemoryIdForProjects(
-					db,
-					workspace.expandedIdentities,
-					workspace.ownIdentities,
-					workspace.shareCategories,
-				)
-			: getMaxMemoryIdForProjects(db, [memPath])
-		: 0;
-	const projectState = memPath ? getProjectState(db, memPath) : undefined;
-	const globalState = getProjectState(db, GLOBAL_USER_PROFILE_PROJECT_PATH);
 	return {
 		// reduce, not Math.max(...spread): a project with very many
 		// compartments/memories (100K+) blows the call-stack arg limit and
@@ -1033,21 +893,12 @@ function readCurrentMarkersFromCompartments(
 						EMPTY_MAX_COMPARTMENT_SEQ,
 					)
 				: EMPTY_MAX_COMPARTMENT_SEQ,
-		maxMemoryId,
+		maxMemoryId: 0,
 		maxMutationId: getMaxM0MutationId(db, state.sessionId) ?? 0,
-		maxMemoryMutationId: memPath
-			? workspace.isWorkspaced
-				? (getMaxMemoryMutationIdForProjects(
-						db,
-						workspace.expandedIdentities,
-					) ?? 0)
-				: (getMaxMemoryMutationId(db, memPath) ?? 0)
-			: 0,
-		projectMemoryEpoch: projectState?.projectMemoryEpoch ?? 0,
-		workspaceFingerprint: workspace.isWorkspaced
-			? computeWorkspaceEpochFingerprint(db, workspace.identities)
-			: null,
-		projectUserProfileVersion: globalState?.projectUserProfileVersion ?? 0,
+		maxMemoryMutationId: 0,
+		projectMemoryEpoch: 0,
+		workspaceFingerprint: null,
+		projectUserProfileVersion: 0,
 		projectDocsHash:
 			projectDocsHash ?? readProjectDocsForPiM0(state).canonicalHash,
 		sessionFactsVersion: getSessionFactsVersion(db, state.sessionId),
@@ -1190,140 +1041,43 @@ export function mustMaterializePi(
 	return { value: false, reason: null };
 }
 
-function renderUserProfileBlock(
-	db: ContextDatabase,
-	wrapper = "user-profile",
-	memoriesOverride?: UserMemory[],
-): string {
-	const memories = memoriesOverride ?? safeGetActiveUserMemoriesPi(db);
-	if (memories.length === 0) return "";
-	return `<${wrapper}>\n${memories
-		.map((memory) => `- ${escapeXmlContent(memory.content)}`)
-		.join("\n")}\n</${wrapper}>`;
-}
-
 export function renderM0Pi(
 	state: PiM0M1State,
 	db: ContextDatabase,
 	projectDocs = readProjectDocsForPiM0(state).renderedBlock,
 	decayPressureMultiplier = 1,
-	// Atomic-snapshot override: when materializeM0Pi reads markers + memories in
-	// one transaction, it passes the SAME memory set here so the rendered m[0]
-	// can't include a memory whose id is above the persisted maxMemoryId watermark
-	// (which would duplicate it across the m[0]/m[1] split). Mirrors OpenCode,
-	// where renderM0 takes memories as a parameter rather than re-reading.
+	// Mini: memory/user-profile/mural rendering is removed from m[0]. The
+	// signature keeps the legacy params for test/typecheck compatibility but
+	// they are ignored.
 	memoriesOverride?: Memory[],
 	compartmentsOverride?: PiCompartment[],
 	userProfileOverride?: UserMemory[],
 	workspaceOverride?: WorkspaceRenderContext,
-	/** Optional mural wire options (HARD fold only). When vision-capable, emits
-	 *  the `<memory-mural>` marker block; the PNG rides as a separate image part. */
 	mural?: { enabled: boolean; supportsVision: boolean; dataUrl?: string },
 ): string {
-	const memPath = memoryProjectPath(state);
-	const workspace =
-		workspaceOverride ?? resolveWorkspaceRenderContextPi(state, db);
-	const allMemories =
-		memoriesOverride ??
-		(memPath
-			? workspace.isWorkspaced
-				? getMemoriesByProjects(
-						db,
-						workspace.expandedIdentities,
-						["active", "permanent"],
-						Date.now(),
-						workspace.ownIdentities,
-						workspace.shareCategories,
-					)
-				: getMemoriesByProject(db, memPath, ["active", "permanent"])
-			: []);
-	// Use the V2 trim + render helpers (shared with OpenCode) so both harnesses
-	// emit the same category-grouped `#id: fact` bytes and use the same
-	// permanent-first / importance-DESC selection. A divergent shape here would
-	// put different bytes on the wire between OpenCode and Pi.
-	// Always trim with the default memory-budget fallback (matching OpenCode),
-	// not gated on a truthy injectionBudgetTokens — an unset budget must NOT mean
-	// "render every memory untrimmed", which would grow m[0] without bound.
-	const memoryRenderOptions: MemoryRenderOptions = {
-		sourceNameByMemoryId: sourceNamesForPiMemories({
-			memories: allMemories,
-			projectPath: memPath,
-			workspace,
-		}),
-	};
-	const memories =
-		allMemories.length > 0
-			? workspace.isWorkspaced
-				? trimWorkspaceMemoriesToBudgetV2(
-						state.sessionId,
-						allMemories,
-						state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS,
-						workspace,
-						memoryRenderOptions,
-					).renderOrder
-				: trimMemoriesToBudgetV2(
-						state.sessionId,
-						allMemories,
-						state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS,
-					).renderOrder
-			: allMemories;
-	const memoryBlock =
-		memories.length > 0
-			? renderMemoryBlockV2(memories, "project-memory", memoryRenderOptions)
-			: undefined;
+	void memoriesOverride;
+	void userProfileOverride;
+	void workspaceOverride;
+	void mural;
 	// v2: decay-render compartments via the shared module (same validated curve
 	// as OpenCode). Facts are NOT rendered (v2 faithful: facts = promoted
-	// memories, surfaced via memoryBlock / <project-memory>).
-	// The decay-pressure multiplier maps to a proportionally tighter effective
-	// budget (lower budget → higher curve pressure → more demotion), keeping the
-	// shared decay-curve as the single source of pressure math — same approach as
-	// OpenCode renderM0. The materialize loop escalates it when m[0] is over budget.
+	// memories). The decay-pressure multiplier maps to a proportionally tighter
+	// effective budget (lower budget → higher curve pressure → more demotion),
+	// keeping the shared decay-curve as the single source of pressure math.
 	const baseHistoryBudget =
 		state.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
 	const decayed = renderDecayedCompartments({
 		compartments: compartmentsOverride ?? getCompartments(db, state.sessionId),
-		// v2: use the HISTORY budget (~60K), not the memory injection budget (~4K).
-		// Falling back to the memory budget would over-demote every compartment.
 		historyBudgetTokens:
 			baseHistoryBudget / Math.max(1, decayPressureMultiplier),
 	});
-	// Sibling-block layout MUST match OpenCode renderM0 exactly (otherwise the
-	// two harnesses put different bytes on the wire for the same state):
-	//   <project-docs>   — sibling
-	//   <user-profile>   — sibling
-	//   <session-history>…decayed COMPARTMENTS ONLY…</session-history>
-	//   <project-memory> — sibling
-	// The <session-history> wrapper contains ONLY the decayed compartments — it
-	// does NOT envelope project-docs / user-profile / project-memory. Sections
-	// joined by "\n\n".
 	const sections: string[] = [];
 	if (projectDocs.length > 0) sections.push(projectDocs);
-	// Baseline user-profile MUST be trimmed to budget, matching OpenCode renderM0.
-	// Rendering all active user memories untrimmed would put different (larger)
-	// bytes on the wire than OpenCode for the same state, and let m[0] grow
-	// without bound as the global user-profile accumulates.
-	const trimmedProfile = trimUserMemoriesToBudget(
-		userProfileOverride ?? safeGetActiveUserMemoriesPi(db),
-		state.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS,
-	);
-	const userProfile = renderUserProfileBlock(
-		db,
-		"user-profile",
-		trimmedProfile,
-	);
-	if (userProfile.length > 0) sections.push(userProfile);
 	sections.push(
 		decayed.length > 0
 			? `<session-history>\n${decayed}\n</session-history>`
 			: "<session-history></session-history>",
 	);
-	if (memoryBlock) sections.push(memoryBlock);
-	// Sibling layout parity with OpenCode renderM0: mural marker after memories.
-	if (mural?.enabled && mural.supportsVision && mural.dataUrl) {
-		sections.push(
-			"<memory-mural>\nThe project memory mural image follows.\n</memory-mural>",
-		);
-	}
 	return sections.join("\n\n").trim();
 }
 
@@ -1333,32 +1087,12 @@ function renderedMemoryIdsForPi(
 	workspace?: WorkspaceRenderContext,
 	db?: ContextDatabase,
 ): number[] {
-	if (memories.length === 0) return [];
-	const resolvedWorkspace =
-		workspace ?? (db ? resolveWorkspaceRenderContextPi(state, db) : undefined);
-	const renderOptions: MemoryRenderOptions = resolvedWorkspace
-		? {
-				sourceNameByMemoryId: sourceNamesForPiMemories({
-					memories,
-					projectPath: memoryProjectPath(state),
-					workspace: resolvedWorkspace,
-				}),
-			}
-		: {};
-	const trimmed = resolvedWorkspace?.isWorkspaced
-		? trimWorkspaceMemoriesToBudgetV2(
-				state.sessionId,
-				[...memories],
-				state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS,
-				resolvedWorkspace,
-				renderOptions,
-			)
-		: trimMemoriesToBudgetV2(
-				state.sessionId,
-				[...memories],
-				state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS,
-			);
-	return trimmed.renderOrder.map((memory) => memory.id);
+	void state;
+	void workspace;
+	void db;
+	// Mini: memory rendering is removed from m[0]/m[1], so no memory ids are
+	// ever rendered. The memory set is always empty in the live path.
+	return memories.map((memory) => memory.id);
 }
 
 /** Raised when the m[0] snapshot changed between the read-markers phase and the
@@ -1396,62 +1130,25 @@ function readFrozenM0InputsPi(
 ): FrozenM0Inputs {
 	// Read every render source and its corresponding watermark as one short DB
 	// transaction. Rendering happens later, but m[0] bytes and m[1] watermarks now
-	// share the same frozen compartments/memories/user-profile set; a concurrent
-	// writer cannot make m[0] include rows that m[1] still considers "new".
-	const memPath = memoryProjectPath(state);
+	// share the same frozen compartment set; a concurrent writer cannot make m[0]
+	// include rows that m[1] still considers "new".
 	const read = db.transaction(() => {
-		const workspace = resolveWorkspaceRenderContextPi(state, db);
+		const workspace = emptyWorkspaceRenderContextPi();
 		const compartments = getCompartments(db, state.sessionId);
-		const memories = memPath
-			? workspace.isWorkspaced
-				? getMemoriesByProjects(
-						db,
-						workspace.expandedIdentities,
-						["active", "permanent"],
-						memoryCutoff,
-						workspace.ownIdentities,
-						workspace.shareCategories,
-					)
-				: getMemoriesByProject(
-						db,
-						memPath,
-						["active", "permanent"],
-						memoryCutoff,
-					)
-			: [];
-		const userProfile = safeGetActiveUserMemoriesPi(db);
-		const projectState = memPath ? getProjectState(db, memPath) : undefined;
-		const globalState = getProjectState(db, GLOBAL_USER_PROFILE_PROJECT_PATH);
+		const memories: Memory[] = [];
+		const userProfile: UserMemory[] = [];
 		const markers: PiM0SnapshotMarkers = {
 			maxCompartmentSeq: compartments.reduce(
 				(max, compartment) =>
 					compartment.sequence > max ? compartment.sequence : max,
 				EMPTY_MAX_COMPARTMENT_SEQ,
 			),
-			maxMemoryId: memPath
-				? workspace.isWorkspaced
-					? getMaxMemoryIdForProjects(
-							db,
-							workspace.expandedIdentities,
-							workspace.ownIdentities,
-							workspace.shareCategories,
-						)
-					: getMaxMemoryIdForProjects(db, [memPath])
-				: 0,
+			maxMemoryId: 0,
 			maxMutationId: getMaxM0MutationId(db, state.sessionId) ?? 0,
-			maxMemoryMutationId: memPath
-				? workspace.isWorkspaced
-					? (getMaxMemoryMutationIdForProjects(
-							db,
-							workspace.expandedIdentities,
-						) ?? 0)
-					: (getMaxMemoryMutationId(db, memPath) ?? 0)
-				: 0,
-			projectMemoryEpoch: projectState?.projectMemoryEpoch ?? 0,
-			workspaceFingerprint: workspace.isWorkspaced
-				? computeWorkspaceEpochFingerprint(db, workspace.identities)
-				: null,
-			projectUserProfileVersion: globalState?.projectUserProfileVersion ?? 0,
+			maxMemoryMutationId: 0,
+			projectMemoryEpoch: 0,
+			workspaceFingerprint: null,
+			projectUserProfileVersion: 0,
 			projectDocsHash: docs.canonicalHash,
 			sessionFactsVersion: getSessionFactsVersion(db, state.sessionId),
 			materializedAt: memoryCutoff ?? Date.now(),
@@ -1487,16 +1184,7 @@ function renderFreshM0PiNonPersisted(
 	frozen.markers.materializedAt = cachedMaterializedAt;
 	const historyBudget =
 		state.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
-	const memoryBudget =
-		state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
-	// Fresh fallback is a last-resort HARD-equivalent render: resolve mural once
-	// so the non-persisted pair still carries the image when the feature is on.
-	const mural = resolveMuralForM0Pi(
-		state,
-		db,
-		frozen.markers.modelKey,
-		memoryBudget,
-	);
+	const mural = undefined;
 	rememberPiMural(state.sessionId, mural);
 	let dpm = 1;
 	let m0 = renderM0Pi(
@@ -1558,30 +1246,16 @@ export function materializeM0Pi(
 	const frozen = readFrozenM0InputsPi(state, db, docs, foldMaterializedAt);
 	const snapshotMarkers = frozen.markers;
 
-	const snapshotMemories = frozen.memories;
 	const snapshotCompartments = frozen.compartments;
-	const snapshotUserProfile = frozen.userProfile;
 	const renderedMemoryIds = renderedMemoryIdsForPi(
 		state,
-		snapshotMemories,
+		frozen.memories,
 		frozen.workspace,
 		db,
 	);
-	// On-demand mural: runs INSIDE the HARD fold only (not on defers). Explicit
-	// test-supplied `state.mural` wins; otherwise resolve from muralEnabled +
-	// this fold's model key. Baked-in cachedMuralBySession replays on defer.
-	const memoryBudget =
-		state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
-	const mural = resolveMuralForM0Pi(
-		state,
-		db,
-		snapshotMarkers.modelKey,
-		memoryBudget,
-	);
-	const frozenMuralDataUrl =
-		mural?.enabled && mural.supportsVision ? (mural.dataUrl ?? null) : null;
-	const frozenMuralHash =
-		mural?.enabled && mural.supportsVision ? (mural.contentHash ?? null) : null;
+	const mural: PiMuralWireOptions | undefined = undefined;
+	const frozenMuralDataUrl = null;
+	const frozenMuralHash = null;
 	// Over-budget tightening loop (matches OpenCode materializeM0): if the
 	// rendered m[0] exceeds the history budget, escalate the decay pressure and
 	// re-render up to 3x so tight budgets demote more aggressively. Without this,
@@ -1592,9 +1266,9 @@ export function materializeM0Pi(
 		db,
 		docs.renderedBlock,
 		decayPressureMultiplier,
-		snapshotMemories,
+		frozen.memories,
 		snapshotCompartments,
-		snapshotUserProfile,
+		frozen.userProfile,
 		frozen.workspace,
 		mural,
 	);
@@ -1612,9 +1286,9 @@ export function materializeM0Pi(
 			db,
 			docs.renderedBlock,
 			decayPressureMultiplier,
-			snapshotMemories,
+			frozen.memories,
 			snapshotCompartments,
-			snapshotUserProfile,
+			frozen.userProfile,
 			frozen.workspace,
 			mural,
 		);
@@ -1771,63 +1445,6 @@ export function materializeM0PiWithRetry(
 	);
 }
 
-function renderMemoryUpdatesBlockPi(args: {
-	db: ContextDatabase;
-	projectPath: string;
-	workspace: WorkspaceRenderContext;
-	afterId: number;
-	renderedMemoryIds: readonly number[];
-}): { block: string; count: number } {
-	if (args.renderedMemoryIds.length === 0) return { block: "", count: 0 };
-
-	const renderedIds = new Set(args.renderedMemoryIds);
-	const mutations = args.workspace.isWorkspaced
-		? getMemoryMutationsForRenderByProjects(
-				args.db,
-				args.workspace.expandedIdentities,
-				args.afterId,
-				args.renderedMemoryIds,
-			)
-		: getMemoryMutationsForRender(
-				args.db,
-				args.projectPath,
-				args.afterId,
-				args.renderedMemoryIds,
-			);
-	if (mutations.length === 0) return { block: "", count: 0 };
-
-	const lines = [
-		"These memories changed since the snapshot below — trust these:",
-	];
-	for (const mutation of mutations) {
-		if (mutation.mutationType === "update") {
-			lines.push(
-				`  <updated id="${mutation.targetMemoryId}">${escapeXmlContent(mutation.newContent ?? "")}</updated>`,
-			);
-			continue;
-		}
-		if (mutation.mutationType === "superseded") {
-			if (
-				mutation.supersededById !== null &&
-				renderedIds.has(mutation.supersededById)
-			) {
-				lines.push(
-					`  <superseded id="${mutation.targetMemoryId}" by="${mutation.supersededById}"/>`,
-				);
-			} else {
-				lines.push(`  <removed id="${mutation.targetMemoryId}"/>`);
-			}
-			continue;
-		}
-		lines.push(`  <removed id="${mutation.targetMemoryId}"/>`);
-	}
-
-	return {
-		block: `<memory-updates>\n${lines.join("\n")}\n</memory-updates>`,
-		count: mutations.length,
-	};
-}
-
 interface RenderM1PiResult {
 	text: string;
 	memoryUpdateCount: number;
@@ -1837,7 +1454,7 @@ function renderM1PiWithMetadata(
 	state: PiM0M1State,
 	db: ContextDatabase,
 	markers: PiM0SnapshotMarkers,
-	renderedMemoryIds: readonly number[],
+	_renderedMemoryIds: readonly number[],
 	// The compartment set the CALLER will use to advance the persisted trim
 	// boundary. When provided, the new-compartments filter renders from this
 	// exact set instead of a fresh live read — so a compartment can never be
@@ -1847,19 +1464,6 @@ function renderM1PiWithMetadata(
 	compartmentsOverride?: readonly PiCompartment[],
 ): RenderM1PiResult {
 	const sections: string[] = [];
-	const workspace = resolveWorkspaceRenderContextPi(state, db);
-
-	const memPath = memoryProjectPath(state);
-	const memoryUpdates = memPath
-		? renderMemoryUpdatesBlockPi({
-				db,
-				projectPath: memPath,
-				workspace,
-				afterId: markers.maxMemoryMutationId,
-				renderedMemoryIds,
-			})
-		: { block: undefined as string | undefined, count: 0 };
-	if (memoryUpdates.block) sections.push(memoryUpdates.block);
 
 	const newCompartments = (
 		compartmentsOverride ?? getCompartments(db, state.sessionId)
@@ -1872,93 +1476,17 @@ function renderM1PiWithMetadata(
 		sections.push(`<new-compartments>\n${body}\n</new-compartments>`);
 	}
 
-	const newMemories = memPath
-		? workspace.isWorkspaced
-			? readNewMemoriesForM1Union(
-					db,
-					workspace.expandedIdentities,
-					markers.maxMemoryId,
-					// Freeze expiry to the m[0] materialization timestamp (parity with
-					// OpenCode readNewMemoriesForM1): defer passes replay the same markers,
-					// so a memory crossing expires_at between passes can't silently shift
-					// m[1].
-					markers.materializedAt,
-					workspace.ownIdentities,
-					workspace.shareCategories,
-				)
-			: getMemoriesByProject(
-					db,
-					memPath,
-					["active", "permanent"],
-					// Freeze expiry to the m[0] materialization timestamp (parity with
-					// OpenCode readNewMemoriesForM1): defer passes replay the same markers,
-					// so a memory crossing expires_at between passes can't silently shift
-					// m[1].
-					markers.materializedAt,
-				).filter((memory) => memory.id > markers.maxMemoryId)
-		: [];
-	if (newMemories.length > 0) {
-		// Trim to 25% of the memory budget and V2-render with the "new-memories"
-		// wrapper — same helper, shape, AND budget cap OpenCode's renderM1 uses.
-		// Without the cap, m[1] grows unbounded as memories accumulate between
-		// m[0] materializations (m[1] is the volatile delta; it must stay small).
-		const memoryBudget =
-			state.injectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
-		const memoryRenderOptions: MemoryRenderOptions = {
-			sourceNameByMemoryId: sourceNamesForPiMemories({
-				memories: newMemories,
-				projectPath: memPath,
-				workspace,
-			}),
-		};
-		const trimmedNewMemories = trimMemoriesToBudgetV2(
-			state.sessionId,
-			newMemories,
-			Math.max(1, Math.floor(memoryBudget * 0.25)),
-			memoryRenderOptions,
-		).renderOrder;
-		const newMemoriesBlock = renderMemoryBlockV2(
-			trimmedNewMemories,
-			"new-memories",
-			memoryRenderOptions,
-		);
-		if (newMemoriesBlock) sections.push(newMemoriesBlock);
-	}
-
-	// new-user-profile delta: when the global user-profile version advanced since
-	// this m[0] baseline was materialized, surface the current profile under a
-	// <new-user-profile> wrapper so freshly promoted user memories reach the agent
-	// in m[1] before the next m[0] materialization folds them into the baseline.
-	// Trimmed to 25% of the user-profile budget (matches OpenCode renderM1).
-	const currentUserProfileVersion =
-		getProjectState(db, GLOBAL_USER_PROFILE_PROJECT_PATH)
-			?.projectUserProfileVersion ?? 0;
-	if (currentUserProfileVersion !== markers.projectUserProfileVersion) {
-		const profileBudget =
-			state.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS;
-		const trimmedProfile = trimUserMemoriesToBudget(
-			safeGetActiveUserMemoriesPi(db),
-			Math.max(1, Math.floor(profileBudget * 0.25)),
-		);
-		const profileBlock = renderUserProfileBlock(
-			db,
-			"new-user-profile",
-			trimmedProfile,
-		);
-		if (profileBlock) sections.push(profileBlock);
-	}
-
 	if (sections.length === 0) {
 		return {
 			text: PI_M1_PLACEHOLDER,
-			memoryUpdateCount: memoryUpdates.count,
+			memoryUpdateCount: 0,
 		};
 	}
 	// Join with "\n" (single newline) to match OpenCode renderM1 exactly — the
 	// m[1] delta bytes must be identical across harnesses.
 	return {
 		text: `<session-history-since>\n${sections.join("\n")}\n</session-history-since>`,
-		memoryUpdateCount: memoryUpdates.count,
+		memoryUpdateCount: 0,
 	};
 }
 
@@ -2607,25 +2135,11 @@ export function injectM0M1Pi(
 		state.sessionId,
 		`injected m[0]/m[1] into Pi messages (${m0.length} + ${m1.length} bytes, materialized=${materialized}${decision.reason ? ` reason=${decision.reason}` : ""})`,
 	);
-	const memPath = memoryProjectPath(state);
-	const workspace = resolveWorkspaceRenderContextPi(state, db);
-	const memoryCount = memPath
-		? workspace.isWorkspaced
-			? getMemoriesByProjects(
-					db,
-					workspace.expandedIdentities,
-					["active", "permanent"],
-					Date.now(),
-					workspace.ownIdentities,
-					workspace.shareCategories,
-				).length
-			: getMemoriesByProject(db, memPath, ["active", "permanent"]).length
-		: 0;
 	return {
 		injected: true,
 		compartmentCount: getCompartments(db, state.sessionId).length,
 		factCount: 0, // v2: facts retired as a render source (facts = promoted memories)
-		memoryCount,
+		memoryCount: 0,
 		skippedVisibleMessages,
 		m0Materialized: materialized,
 		m0Reason: decision.reason,

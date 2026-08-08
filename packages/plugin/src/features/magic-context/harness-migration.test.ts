@@ -8,7 +8,7 @@ import { initializeDatabase } from "./storage-db";
 
 /**
  * Phase 2a regression: every session-scoped table must carry a `harness`
- * column so OpenCode and Pi can share `~/.local/share/cortexkit/magic-context/`
+ * column so OpenCode and Pi can share `~/.local/share/cortexkit/mini-magic-context/`
  * without conflating their session state. Pre-v0.16 rows must transparently
  * become harness='opencode'.
  *

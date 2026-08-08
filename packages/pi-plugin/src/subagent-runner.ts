@@ -200,7 +200,7 @@ function resolveSubagentExtensionEntry(entry: string): string {
 }
 
 const PI_READ_ONLY_BUILTINS = ["read", "grep", "find", "ls"] as const;
-const PI_AFT_READ_TOOLS = ["aft_outline", "aft_zoom", "aft_search"] as const;
+const _PI_AFT_READ_TOOLS = ["aft_outline", "aft_zoom", "aft_search"] as const;
 const PI_HISTORIAN_TOOLS = [...PI_READ_ONLY_BUILTINS, "aft_search"] as const;
 
 /**
@@ -214,20 +214,8 @@ const PI_HISTORIAN_TOOLS = [...PI_READ_ONLY_BUILTINS, "aft_search"] as const;
  * here too. Mismatched agent strings silently disable the elevated
  * action surface.
  */
-const DREAMER_ACTION_AGENTS: ReadonlySet<string> = new Set([
-	"dreamer",
-	"magic-context-dreamer",
-]);
-const SEARCH_ONLY_SUBAGENT_TOOL_AGENTS: ReadonlySet<string> = new Set([
-	"sidekick",
-	"dreamer-retrospective",
-	// Loads the lean extension so ctx_search is REGISTERED (the strict allow-list
-	// only gates an existing registration). Deliberately NOT in
-	// DREAMER_ACTION_AGENTS — that would add ctx_memory, whose mutations bump the
-	// project memory epoch and bust m[0], breaking the primers cache-neutral
-	// contract.
-	"dreamer-primer-investigator",
-]);
+const DREAMER_ACTION_AGENTS: ReadonlySet<string> = new Set();
+const SEARCH_ONLY_SUBAGENT_TOOL_AGENTS: ReadonlySet<string> = new Set();
 
 /**
  * Agents that must run under a HARD tool allow-list (`pi --tools <names>`), not
@@ -247,8 +235,6 @@ const STRICT_TOOL_ALLOWLIST_ENTRIES: readonly (readonly [
 	string,
 	readonly string[],
 ])[] = [
-	["dreamer-retrospective", ["ctx_search"]],
-	["smart-note-compiler", []],
 	// Pi's live historian runner uses this Magic Context-specific id for first
 	// pass, repair, two-pass editor, recomp, and memory-migration prompts. It
 	// summarizes/offloads host-rendered input and may inspect local files, but it
@@ -261,48 +247,6 @@ const STRICT_TOOL_ALLOWLIST_ENTRIES: readonly (readonly [
 	["historian", PI_HISTORIAN_TOOLS],
 	["historian-recomp", PI_HISTORIAN_TOOLS],
 	["historian-editor", PI_HISTORIAN_TOOLS],
-	// Sidekick augments the user's prompt by retrieving memory. It needs the lean
-	// ctx_search registration plus Pi's read-only built-ins for safe local context,
-	// but no write/bash/ctx_memory surface.
-	["sidekick", [...PI_READ_ONLY_BUILTINS, "ctx_search"]],
-	// classify-memories: a pure metadata transform (prompt in → XML out). ZERO
-	// tools — it scores from the memory text and the host applies the columns.
-	["dreamer-classifier", []],
-	// review-user-memories: a pure JSON reviewer of behavioral observations. It
-	// calls NO tools — the host applies its verdict — so zero tools (mirrors the
-	// classifier). Not in any *_SUBAGENT_TOOL_AGENTS set → no extension loaded.
-	["dreamer-reviewer", []],
-	// refresh-primers code investigator: read-only investigation of the CURRENT
-	// source. Pi's own canonical read-only set is {read, grep, find, ls}
-	// (createReadOnlyToolDefinitions), plus ctx_search and the optional AFT read
-	// navigation tools OpenCode grants. NO bash/edit/write and NO ctx_memory.
-	[
-		"dreamer-primer-investigator",
-		[...PI_READ_ONLY_BUILTINS, ...PI_AFT_READ_TOOLS, "ctx_search"],
-	],
-	// map-memories / verify reader: read-only check against the CURRENT LOCAL
-	// source. Same read-only lock as the primer investigator but WITHOUT ctx_search
-	// — these tasks read local code, not cross-session recall. The host applies the
-	// manifest's DB writes, so no ctx_memory is needed.
-	["dreamer-memory-mapper", [...PI_READ_ONLY_BUILTINS, ...PI_AFT_READ_TOOLS]],
-	// maintain-docs: explores the codebase and writes ARCHITECTURE.md/STRUCTURE.md.
-	// All 7 Pi built-ins (read/grep/find/ls + bash/write/edit; git runs via bash),
-	// plus optional AFT read navigation. Deliberately NO ctx_memory/ctx_search — it
-	// edits docs, never the memory store. Not in any *_SUBAGENT_TOOL_AGENTS set, so
-	// the lean extension is never loaded and ctx_memory cannot leak in.
-	[
-		"dreamer-docs",
-		[...PI_READ_ONLY_BUILTINS, "bash", "write", "edit", ...PI_AFT_READ_TOOLS],
-	],
-	// curate (base `dreamer`): memory-pool hygiene via ctx_memory ONLY. It is in
-	// DREAMER_ACTION_AGENTS so the lean extension registers ctx_memory; this
-	// allow-list then strips ALL 7 built-ins, leaving only the extension-provided
-	// ctx_memory (curate never reads code — a separate verify task owns that).
-	["dreamer", ["ctx_memory"]],
-	// Pi dreamer facade default when body.agent is absent (`dreamer/index.ts`).
-	// Same ctx_memory-only lock as `dreamer`; must stay in sync with
-	// DREAMER_ACTION_AGENTS (every member needs a strict entry).
-	["magic-context-dreamer", ["ctx_memory"]],
 ];
 
 const STRICT_TOOL_ALLOWLIST: ReadonlyMap<string, readonly string[]> = new Map(
@@ -320,22 +264,9 @@ const KNOWN_PI_SUBAGENT_AGENTS = [
 	"historian",
 	"historian-recomp",
 	"historian-editor",
-	"sidekick",
-	"dreamer-retrospective",
-	"smart-note-compiler",
-	"dreamer-classifier",
-	"dreamer-reviewer",
-	"dreamer-primer-investigator",
-	"dreamer-memory-mapper",
-	"dreamer-docs",
-	"dreamer",
-	"magic-context-dreamer",
 ] as const;
 
 function inferAccountingSubagent(agent: string): SubagentKind {
-	if (agent.includes("sidekick")) return "sidekick";
-	if (agent.includes("retrospective")) return "dreamer";
-	if (agent.includes("dreamer")) return "dreamer";
 	if (agent.includes("compressor")) return "compressor";
 	if (agent.includes("recomp")) return "recomp";
 	return "historian";
@@ -1557,13 +1488,6 @@ export function buildArgs(
 			DREAMER_ACTION_AGENTS.has(options.agent));
 	if (shouldLoadSubagentExtension) {
 		args.push("--extension", subagentEntryPath);
-
-		// Only dreamer subagents get ctx_memory in the child extension. Sidekick
-		// loads the same entry for ctx_search but must stay read-only. The flag is
-		// read inside the subagent extension via `pi.getFlag(...)`.
-		if (DREAMER_ACTION_AGENTS.has(options.agent)) {
-			args.push("--magic-context-dreamer-actions");
-		}
 	}
 
 	// HARD tool isolation: every Magic Context child runs under either

@@ -1,5 +1,4 @@
 import { embedAndStoreCompartmentChunks } from "../../features/magic-context/compartment-embedding";
-import { insertCompartmentEvents } from "../../features/magic-context/compartment-events";
 import {
     appendCompartments,
     getCompartments,
@@ -17,15 +16,7 @@ export {
 } from "./historian-state-file";
 
 import { isCompartmentLeaseHeld } from "../../features/magic-context/compartment-lease";
-import {
-    embedPromotedFacts,
-    promoteSessionFactsDurable,
-} from "../../features/magic-context/memory";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
-import {
-    getMemoriesByProject,
-    ModuleMemoryAuthorityError,
-} from "../../features/magic-context/memory/storage-memory";
 import {
     clearEmergencyDrainLatch,
     clearEmergencyRecovery,
@@ -47,9 +38,7 @@ import {
     tallyFactsByCategory,
 } from "../../features/magic-context/storage-historian-runs";
 import { updateSessionMeta } from "../../features/magic-context/storage-meta";
-import { insertPrimerCandidates } from "../../features/magic-context/storage-primers";
 import { getLatestHistorianInvocationId } from "../../features/magic-context/storage-subagent-invocations";
-import { insertUserMemoryCandidates } from "../../features/magic-context/user-memory/storage-user-memory";
 import { normalizeSDKResponse } from "../../shared";
 import { describeError } from "../../shared/error-message";
 import { sessionLog } from "../../shared/logger";
@@ -63,8 +52,7 @@ import {
     validateChunkCoverage,
     validateStoredCompartments,
 } from "./compartment-runner-validation";
-import { clearInjectionCache, renderMemoryBlock } from "./inject-compartments";
-import { onNoteTrigger } from "./note-nudger";
+import { clearInjectionCache } from "./inject-compartments";
 import {
     createDefaultBoundarySnapshotForTests,
     hasRunnableCompartmentWindow,
@@ -74,7 +62,6 @@ import {
     validateBoundarySnapshot,
 } from "./protected-tail-boundary";
 import { readSessionChunk } from "./read-session-chunk";
-import { getMessageTimesFromOpenCodeDb } from "./read-session-db";
 import { estimateTokens } from "./read-session-formatting";
 import { buildReferenceBlocks } from "./reference-retrieval";
 import { sendIgnoredMessage } from "./send-session-notification";
@@ -408,28 +395,17 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         deps.onHistorianRunStarted?.();
 
         // v2 bounded reference model (replaces the unbounded existing_state dump):
-        //   - 4 rotating cross-project seeds + last-6 recency compartments (no
-        //     embedding at historian time), built from this session's prior
-        //     compartments.
-        //   - <project-memory> for fact dedup (consolidation-bounded).
-        // No temp-file offload needed — the bounded blocks stay well within
+        //   - last-6 recency compartments (no embedding at historian time), built
+        //     from this session's prior compartments.
+        // No temp-file offload needed — the bounded block stays well within
         // serialization limits.
-        const projectPath = resolveProjectIdentity(directory ?? process.cwd());
-        const memories = getMemoriesByProject(db, projectPath, ["active", "permanent"]);
-        const projectMemory = renderMemoryBlock(memories) ?? "";
-
         const references = buildReferenceBlocks({
-            sessionId,
-            chunkStart: chunk.startIndex,
             sessionCompartments: priorCompartments,
         });
 
         const prompt = buildCompartmentAgentPrompt({
-            seedExamples: references.seedExamples,
             sessionReferences: references.sessionReferences,
-            projectMemory,
             inputSource: `Messages ${chunk.startIndex}-${chunk.endIndex}:\n\n${chunkText}`,
-            memoryEnabled: deps.memoryEnabled !== false,
         });
 
         // Intentional: session.get failure is non-fatal — we fall back to deps.directory
@@ -559,42 +535,20 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         const lastCompartmentEnd = lastNewEnd;
         const lastNewEndMessageId = newCompartments[newCompartments.length - 1]?.endMessageId;
 
-        // Use the RESOLVED session directory for memory project identity, not
+        // Use the RESOLVED session directory for project identity, not
         // raw deps.directory. deps.directory can be empty even
         // when the session has a valid directory (resolved via session.get
-        // above); using it directly made promotion + embedding silently no-op.
+        // above); using it directly made embedding silently no-op.
         const promotionDirectory = sessionDirectory || deps.directory;
 
-        // Unanchored promotion (facts/observations/primers) is skipped in two
-        // distinct weak-boundary cases:
-        //  - discard-last: the provisional tail compartment was dropped, and facts
-        //    are unanchored so persisted-range facts cannot be separated from
-        //    discarded-tail facts; a reworded re-emission next run would double up.
-        //  - forced final keep: a wrapup's actual final chunk persists its
-        //    weak-lookahead tail for coverage, but nothing durable is extracted
-        //    from a boundary the discard-last heuristic would have distrusted.
-        // A wrapup caller may request final weak-lookahead preservation, but the
-        // runner is authoritative: a token-capped chunk (`chunk.hasMore`) still has
-        // more raw history after it, so it must use normal discard-last healing and
-        // promotion.
-        const discardedLast = persistedCompartments.length < emittedCompartments.length;
-        const weakLookaheadFinalCompartment = forceKeepLastCompartmentForChunk;
-        const skipUnanchoredPromotion = discardedLast || weakLookaheadFinalCompartment;
+        const _discardedLast = persistedCompartments.length < emittedCompartments.length;
 
-        // Issue #44: gate promotion behind both `memory.enabled` and
-        // `memory.auto_promote`. Without this, historian unconditionally
-        // wrote project memories (with embeddings) even for users who
-        // explicitly disabled the memory feature in config.
-        // Two distinct gates:
-        //  - embeddingActive: embeddings + project registration fire whenever the
-        //    memory FEATURE is enabled. They are the substrate for ctx_search +
-        //    future dreamer cross-linking and must NOT depend on auto_promote.
-        //  - promotionActive: writing facts as project memories additionally
-        //    requires auto_promote (a user who disabled auto-promotion still wants
-        //    search/embedding, just not auto-written memories).
-        const embeddingActive = !!promotionDirectory && deps.memoryEnabled !== false;
-        const promotionActive = embeddingActive && deps.autoPromote !== false;
-        const promotionProjectIdentity = promotionDirectory
+        // Mini: the historian publishes compartments only — no fact/observation
+        // promotion to project memory and no user-memory/primer candidate writes.
+        // Embeddings over the new compartment chunks are the ctx_search semantic
+        // substrate and stay active regardless of memory state.
+        const embeddingActive = !!promotionDirectory;
+        const embeddingProjectIdentity = promotionDirectory
             ? resolveProjectIdentity(promotionDirectory)
             : "";
 
@@ -602,15 +556,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         // compartment (atCompartment is a 1-based index into the EMITTED list;
         // anything > persistedCompartments.length pointed at the dropped tail).
         // They re-emit next run anchored to the persisted range.
-        const publishableEvents = (validatedPass.events ?? []).filter((e) => {
-            if (typeof e.atCompartment !== "number") return !weakLookaheadFinalCompartment;
-            if (e.atCompartment > persistedCompartments.length) return false;
-            if (weakLookaheadFinalCompartment && e.atCompartment >= emittedCompartments.length) {
-                return false;
-            }
-            return true;
-        });
-        let promotedFactRefs: Array<{ memoryId: number; content: string }> = [];
+        const publishableEvents: [] = [];
         let persistedIds: number[] = [];
 
         // Append new compartments (existing stay untouched in DB) and publish all
@@ -638,60 +584,11 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             appendCompartments(db, sessionId, persistedCompartments);
             // v2 (E2): resolve durable ids for the compartments we just appended.
             // They are the last `persistedCompartments.length` rows by sequence
-            // (appendCompartments inserts at the tail). Used for events anchoring +
-            // embedding. Pure DB read — cheap, no message mutation.
+            // (appendCompartments inserts at the tail). Used for embedding. Pure DB
+            // read — cheap, no message mutation.
             persistedIds = getCompartments(db, sessionId)
                 .slice(-persistedCompartments.length)
                 .map((c) => c.id);
-            // v2 faithful fact lifecycle: facts are NOT a REPLACE-the-whole-list
-            // store anymore. The historian emits only THIS chunk's facts (deduped
-            // against <project-memory> in the prompt); they flow to project memory
-            // via in-transaction durable promotion. session_facts is no longer
-            // written/bumped. Promotion is in the SAME transaction as the boundary
-            // floor below so a crash cannot advance past facts that never became
-            // project memories.
-            if (promotionActive && !skipUnanchoredPromotion) {
-                try {
-                    promotedFactRefs = promoteSessionFactsDurable(
-                        db,
-                        sessionId,
-                        promotionProjectIdentity,
-                        validatedPass.facts ?? [],
-                    );
-                } catch (error) {
-                    if (error instanceof ModuleMemoryAuthorityError) {
-                        // A project flipped back to the TS transform can still have
-                        // MODULE memory authority (authority does not follow the
-                        // transform-mode knob). Fact promotion is a side channel;
-                        // failing the whole publish here blocks history compaction
-                        // entirely, which starves overflow recovery. Skip the facts,
-                        // keep the compartments.
-                        promotedFactRefs = [];
-                        sessionLog(
-                            sessionId,
-                            "fact promotion skipped: project memory is module-managed; compartments publish without facts",
-                        );
-                    } else {
-                        throw error;
-                    }
-                }
-            }
-
-            // v2 (E2): persist historian-extracted events (stored, NOT rendered).
-            // Independent of memory flags — events are a separate corpus for a future
-            // dreamer aggregation feature, not project memory. Best-effort and
-            // re-derivable, so an event failure logs and does NOT abort facts/boundary.
-            if (publishableEvents.length > 0) {
-                try {
-                    insertCompartmentEvents(db, sessionId, publishableEvents, persistedIds);
-                    sessionLog(
-                        sessionId,
-                        `stored ${publishableEvents.length} compartment event(s)`,
-                    );
-                } catch (error) {
-                    sessionLog(sessionId, "failed to store compartment events:", error);
-                }
-            }
 
             queueDropsForCompartmentalizedMessages(db, sessionId, lastCompartmentEnd);
 
@@ -779,8 +676,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             // legacy stays false — incremental publish always produces v2 rows.
         }
 
-        onNoteTrigger(db, sessionId, "historian_complete");
-
         // v2: compute + store raw chunk embeddings (the ctx_search semantic
         // substrate over session history). Fire-and-forget, best-effort, gated by
         // memory flags so a memory-off user never hits the embedding endpoint.
@@ -800,115 +695,16 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                     sessionLog(sessionId, "project registration after publish failed:", error);
                 }
                 try {
-                    await embedPromotedFacts(
-                        db,
-                        sessionId,
-                        promotionProjectIdentity,
-                        promotedFactRefs,
-                    );
-                } catch (error) {
-                    sessionLog(sessionId, "promoted fact embedding dispatch failed:", error);
-                }
-                try {
                     await embedAndStoreCompartmentChunks(
                         db,
                         sessionId,
-                        promotionProjectIdentity,
+                        embeddingProjectIdentity,
                         chunksToEmbed,
                     );
                 } catch (error) {
                     sessionLog(sessionId, "compartment embedding dispatch failed:", error);
                 }
             })();
-        }
-
-        // Store user behavior observations as candidates ONLY when the user-memory
-        // feature is enabled. Without this gate we'd persist behavioral candidates
-        // for users who opted out of user memories entirely (privacy).
-        // Actual final wrapup chunks skip unanchored observations because the kept
-        // tail has weak lookahead; token-capped chunks still promote observations
-        // so facts from a never-re-read persisted range are not lost.
-        if (
-            deps.experimentalUserMemories === true &&
-            !skipUnanchoredPromotion &&
-            validatedPass.userObservations &&
-            validatedPass.userObservations.length > 0
-        ) {
-            try {
-                const lastNew = newCompartments[newCompartments.length - 1];
-                insertUserMemoryCandidates(
-                    db,
-                    validatedPass.userObservations.map((obs) => ({
-                        content: obs,
-                        sessionId,
-                        sourceCompartmentStart: newCompartments[0]?.startMessage,
-                        sourceCompartmentEnd: lastNew?.endMessage,
-                    })),
-                );
-                sessionLog(
-                    sessionId,
-                    `stored ${validatedPass.userObservations.length} user memory candidate(s)`,
-                );
-            } catch (error) {
-                sessionLog(sessionId, "failed to store user memory candidates:", error);
-            }
-        }
-
-        // Primers v1 are recall-only side-table writes (dashboard + ctx_search),
-        // never prompt injection. Use the same actual-final weak-lookahead gate as
-        // facts and observations.
-        if (
-            !skipUnanchoredPromotion &&
-            promotionProjectIdentity &&
-            validatedPass.primerCandidates &&
-            validatedPass.primerCandidates.length > 0
-        ) {
-            try {
-                const firstNew = newCompartments[0];
-                const lastNew = newCompartments[newCompartments.length - 1];
-                // The stable occurrence key intentionally excludes question text;
-                // therefore a source chunk stores at most one candidate occurrence
-                // (its origin-compartment tag is the single tagged origin).
-                const [candidate] = validatedPass.primerCandidates;
-                // Origin-tag: narrow the source to the SPECIFIC compartment the
-                // question came from (refresh-primers seeds its investigation from
-                // that compartment's raw chunk). `originCompartmentIndex` is 1-based
-                // into the emitted list — the SAME convention as <events>
-                // at_compartment. Fall back to the chunk span when untagged or
-                // out of range (loose but non-fatal — never fail the pass).
-                const idx = candidate.originCompartmentIndex;
-                const origin =
-                    typeof idx === "number" && idx >= 1 && idx <= newCompartments.length
-                        ? newCompartments[idx - 1]
-                        : undefined;
-                const startC = origin ?? firstNew;
-                const endC = origin ?? lastNew;
-                const sourceStartMessageId =
-                    startC?.startMessageId || `ordinal:${startC?.startMessage ?? chunk.startIndex}`;
-                const sourceEndMessageId =
-                    endC?.endMessageId || `ordinal:${endC?.endMessage ?? lastCompartmentEnd}`;
-                const times = getMessageTimesFromOpenCodeDb(sessionId, [sourceStartMessageId]);
-                const sourceMessageTime = times.get(sourceStartMessageId) ?? Date.now();
-                const stored = insertPrimerCandidates(db, [
-                    {
-                        projectPath: promotionProjectIdentity,
-                        harness: "opencode",
-                        sessionId,
-                        question: candidate.question,
-                        sourceCompartmentStart: startC?.startMessage,
-                        sourceCompartmentEnd: endC?.endMessage,
-                        sourceStartMessageId,
-                        sourceEndMessageId,
-                        sourceMessageTime,
-                    },
-                ]);
-                sessionLog(
-                    sessionId,
-                    `stored ${stored.length} primer candidate occurrence(s)${origin ? " (origin-tagged)" : " (chunk-span fallback)"}`,
-                );
-            } catch (error) {
-                sessionLog(sessionId, "failed to store primer candidates:", error);
-            }
         }
     } catch (error: unknown) {
         // Historian runs are fail-closed because they update durable compartment state.

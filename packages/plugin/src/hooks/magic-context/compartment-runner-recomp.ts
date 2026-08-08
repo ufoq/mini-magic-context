@@ -108,12 +108,6 @@ export function promoteRecompStagingWithM0Mutation(
         }
 
         db.prepare("DELETE FROM compartments WHERE session_id = ?").run(sessionId);
-        // v2 faithful facts: recomp does NOT write session_facts. Facts are a
-        // promoted-memory concern now, and recomp must not emit facts at all
-        // (re-processing curated memories would degrade them — locked rule).
-        // The renderer no longer reads session_facts, so we clear any legacy
-        // rows for hygiene and never re-insert.
-        db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
         insertRecompCompartmentRows(db, sessionId, staging.compartments, now);
         appendM0Mutation(db, {
             sessionId,
@@ -122,7 +116,6 @@ export function promoteRecompStagingWithM0Mutation(
             queuedAt: now,
         });
         db.prepare("DELETE FROM recomp_compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM recomp_facts WHERE session_id = ?").run(sessionId);
         clearCachedM0M1(db, sessionId);
 
         db.exec("COMMIT");
@@ -270,26 +263,15 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
             // (see final-success path below for rationale). Structural rebuild only.
             void promoted.facts;
 
-            // v2: recompute raw chunk embeddings for the rebuilt compartments.
-            // Recomp deletes + reinserts every compartment, so their chunk
-            // embeddings must be regenerated — otherwise the rebuilt rows have no
-            // embeddings and vanish from ctx_search semantic results. Embedding is
-            // the search substrate (gated on memory-enabled), distinct from fact
-            // promotion (which recomp deliberately skips). Fire-and-forget.
-            if (deps.memoryEnabled !== false) {
-                const projectIdentity = resolveProjectIdentity(sessionDirectory);
-                // Register the project's embedding provider before embedding;
-                // embedBatchForProject silently no-ops for unregistered projects,
-                // so without this the rebuilt rows get no chunk embeddings.
-                await deps.ensureProjectRegistered?.(sessionDirectory, db);
-                const liveCompartments = getCompartments(db, sessionId);
-                const chunksToEmbed = liveCompartments.map((c) => ({
-                    id: c.id,
-                    startMessage: c.startMessage,
-                    endMessage: c.endMessage,
-                }));
-                void embedAndStoreCompartmentChunks(db, sessionId, projectIdentity, chunksToEmbed);
-            }
+            const projectIdentity = resolveProjectIdentity(sessionDirectory);
+            await deps.ensureProjectRegistered?.(sessionDirectory, db);
+            const liveCompartments = getCompartments(db, sessionId);
+            const chunksToEmbed = liveCompartments.map((c) => ({
+                id: c.id,
+                startMessage: c.startMessage,
+                endMessage: c.endMessage,
+            }));
+            void embedAndStoreCompartmentChunks(db, sessionId, projectIdentity, chunksToEmbed);
 
             const lastCompartmentEnd =
                 promoted.compartments[promoted.compartments.length - 1]?.endMessage ?? 0;
@@ -368,28 +350,15 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
                 return `## Magic Recomp — Failed\n\nRecomp stopped because the raw chunk could not be represented safely: ${chunkCoverageError}\n\nNothing was written.`;
             }
 
-            // v2 bounded reference model: 4 rotating seeds + last-6 recency
-            // (the compartments built so far in THIS recomp run provide
-            // continuity). Recomp is a structural rebuild and emits no durable
-            // facts (see below), so <project-memory> is omitted — there's
-            // nothing to dedup against.
+            // v2 bounded reference model: last-6 recency (the compartments
+            // built so far in THIS recomp run provide continuity).
             const references = buildReferenceBlocks({
-                sessionId,
-                chunkStart: chunk.startIndex,
                 sessionCompartments: candidateCompartments,
             });
 
             const prompt = buildCompartmentAgentPrompt({
-                seedExamples: references.seedExamples,
                 sessionReferences: references.sessionReferences,
-                projectMemory: "",
                 inputSource: `Messages ${chunk.startIndex}-${chunk.endIndex}:\n\n${chunk.text}`,
-                // Recomp is a structural rebuild only — it must NOT emit facts
-                // (locked rule: never re-promote into a user-curated memory store).
-                // Suppress the <facts> section so the model doesn't waste output
-                // tokens on facts we'd discard anyway.
-                memoryEnabled: false,
-                extractionFree: true,
             });
 
             await sendIgnoredMessage(
@@ -589,25 +558,15 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
         // history/materialize signals must find the drop rows durable.
         deps.onCompartmentStatePublished?.(sessionId);
 
-        // v2: recompute raw chunk embeddings for the rebuilt compartments. This is
-        // the NORMAL full-completion path (distinct from promoteAndFinalize, which
-        // handles early-exit/partial cases and already embeds). Without this, a
-        // fully-completed recomp leaves the rebuilt rows without chunk embeddings
-        // → they vanish from ctx_search semantic results. Gated on memory-enabled,
-        // distinct from fact promotion (recomp skips).
-        if (deps.memoryEnabled !== false) {
-            const projectIdentity = resolveProjectIdentity(sessionDirectory);
-            // Register the embedding provider first; embedBatchForProject silently
-            // no-ops for unregistered projects, leaving no chunk embeddings.
-            await deps.ensureProjectRegistered?.(sessionDirectory, db);
-            const liveCompartments = getCompartments(db, sessionId);
-            const chunksToEmbed = liveCompartments.map((c) => ({
-                id: c.id,
-                startMessage: c.startMessage,
-                endMessage: c.endMessage,
-            }));
-            void embedAndStoreCompartmentChunks(db, sessionId, projectIdentity, chunksToEmbed);
-        }
+        const projectIdentity = resolveProjectIdentity(sessionDirectory);
+        await deps.ensureProjectRegistered?.(sessionDirectory, db);
+        const liveCompartments = getCompartments(db, sessionId);
+        const chunksToEmbed = liveCompartments.map((c) => ({
+            id: c.id,
+            startMessage: c.startMessage,
+            endMessage: c.endMessage,
+        }));
+        void embedAndStoreCompartmentChunks(db, sessionId, projectIdentity, chunksToEmbed);
 
         // v2: advance the compaction marker on the full-completion path too (the
         // promoteAndFinalize early-exit path already does this). Without it, the

@@ -53,7 +53,7 @@ describe("storage-db legacy migration", () => {
         const db = openDatabase();
         expect(db).toBeDefined();
 
-        const sharedDbPath = join(tmpRoot, "cortexkit", "magic-context", "context.db");
+        const sharedDbPath = join(tmpRoot, "cortexkit", "mini-magic-context", "context.db");
         expect(existsSync(sharedDbPath)).toBe(true);
 
         // Schema must be initialized
@@ -78,7 +78,7 @@ describe("storage-db legacy migration", () => {
         seed.run("INSERT INTO migration_canary (payload) VALUES ('legacy-data')");
         closeQuietly(seed);
 
-        const sharedDbPath = join(tmpRoot, "cortexkit", "magic-context", "context.db");
+        const sharedDbPath = join(tmpRoot, "cortexkit", "mini-magic-context", "context.db");
         expect(existsSync(sharedDbPath)).toBe(false); // pre-condition
 
         const db = openDatabase();
@@ -98,7 +98,7 @@ describe("storage-db legacy migration", () => {
 
     test("does not overwrite existing shared DB even if legacy DB exists", () => {
         // Seed both: shared DB has fresh data, legacy DB has stale data.
-        const sharedDir = join(tmpRoot, "cortexkit", "magic-context");
+        const sharedDir = join(tmpRoot, "cortexkit", "mini-magic-context");
         mkdirSync(sharedDir, { recursive: true });
         const sharedDbPath = join(sharedDir, "context.db");
         const sharedSeed = new Database(sharedDbPath);
@@ -146,7 +146,7 @@ describe("storage-db legacy migration", () => {
         // Bun's SQLite finalizes when the GC runs, but the test's `Database`
         // wrapper does keep -wal/-shm files around when WAL mode is active.
 
-        const sharedDir = join(tmpRoot, "cortexkit", "magic-context");
+        const sharedDir = join(tmpRoot, "cortexkit", "mini-magic-context");
         const sharedWalPath = join(sharedDir, "context.db-wal");
 
         // Pre-condition: legacy WAL exists (Bun creates it on first WAL write)
@@ -177,7 +177,7 @@ describe("storage-db legacy migration", () => {
 
         openDatabase();
 
-        const sharedModelsDir = join(tmpRoot, "cortexkit", "magic-context", "models");
+        const sharedModelsDir = join(tmpRoot, "cortexkit", "mini-magic-context", "models");
         expect(existsSync(join(sharedModelsDir, "model-1.onnx"))).toBe(true);
         expect(readFileSync(join(sharedModelsDir, "model-1.onnx"), "utf8")).toBe("fake-onnx-bytes");
         expect(existsSync(join(sharedModelsDir, "vocab", "tokens.txt"))).toBe(true);

@@ -21,11 +21,6 @@ export interface HarnessConfigPaths {
     pluginConfigPath: string;
     /** Shared CortexKit magic-context.jsonc path the user can edit. */
     magicContextConfigPath: string;
-    /**
-     * Optional secondary config (e.g. `tui.json` for OpenCode TUI).
-     * `null` when the harness has no equivalent.
-     */
-    secondaryConfigPath: string | null;
 }
 
 export interface PluginEntryResult {

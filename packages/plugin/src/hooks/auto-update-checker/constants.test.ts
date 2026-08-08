@@ -4,7 +4,7 @@ import { CACHE_DIR, NPM_FETCH_TIMEOUT, NPM_REGISTRY_URL, PACKAGE_NAME } from "./
 
 describe("auto-update-checker/constants", () => {
     test("uses Magic Context package identity and npm defaults", () => {
-        expect(PACKAGE_NAME).toBe("@cortexkit/opencode-magic-context");
+        expect(PACKAGE_NAME).toBe("@ufoq/opencode-mini-magic-context");
         expect(NPM_REGISTRY_URL).toBe("https://registry.npmjs.org");
         expect(NPM_FETCH_TIMEOUT).toBe(10_000);
     });

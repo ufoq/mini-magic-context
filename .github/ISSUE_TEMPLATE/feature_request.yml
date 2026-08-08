@@ -5,13 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the suggestion! Please check the [README](https://github.com/cortexkit/magic-context#readme) and [open issues](https://github.com/cortexkit/magic-context/issues) first — your idea may already be documented or under discussion.
+        Thanks for the suggestion! Please check the [README](https://github.com/ufoq/mini-magic-context#readme) and [open issues](https://github.com/ufoq/mini-magic-context/issues) first — your idea may already be documented or under discussion.
 
   - type: input
     id: title
     attributes:
       label: Short description
-      placeholder: "Surface decision/why behind compartments as a graph in the dashboard"
+      placeholder: "Surface the decision/why behind a compressed compartment in ctx_expand"
     validations:
       required: true
 
@@ -45,9 +45,9 @@ body:
       options:
         - OpenCode plugin
         - Pi plugin
-        - Dashboard
         - CLI (setup / doctor)
-        - Memory / historian / dreamer
+        - Historian / journal search / embeddings
+        - Legacy import
         - Not sure
     validations:
       required: true

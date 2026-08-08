@@ -14,20 +14,20 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 /**
- * Config-LOCATION migration: move Magic Context config from the per-harness
+ * Config-LOCATION migration: move Mini Magic Context config from the per-harness
  * legacy locations to one shared CortexKit location, mirroring AFT's proven
  * move-and-marker design (NOT copy-in-place, which is a silent stale-edit trap).
  *
  * Legacy (read by old builds):
- *   user:    ~/.config/opencode/magic-context.{jsonc,json}
- *            ~/.pi/agent/magic-context.{jsonc,json}
- *   project: <root>/magic-context.{jsonc,json}            (bare root)
- *            <root>/.opencode/magic-context.{jsonc,json}
- *            <root>/.pi/magic-context.{jsonc,json}
+ *   user:    ~/.config/opencode/mini-magic-context.{jsonc,json}
+ *            ~/.pi/agent/mini-magic-context.{jsonc,json}
+ *   project: <root>/mini-magic-context.{jsonc,json}            (bare root)
+ *            <root>/.opencode/mini-magic-context.{jsonc,json}
+ *            <root>/.pi/mini-magic-context.{jsonc,json}
  *
  * Target (the only thing new builds read — HARD CUTOVER, harness-agnostic):
- *   user:    ~/.config/cortexkit/magic-context.jsonc
- *   project: <root>/.cortexkit/magic-context.jsonc
+ *   user:    ~/.config/cortexkit/mini-magic-context.jsonc
+ *   project: <root>/.cortexkit/mini-magic-context.jsonc
  *
  * The migrator runs at plugin init before the loader. Idempotency comes from
  * the legacy file being renamed away (not from a sentinel): once a source is
@@ -65,7 +65,7 @@ export interface ConfigFileMigrationResult {
     warnings: string[];
 }
 
-const CONFIG_FILE_BASENAME = "magic-context";
+const CONFIG_FILE_BASENAME = "mini-magic-context";
 const MOVED_MARKER_SUFFIX = ".MOVED_READPLEASE";
 
 // ── Path resolution ──────────────────────────────────────────
@@ -83,12 +83,12 @@ function configHome(): string {
     return join(homeDir(), ".config");
 }
 
-/** `~/.config/cortexkit/magic-context` (no extension — for detectConfigFile). */
+/** `~/.config/cortexkit/mini-magic-context` (no extension — for detectConfigFile). */
 export function cortexKitUserConfigBasePath(): string {
     return join(configHome(), "cortexkit", CONFIG_FILE_BASENAME);
 }
 
-/** `<root>/.cortexkit/magic-context` (no extension — for detectConfigFile). */
+/** `<root>/.cortexkit/mini-magic-context` (no extension — for detectConfigFile). */
 export function cortexKitProjectConfigBasePath(directory: string): string {
     return join(directory, ".cortexkit", CONFIG_FILE_BASENAME);
 }
@@ -105,8 +105,8 @@ export function resolveCortexKitProjectConfigPath(directory: string): string {
 
 function legacySourcesForBase(basePath: string, label: string): LegacyConfigSource[] {
     return [
-        { path: `${basePath}.jsonc`, label: `${label} magic-context.jsonc` },
-        { path: `${basePath}.json`, label: `${label} magic-context.json` },
+        { path: `${basePath}.jsonc`, label: `${label} mini-magic-context.jsonc` },
+        { path: `${basePath}.json`, label: `${label} mini-magic-context.json` },
     ];
 }
 
@@ -119,7 +119,7 @@ function userScopeConfigPaths(): Set<string> {
     return new Set<string>([
         // The CortexKit user target, both extensions: the bare-root project
         // source produces `.jsonc` AND `.json`, so exclude both or a stray
-        // `~/.config/cortexkit/magic-context.json` would still be eaten.
+        // `~/.config/cortexkit/mini-magic-context.json` would still be eaten.
         `${cortexKitUserConfigBasePath()}.jsonc`,
         `${cortexKitUserConfigBasePath()}.json`,
         join(configHome(), "opencode", `${CONFIG_FILE_BASENAME}.jsonc`),
@@ -180,7 +180,7 @@ export type ConfigHarness = "opencode" | "pi";
  * falling back to schema defaults — which would re-enable features the legacy
  * config disabled. Each harness reads only its own files, so a differing pair
  * stays correct per-harness until the user consolidates. The bare project-root
- * `<root>/magic-context.*` was OpenCode-only historically.
+ * `<root>/mini-magic-context.*` is OpenCode-only historically.
  */
 export function resolveLegacyConfigSourcesForHarness(
     directory: string,

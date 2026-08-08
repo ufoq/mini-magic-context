@@ -272,12 +272,12 @@ export class TestHarness {
      */
     contextDb(): Database {
         if (this.contextDbCached) return this.contextDbCached;
-        // Plugin v0.16+ uses the shared cortexkit/magic-context path so OpenCode
+    // Plugin uses the shared cortexkit/mini-magic-context path so OpenCode
         // and Pi can share state. See packages/plugin/src/shared/data-path.ts.
         const dbPath = join(
             this.opencode.env.dataDir,
             "cortexkit",
-            "magic-context",
+            "mini-magic-context",
             "context.db",
         );
         if (!existsSync(dbPath)) {
@@ -292,7 +292,7 @@ export class TestHarness {
         const dbPath = join(
             this.opencode.env.dataDir,
             "cortexkit",
-            "magic-context",
+            "mini-magic-context",
             "context.db",
         );
         return existsSync(dbPath);

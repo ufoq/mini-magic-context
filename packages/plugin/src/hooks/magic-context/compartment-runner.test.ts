@@ -14,8 +14,6 @@ import {
     replaceAllCompartmentState,
     replaceAllCompartments,
 } from "../../features/magic-context/compartment-storage";
-import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
-import { getMemoriesByProject } from "../../features/magic-context/memory/storage-memory";
 import {
     acquireWrapupInProgress,
     closeDatabase,
@@ -338,9 +336,7 @@ describe("executeContextRecomp", () => {
                 content: "published summary",
             }),
         ]);
-        expect(getSessionFacts(db, "ses-recomp-fail")).toEqual([
-            expect.objectContaining({ category: "WORKFLOW_RULES", content: "Published fact." }),
-        ]);
+        expect(getSessionFacts(db, "ses-recomp-fail")).toHaveLength(0);
     });
 
     it("retries once when historian skips a visible message and then publishes the repaired recomp result", async () => {
@@ -550,16 +546,7 @@ describe("executeContextRecomp", () => {
                 )
                 .get(sessionId),
         ).toEqual({ count: 0 });
-        expect(
-            db
-                .prepare(
-                    "SELECT status, failure_reason FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-                )
-                .get(sessionId),
-        ).toEqual({
-            status: "failed",
-            failure_reason: expect.stringContaining("missing the tiered paraphrase structure"),
-        });
+        expect(result).toContain("missing the tiered paraphrase structure");
     });
 
     it("accepts full-state historian output on a later recomp pass", async () => {
@@ -1387,21 +1374,10 @@ describe("runCompartmentAgent", () => {
         expect(
             getOrCreateSessionMeta(db, "ses-post-commit-registration").compartmentInProgress,
         ).toBe(false);
-        expect(
-            getMemoriesByProject(db, resolveProjectIdentity(projectDirectory)).map(
-                (memory) => memory.content,
-            ),
-        ).toContain("Durable fact survives registration outage.");
-        expect(
-            db
-                .prepare(
-                    "SELECT status FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-                )
-                .get("ses-post-commit-registration"),
-        ).toEqual({ status: "success" });
+        expect(ensureProjectRegistered).toHaveBeenCalled();
     });
 
-    it("rolls back compartments and boundary when durable fact insertion fails inside publish tx", async () => {
+    it("publishes compartments when historian output includes ignored facts", async () => {
         useTempDataHome("compartment-runner-fact-insert-rollback-");
         createOpenCodeDb("ses-fact-insert-rollback", [
             { id: "m-1", role: "user", text: "First" },
@@ -1413,9 +1389,6 @@ describe("runCompartmentAgent", () => {
             { id: "m-7", role: "user", text: "protected 5" },
         ]);
         const db = openDatabase();
-        db.exec(
-            "CREATE TRIGGER fail_memory_insert BEFORE INSERT ON memories BEGIN SELECT RAISE(ABORT, 'memory insert fail'); END;",
-        );
         const onPublished = mock(() => undefined);
 
         const client = {
@@ -1449,19 +1422,9 @@ describe("runCompartmentAgent", () => {
             onCompartmentStatePublished: onPublished,
         });
 
-        expect(getCompartments(db, "ses-fact-insert-rollback")).toEqual([]);
-        expect(
-            getMemoriesByProject(db, resolveProjectIdentity("/tmp/fact-insert-rollback")),
-        ).toEqual([]);
-        expect(loadProtectedTailMeta(db, "ses-fact-insert-rollback").priorBoundaryOrdinal).toBe(1);
-        expect(onPublished).not.toHaveBeenCalled();
-        expect(
-            db
-                .prepare(
-                    "SELECT status FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-                )
-                .get("ses-fact-insert-rollback"),
-        ).toEqual({ status: "failed" });
+        expect(getCompartments(db, "ses-fact-insert-rollback")).toHaveLength(1);
+        expect(loadProtectedTailMeta(db, "ses-fact-insert-rollback").priorBoundaryOrdinal).toBe(3);
+        expect(onPublished).toHaveBeenCalledWith("ses-fact-insert-rollback");
     });
 
     it("retries transient historian prompt failures on the same child session", async () => {
@@ -2132,9 +2095,7 @@ describe("runCompartmentAgent", () => {
         });
 
         expect(getCompartments(db, "ses-invalid-output")).toHaveLength(0);
-        expect(getSessionFacts(db, "ses-invalid-output")).toEqual([
-            expect.objectContaining({ category: "CONSTRAINTS", content: "Existing fact stays." }),
-        ]);
+        expect(getSessionFacts(db, "ses-invalid-output")).toHaveLength(0);
         // First failure → transient framing (no raw error / no action ask yet).
         expect(getIgnoredNotificationTexts(promptSession)[0].toLowerCase()).toContain("transient");
     });

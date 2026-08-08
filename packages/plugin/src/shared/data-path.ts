@@ -68,7 +68,7 @@ export function getMagicContextHistorianDir(harness: HarnessId = getHarness()): 
 /**
  * Project-local magic-context artifact directory.
  *
- * Layout: `<project-directory>/.cortexkit/magic-context/`
+ * Layout: `<project-directory>/.cortexkit/mini-magic-context/`
  *
  * Used for artifacts that the historian/recomp pipeline writes during a run
  * and that the model is asked to read via its native Read tool. OpenCode's
@@ -79,7 +79,7 @@ export function getMagicContextHistorianDir(harness: HarnessId = getHarness()): 
  * never triggers a permission prompt.
  *
  * `.cortexkit/` is the shared CortexKit per-project dir (also holds the
- * project config `magic-context.jsonc`). Because these artifacts are transient
+ * project config `mini-magic-context.jsonc`). Because these artifacts are transient
  * debug dumps that shouldn't dirty the user's repo, the first write also drops
  * a fenced-block `.gitignore` entry ignoring this subdir (see
  * ensureCortexKitArtifactGitignore) while leaving `*.jsonc` config tracked.
@@ -93,16 +93,16 @@ export function getMagicContextHistorianDir(harness: HarnessId = getHarness()): 
  * tool call, no permission prompt) and span sessions/projects.
  */
 export function getProjectMagicContextDir(directory: string): string {
-    return path.join(directory, ".cortexkit", "magic-context");
+    return path.join(directory, ".cortexkit", "mini-magic-context");
 }
 
-const GITIGNORE_GUARD_OPEN = "# >>> cortexkit:magic-context";
-const GITIGNORE_GUARD_CLOSE = "# <<< cortexkit:magic-context";
+const GITIGNORE_GUARD_OPEN = "# >>> cortexkit:mini-magic-context";
+const GITIGNORE_GUARD_CLOSE = "# <<< cortexkit:mini-magic-context";
 
 /**
  * Ensure `<project>/.cortexkit/.gitignore` ignores Magic Context's transient
- * artifact subdir (`magic-context/`) without touching anything else in the
- * shared `.cortexkit/` dir — the project config `magic-context.jsonc` stays
+ * artifact subdir (`mini-magic-context/`) without touching anything else in the
+ * shared `.cortexkit/` dir — the project config `mini-magic-context.jsonc` stays
  * tracked, and any sibling module's (e.g. AFT's) entries are preserved.
  *
  * Uses the shared CortexKit fenced-block convention: each module owns exactly
@@ -123,7 +123,7 @@ export function ensureCortexKitArtifactGitignore(directory: string): void {
             // Already fenced by us — nothing to do.
             if (existing.includes(GITIGNORE_GUARD_OPEN)) return;
         }
-        const block = `${GITIGNORE_GUARD_OPEN}\nmagic-context/\n${GITIGNORE_GUARD_CLOSE}\n`;
+        const block = `${GITIGNORE_GUARD_OPEN}\nmini-magic-context/\n${GITIGNORE_GUARD_CLOSE}\n`;
         const needsLeadingNewline = existing.length > 0 && !existing.endsWith("\n");
         const next = existing + (needsLeadingNewline ? "\n" : "") + block;
         mkdirSync(cortexKitDir, { recursive: true });
@@ -136,7 +136,7 @@ export function ensureCortexKitArtifactGitignore(directory: string): void {
 /**
  * Project-local historian artifact directory.
  *
- * Layout: `<project-directory>/.opencode/magic-context/historian/`
+ * Layout: `<project-directory>/.cortexkit/mini-magic-context/historian/`
  *
  * Used for:
  *   - existing-state offload XMLs that long historian/recomp passes write
@@ -156,20 +156,17 @@ export function getOpenCodeStorageDir(): string {
 }
 
 /**
- * Resolve the shared magic-context storage directory.
+ * Resolve the mini-magic-context storage directory.
  *
- * Magic-context's own data (compartments, facts, memories, embeddings, dream
- * runs, notes, etc.) lives at this path regardless of which harness loaded the
- * plugin (OpenCode or Pi). This enables:
- *   - Shared project memories across harnesses
- *   - Shared embedding cache
- *   - Shared Dreamer runs (one per project per machine)
- *   - Future cross-harness session migration
+ * Mini-magic-context keeps a separate database from the full Magic Context
+ * product. This prevents a mini runtime from migrating or mutating an existing
+ * full `context.db`; legacy state is brought over only by the explicit
+ * `/mc-import-context` command.
  *
- * Layout: <XDG_DATA_HOME>/cortexkit/magic-context/
+ * Layout: <XDG_DATA_HOME>/cortexkit/mini-magic-context/
  */
 export function getMagicContextStorageDir(): string {
-    return path.join(getDataDir(), "cortexkit", "magic-context");
+    return path.join(getDataDir(), "cortexkit", "mini-magic-context");
 }
 
 /**

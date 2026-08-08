@@ -468,7 +468,7 @@ describe("deferred compaction marker representation", () => {
             ...options,
             ctxReduceAvailability: { callable: true, frozen: true },
         });
-        const taggedText = (frozen[0]?.parts[0] as { text?: string }).text;
+        const taggedText = (frozen[0].parts[0] as { text?: string }).text;
         expect(taggedText).toMatch(/^§\d+§ /);
         const stable = structuredClone(frozen);
         reconcileMarkerRepresentation(stable, state, {

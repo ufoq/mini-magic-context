@@ -19,6 +19,7 @@ import { runMigrations } from "./migrations";
 import {
     _resetProjectEmbeddingRegistryForTests,
     _setTestProviderFactoryForProject,
+    getEmbeddingCoverageStatus,
     getProjectEmbeddingSnapshot,
     registerProjectEmbedding,
 } from "./project-embedding-registry";
@@ -379,6 +380,57 @@ describe("compartment chunk embedding core", () => {
                     currentChunkModelId("/repo/publish"),
                 ),
             ).toHaveLength(1);
+        } finally {
+            _resetProjectEmbeddingRegistryForTests();
+            closeQuietly(db);
+        }
+    });
+
+    test("embedding coverage status reads only compartment chunks", () => {
+        const db = createDb();
+        try {
+            registerProjectEmbedding(
+                db,
+                "/repo/status",
+                { provider: "local", model: "mock-local" },
+                { memoryEnabled: true, gitCommitEnabled: true },
+                "/repo/status",
+            );
+
+            const status = getEmbeddingCoverageStatus(db, "/repo/status", "ses-status");
+
+            expect(status.enabled).toBe(true);
+            expect(status.session).toEqual({ embedded: 0, total: 0 });
+            expect(status.memories).toEqual({ embedded: 0, total: 0 });
+            expect(status.commits).toEqual({ embedded: 0, total: 0, gitEnabled: false });
+        } finally {
+            _resetProjectEmbeddingRegistryForTests();
+            closeQuietly(db);
+        }
+    });
+
+    test("provider 'off' registers a disabled no-op snapshot and reports disabled coverage", () => {
+        const db = createDb();
+        try {
+            const snapshot = registerProjectEmbedding(
+                db,
+                "/repo/off",
+                { provider: "off" },
+                { memoryEnabled: false, gitCommitEnabled: false },
+                "/repo/off",
+            );
+
+            expect(snapshot.enabled).toBe(false);
+            expect(snapshot.gitCommitEnabled).toBe(false);
+            expect(snapshot.modelId).toBe("off");
+            expect(snapshot.chunkModelId).toBe("off");
+            expect(snapshot.model).toBe("off");
+            expect(snapshot.provider).toBe("off");
+            expect(snapshot.providerIdentity).toBe("embedding-provider:off");
+
+            const status = getEmbeddingCoverageStatus(db, "/repo/off", "ses-off");
+            expect(status.enabled).toBe(false);
+            expect(status.session).toEqual({ embedded: 0, total: 0 });
         } finally {
             _resetProjectEmbeddingRegistryForTests();
             closeQuietly(db);

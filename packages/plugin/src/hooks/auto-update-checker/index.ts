@@ -280,7 +280,7 @@ async function runStartupCheck(
         showToast(
             ctx,
             `Magic Context ${displayVersion ?? "unknown"}`,
-            "@cortexkit/opencode-magic-context is active.",
+            "@ufoq/opencode-mini-magic-context is active.",
             "info",
         );
     }
@@ -318,7 +318,7 @@ async function runBackgroundUpdateCheck(
         showToast(
             ctx,
             "Magic Context update check failed",
-            "Could not check npm for @cortexkit/opencode-magic-context updates. Continuing with the cached version.",
+            "Could not check npm for @ufoq/opencode-mini-magic-context updates. Continuing with the cached version.",
             "warning",
             8000,
         );

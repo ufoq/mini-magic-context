@@ -45,8 +45,7 @@ describe("shouldBypassFailClosedBlock", () => {
         expect(shouldBypassFailClosedBlock({ agent: "summary" })).toBe(true);
         expect(shouldBypassFailClosedBlock({ agent: "compaction" })).toBe(true);
         expect(shouldBypassFailClosedBlock({ agent: "historian" })).toBe(true);
-        expect(shouldBypassFailClosedBlock({ agent: "dreamer-docs" })).toBe(true);
-        expect(shouldBypassFailClosedBlock({ agent: "sidekick" })).toBe(true);
+        expect(shouldBypassFailClosedBlock({ agent: "historian-editor" })).toBe(true);
         expect(shouldBypassFailClosedBlock({ isInternalChildSession: true })).toBe(true);
         expect(shouldBypassFailClosedBlock({ isPiSubagentEnv: true })).toBe(true);
     });

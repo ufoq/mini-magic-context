@@ -7,7 +7,7 @@
 #   SESSION_SMOKE  — single-turn `opencode run` against aimock
 #
 # Both assertions check the shared SQLite DB at
-#   ~/.local/share/cortexkit/magic-context/context.db
+#   ~/.local/share/cortexkit/mini-magic-context/context.db
 # rather than scraping logs, so failures are unambiguous.
 # ----------------------------------------------------------------------
 
@@ -20,7 +20,7 @@ NC='\033[0m'
 
 PASS=0
 FAIL=0
-DB_PATH="$HOME/.local/share/cortexkit/magic-context/context.db"
+DB_PATH="$HOME/.local/share/cortexkit/mini-magic-context/context.db"
 PLUGIN_LOG="$(node -e 'console.log(require("os").tmpdir())')/opencode/magic-context/magic-context.log"
 
 check() {
@@ -45,7 +45,7 @@ section() {
 # Phase 0: install the Magic Context plugin from the local copy so the
 # rest of the script tests the bits we plan to publish, not whatever
 # happens to be on npm. We use `npm link` so global `bunx` resolves the
-# local copy of @cortexkit/opencode-magic-context.
+# local copy of @ufoq/opencode-mini-magic-context.
 # ----------------------------------------------------------------------
 section "Phase 0: install Magic Context locally"
 cd /test/mc-opencode
@@ -69,12 +69,12 @@ rm -rf "$HOME/.config/opencode" "$HOME/.local/share/cortexkit" "$PLUGIN_LOG"
 mkdir -p "$HOME/.config/opencode"
 echo '{}' > "$HOME/.config/opencode/opencode.json"
 
-# Since v0.16.1 the CLI lives in the unified @cortexkit/magic-context
-# package — opencode-magic-context is now the runtime plugin only. The
-# `magic-context` binary was symlinked into /usr/local/bin during the
+# The CLI lives in the unified @ufoq/mini-magic-context
+# package — opencode-mini-magic-context is now the runtime plugin only. The
+# `mini-magic-context` binary was symlinked into /usr/local/bin during the
 # Dockerfile build, so it resolves the same way `npm install -g
-# @cortexkit/magic-context` would on a real machine.
-DOCTOR_OUT=$(magic-context doctor --harness opencode --force 2>&1 || true)
+# @ufoq/mini-magic-context` would on a real machine.
+DOCTOR_OUT=$(mini-magic-context doctor --harness opencode --force 2>&1 || true)
 echo "$DOCTOR_OUT" | tail -30
 
 # Doctor's actual outro is one of:
@@ -90,7 +90,7 @@ check "OpenCode config still exists at ~/.config/opencode/opencode.json" \
     "test -f $HOME/.config/opencode/opencode.json"
 
 check "Plugin entry registered in OpenCode config" \
-    "grep -qE '@cortexkit/opencode-magic-context' $HOME/.config/opencode/opencode.json"
+    "grep -qE '@ufoq/opencode-mini-magic-context' $HOME/.config/opencode/opencode.json"
 
 # Magic Context creates its DB lazily on first plugin load, so it
 # may not exist yet after just `doctor`. The session smoke phase
@@ -133,7 +133,8 @@ JSON
 # Magic Context config — local embeddings (no network), historian
 # pointed at the same mock model so any background historian call also
 # resolves through aimock without external API.
-cat > "$HOME/.config/opencode/magic-context.jsonc" <<'JSON'
+mkdir -p "$HOME/.config/cortexkit"
+cat > "$HOME/.config/cortexkit/mini-magic-context.jsonc" <<'JSON'
 {
   "enabled": true,
   "historian": { "model": "mock/mock-model" },

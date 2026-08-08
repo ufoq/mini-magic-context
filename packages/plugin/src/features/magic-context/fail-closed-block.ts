@@ -11,7 +11,7 @@
  * those stay fail-open pass-through in the outer transform wrappers.
  */
 
-export const FAIL_CLOSED_DOCTOR_COMMAND = "npx @cortexkit/magic-context@latest doctor";
+export const FAIL_CLOSED_DOCTOR_COMMAND = "npx @ufoq/mini-magic-context@latest doctor";
 
 /** How often a blocked transform pass re-attempts storage open (1 = every pass). */
 export const FAIL_CLOSED_REPROBE_EVERY_N = 5;
@@ -47,16 +47,7 @@ const OPENCODE_INTERNAL_AGENT_NAMES = new Set(["title", "summary", "compaction"]
  * session is blocked — otherwise recovery work and background maintenance stall.
  */
 function isMagicContextHiddenAgentName(agent: string): boolean {
-    if (
-        agent === "sidekick" ||
-        agent === "smart-note-compiler" ||
-        agent.startsWith("smart-note-")
-    ) {
-        return true;
-    }
-    if (agent === "historian" || agent.startsWith("historian-")) return true;
-    if (agent === "dreamer" || agent.startsWith("dreamer-")) return true;
-    return false;
+    return agent === "historian" || agent.startsWith("historian-");
 }
 
 export function formatFailClosedBlockingMessage(reason: FailClosedReason): string {
@@ -181,7 +172,7 @@ export function createFailClosedController(options?: {
                 (blockedPassCount === 1 || blockedPassCount % reprobeEveryN === 0);
             if (shouldReprobe) {
                 try {
-                    const healed = await input.tryReopen!();
+                    const healed = await input.tryReopen?.();
                     if (healed) {
                         reason = null;
                         blockedPassCount = 0;

@@ -6,27 +6,17 @@ import {
 } from "./agents/hidden-agent-registrations";
 import { withContentLanguageDirective } from "./agents/language-directive";
 import { loadPluginConfig } from "./config";
-import { isDreamerRunnable } from "./config/agent-disable";
 import { migrateMagicContextConfigLocations } from "./config/migrate-config-location";
 import { getMagicContextBuiltinCommands } from "./features/builtin-commands/commands";
-import { openOpenCodeDb } from "./features/magic-context/dreamer/open-opencode-db";
-import { DREAMER_SYSTEM_PROMPT } from "./features/magic-context/dreamer/task-prompts";
 import {
     createFailClosedController,
     getLastHookInitFailure,
 } from "./features/magic-context/fail-closed-block";
-import { resolveProjectIdentityForSession } from "./features/magic-context/memory/project-identity";
-import { runSessionProjectBackfill } from "./features/magic-context/session-project-backfill";
-import { SIDEKICK_SYSTEM_PROMPT } from "./features/magic-context/sidekick/agent";
-import { SMART_NOTE_COMPILER_SYSTEM_PROMPT } from "./features/magic-context/smart-notes/compiler-prompt";
 import {
     getSchemaFenceRejection,
-    isDatabasePersisted,
-    openDatabase,
     setSqlitePragmaConfig,
 } from "./features/magic-context/storage-db";
 import { recordToolDefinition } from "./features/magic-context/tool-definition-tokens";
-import { runDeferredV22Backfill } from "./features/magic-context/v22-deferred-backfill";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import {
     COMPARTMENT_AGENT_SYSTEM_PROMPT,
@@ -34,18 +24,12 @@ import {
     HISTORIAN_EDITOR_SYSTEM_PROMPT,
 } from "./hooks/magic-context/compartment-prompt";
 import { createLiveSessionState } from "./hooks/magic-context/live-session-state";
-import { SubcModuleTransport } from "./hooks/magic-context/module-transport";
-import type { RustModeModuleClient } from "./hooks/magic-context/rust-mode-transform";
-import { beginBootQuietPeriod, scheduleAfterBootQuiet } from "./plugin/boot-quiet";
+import { beginBootQuietPeriod } from "./plugin/boot-quiet";
 import { cleanupConflictWarnings, sendConflictWarning } from "./plugin/conflict-warning-hook";
-import { startDreamScheduleTimer } from "./plugin/dream-timer";
-import { createDreamTimerModuleClient } from "./plugin/dream-timer-module-client";
-import { ensureProjectRegisteredFromOpenCodeDirectory } from "./plugin/embedding-bootstrap";
 import { createEventHandler } from "./plugin/event";
 import { createSessionHooksAsync } from "./plugin/hooks/create-session-hooks";
 import { isDisposedInstanceDirectory } from "./plugin/instance-disposal";
 import { createMessagesTransformHandler } from "./plugin/messages-transform";
-import { registerRpcHandlers } from "./plugin/rpc-handlers";
 import { createToolRegistry } from "./plugin/tool-registry";
 import { type ConflictResult, detectConflicts } from "./shared/conflict-detector";
 import { getMagicContextStorageDir } from "./shared/data-path";
@@ -53,8 +37,6 @@ import { registerExitAbort, unregisterExitAbort } from "./shared/exit-abort-regi
 import { setKeepSubagents } from "./shared/keep-subagents";
 import { log } from "./shared/logger";
 import { refreshModelLimitsFromApi } from "./shared/models-dev-cache";
-import { MagicContextRpcServer } from "./shared/rpc-server";
-import { closeQuietly } from "./shared/sqlite-helpers";
 
 const server: Plugin = async (ctx) => {
     beginBootQuietPeriod();
@@ -155,24 +137,19 @@ const server: Plugin = async (ctx) => {
     }
 
     const liveSessionState = createLiveSessionState();
-    const rustModeModuleClient: RustModeModuleClient | undefined =
-        pluginConfig.transform_mode === "rust" ? new SubcModuleTransport() : undefined;
 
     const hooks = await createSessionHooksAsync({
         ctx,
         pluginConfig,
         liveSessionState,
-        rustModeModuleClient,
     });
 
     // Mutable holder so a healed storage reopen can install real hooks without
     // rebuilding the outer messages-transform wrapper.
     const magicContextRuntime: {
         magicContext: typeof hooks.magicContext;
-        rustToolBackends: typeof hooks.rustToolBackends;
     } = {
         magicContext: hooks.magicContext,
-        rustToolBackends: hooks.rustToolBackends,
     };
 
     // Loud fail-closed gate: when the user enabled MC but storage cannot open
@@ -201,11 +178,9 @@ const server: Plugin = async (ctx) => {
                 ctx,
                 pluginConfig,
                 liveSessionState,
-                rustModeModuleClient,
             });
             if (!reopened.magicContext) return false;
             magicContextRuntime.magicContext = reopened.magicContext;
-            magicContextRuntime.rustToolBackends = reopened.rustToolBackends;
             failClosed.clear();
             log("[magic-context] storage re-probe succeeded; Magic Context runtime restored");
             return true;
@@ -218,76 +193,7 @@ const server: Plugin = async (ctx) => {
     const tools = createToolRegistry({
         ctx,
         pluginConfig,
-        rustToolBackends: magicContextRuntime.rustToolBackends,
     });
-
-    // v22 deferred legacy-memory identity backfill. createSessionHooks() opens
-    // the shared DB and runs migrations before returning a non-null hook, so
-    // this fire-and-forget runner starts only after the schema is ready. Its
-    // batch transactions serialize naturally with concurrent ctx_memory writes.
-    if (pluginConfig.enabled && magicContextRuntime.magicContext) {
-        try {
-            const db = openDatabase();
-            if (db && isDatabasePersisted(db)) {
-                scheduleAfterBootQuiet(() => {
-                    runDeferredV22Backfill(db).catch((err) => {
-                        log(`[v22-backfill] background runner failed: ${err}`);
-                    });
-                });
-            }
-        } catch (err) {
-            log(`[v22-backfill] failed to start background runner: ${err}`);
-        }
-    }
-
-    // Gated like the v22 backfill above: a conflict-disabled plugin must not
-    // touch storage at all (openDatabase() would CREATE context.db, breaking
-    // the disabled-path invariant that no state is written).
-    if (pluginConfig.enabled && magicContextRuntime.magicContext) {
-        scheduleAfterBootQuiet(() => {
-            void (async () => {
-                const db = openDatabase();
-                if (!db || !isDatabasePersisted(db)) return;
-                const ocDb = openOpenCodeDb();
-                if (!ocDb) return;
-                try {
-                    await runSessionProjectBackfill(db, (afterSessionId, limit) => {
-                        const rows = (
-                            afterSessionId === null
-                                ? ocDb
-                                      .prepare(
-                                          `SELECT id, COALESCE(directory, '') AS directory
-                                       FROM session
-                                       ORDER BY id ASC
-                                       LIMIT ?`,
-                                      )
-                                      .all(limit)
-                                : ocDb
-                                      .prepare(
-                                          `SELECT id, COALESCE(directory, '') AS directory
-                                       FROM session
-                                       WHERE id > ?
-                                       ORDER BY id ASC
-                                       LIMIT ?`,
-                                      )
-                                      .all(afterSessionId, limit)
-                        ) as Array<{
-                            id: string;
-                            directory: string;
-                        }>;
-                        return rows.map((session) => ({
-                            sessionId: session.id,
-                            directory: session.directory,
-                        }));
-                    });
-                } finally {
-                    closeQuietly(ocDb);
-                }
-            })().catch((err) => {
-                log(`[session-projects] background runner failed: ${err}`);
-            });
-        }, 0);
-    }
 
     // Resolve storage dir up front. Used by the RPC server below AND by
     // the auto-update checker (for cross-process dedup of npm hits when
@@ -296,92 +202,7 @@ const server: Plugin = async (ctx) => {
     // when the rest of the runtime is disabled by config or conflicts.
     const storageDir = getMagicContextStorageDir();
 
-    // Per-instance process-resident handles, hoisted to function scope so the
-    // server.instance.disposed cleanup (wired into the event handler below, which
-    // is returned outside this block) can stop them.
-    let rpcServer: MagicContextRpcServer | null = null;
-    let stopDreamTimerRegistration: (() => void) | undefined;
-
-    // Start independent dream schedule timer at plugin level (not inside hooks)
-    // so overnight dreaming works even when the user isn't chatting.
     if (pluginConfig.enabled) {
-        const dreamerRunnable = isDreamerRunnable(pluginConfig);
-        const classifyModuleClient = createDreamTimerModuleClient(rustModeModuleClient);
-        const timerProjectIdentity = resolveProjectIdentityForSession(ctx.directory);
-        if (!timerProjectIdentity) {
-            log("[magic-context] dream timer skipped: cwd is the user's home directory");
-        } else {
-            const timerRegistration = {
-                directory: ctx.directory,
-                projectIdentity: timerProjectIdentity,
-                client: ctx.client,
-                dreamerConfig: dreamerRunnable ? pluginConfig.dreamer : undefined,
-                language: pluginConfig.language,
-                transformMode: pluginConfig.transform_mode,
-                embeddingConfig: pluginConfig.embedding,
-                memoryEnabled: pluginConfig.memory?.enabled === true,
-                memoryInjectionBudgetTokens: pluginConfig.memory?.injection_budget_tokens,
-                experimentalMural: pluginConfig.experimental?.mural,
-                gitCommitIndexing: pluginConfig.memory.git_commit_indexing?.enabled
-                    ? {
-                          enabled: true,
-                          since_days: pluginConfig.memory.git_commit_indexing.since_days,
-                          max_commits: pluginConfig.memory.git_commit_indexing.max_commits,
-                      }
-                    : undefined,
-                ensureRegistered: ensureProjectRegisteredFromOpenCodeDirectory,
-                moduleClient: classifyModuleClient,
-            };
-            // Fail OPEN: the dream timer is best-effort background maintenance and must
-            // never abort the plugin load. This block is awaited and runs BEFORE the
-            // hooks are returned, so an unguarded throw here (e.g. a fatal DB open, or
-            // ensureRegistered failing) would escape server() and leave the transform /
-            // compaction pipeline unregistered — ballooning every session's context.
-            // openTimerDatabaseOrNull already degrades a fatal open to null, but we wrap
-            // the whole registration as defense in depth against any other throw path.
-            try {
-                stopDreamTimerRegistration = await startDreamScheduleTimer(timerRegistration);
-            } catch (err) {
-                log(
-                    `[magic-context] dream timer registration failed (continuing without it): ${err}`,
-                );
-            }
-        }
-
-        // Start RPC server for TUI↔server communication (replaces SQLite plugin_messages bus).
-        // `storageDir` is hoisted above so the auto-update checker can also use it.
-        rpcServer = new MagicContextRpcServer(storageDir, ctx.directory);
-        registerRpcHandlers(rpcServer, {
-            directory: ctx.directory,
-            config: pluginConfig,
-            client: ctx.client,
-            liveSessionState,
-            rustModeModuleClient,
-        });
-        rpcServer.start().catch((err) => {
-            log(`[magic-context] RPC server failed to start: ${err}`);
-        });
-
-        // Warm the model-context-limit cache from OpenCode's SDK once at startup.
-        // The API response matches OpenCode's internal resolution (live models.dev
-        // cache + compiled-in snapshot + custom provider overrides + derived
-        // experimental modes + auth-plugin caps), so any model OpenCode knows the
-        // limit for, we know too — and it is the SOLE source (we no longer read
-        // models.json ourselves). Until it warms, resolution falls back to the
-        // persisted last-known-good cache (instant on restart) then the 128k
-        // default for a brand-new install's first few passes.
-        //
-        // Retry a couple times if OpenCode's provider service isn't ready yet at
-        // our startup (the only "cold" case — OpenCode itself always has the data).
-        // Fire-and-forget so it never blocks plugin init.
-        //
-        // Do NOT refresh periodically. Limits are stable in practice, and newly
-        // added models require an OpenCode restart anyway because provider
-        // plugins, snapshots, and opencode.jsonc are loaded at process boot. More
-        // importantly, issue #77 showed that a later refresh can regress to a
-        // smaller/wrong limit and silently break an in-progress session. The
-        // event handler may still retry this refresh once when it detects an
-        // obviously bad cache value, but normal operation is one-shot.
         void refreshModelLimitsFromApi(ctx.client, { retries: 3, retryDelayMs: 1000 });
     }
 
@@ -520,19 +341,7 @@ const server: Plugin = async (ctx) => {
                 } catch {
                     // best-effort
                 }
-                try {
-                    stopDreamTimerRegistration?.();
-                } catch {
-                    // best-effort
-                }
-                try {
-                    rpcServer?.stop();
-                } catch {
-                    // best-effort
-                }
-                log(
-                    "[magic-context] instance disposed — stopped RPC server, dream timer, auto-update",
-                );
+                log("[magic-context] instance disposed — stopped auto-update");
             },
         }),
         "experimental.chat.messages.transform": createMessagesTransformHandler({
@@ -613,40 +422,6 @@ const server: Plugin = async (ctx) => {
                 };
 
                 config.command = commandConfig;
-                // Extract only agent-override fields (not scheduling fields) for agent registration
-                // thinking_level is stripped from every hidden agent's overrides: it
-                // is Pi-only (passed as --thinking to the Pi subprocess) and is not a
-                // valid OpenCode agent config field, so leaking it puts an unknown key
-                // on the OpenCode agent config.
-                const dreamerAgentOverrides = pluginConfig.dreamer
-                    ? (() => {
-                          const {
-                              tasks: _tasks,
-                              inject_docs: _injectDocs,
-                              thinking_level: _thinkingLevel,
-                              ...agentOverrides
-                          } = pluginConfig.dreamer;
-                          return agentOverrides;
-                      })()
-                    : undefined;
-                const sidekickAgentOverrides = pluginConfig.sidekick
-                    ? (() => {
-                          const {
-                              timeout_ms: _timeoutMs,
-                              system_prompt: _systemPrompt,
-                              thinking_level: _thinkingLevel,
-                              ...agentOverrides
-                          } = pluginConfig.sidekick;
-                          return agentOverrides;
-                      })()
-                    : undefined;
-                // Strip two_pass + disallowed_tools + thinking_level from historian
-                // overrides — two_pass is consumed by the runner, disallowed_tools is
-                // consumed below to build the permission map, thinking_level is Pi-only
-                // (passed as --thinking to the Pi subprocess). None is a valid OpenCode
-                // agent config field, so leaking them in would put unknown keys on the
-                // OpenCode agent config. Both historian and historian-editor agents use
-                // the remaining overrides (same model, fallbacks, etc.).
                 const historianAgentOverrides = pluginConfig.historian
                     ? (() => {
                           const {
@@ -665,13 +440,6 @@ const server: Plugin = async (ctx) => {
                 // somehow undefined at this instant, SKIP that agent and log,
                 // rather than register a broken agent.
                 const registrations = buildHiddenAgentRegistrations({
-                    dreamerPrompt: DREAMER_SYSTEM_PROMPT,
-                    smartNoteCompilerPrompt: SMART_NOTE_COMPILER_SYSTEM_PROMPT,
-                    // v2: the v8.7.3 historian prompt always describes the
-                    // <user_observations> output; observations are simply not
-                    // promoted to user-profile when user_memories is disabled
-                    // (gated in the runner). Keeping the system prompt constant
-                    // preserves prompt-cache byte stability.
                     historianPrompt: withContentLanguageDirective(
                         COMPARTMENT_AGENT_SYSTEM_PROMPT,
                         pluginConfig.language,
@@ -687,12 +455,9 @@ const server: Plugin = async (ctx) => {
                         pluginConfig.language,
                         { preserveUserQuotes: true },
                     ),
-                    sidekickPrompt: SIDEKICK_SYSTEM_PROMPT,
-                    dreamerOverrides: dreamerAgentOverrides,
                     historianOverrides: historianAgentOverrides,
-                    sidekickOverrides: sidekickAgentOverrides,
                     historianDisallowed: pluginConfig.historian?.disallowed_tools ?? [],
-                });
+                }).filter((registration) => registration.id.startsWith("historian"));
 
                 const agentConfig = { ...(config.agent ?? {}) } as NonNullable<typeof config.agent>;
                 for (const reg of registrations) {

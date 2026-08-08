@@ -225,9 +225,7 @@ export function fixConflicts(directory: string, conflicts: ConflictResult["confl
             }
 
             // Unified paths nest hooks under the [opencode] block; legacy paths use top-level
-            const target = isUnifiedOmoPath(configPath)
-                ? getOrCreateOmoV2Block(config)
-                : config;
+            const target = isUnifiedOmoPath(configPath) ? getOrCreateOmoV2Block(config) : config;
 
             const disabledHooks = new Set(asStringArray(target.disabled_hooks));
             let changed = false;

@@ -333,33 +333,16 @@ export async function executePartialRecompInternal(
             }
             deps.onCompartmentStatePublished?.(sessionId);
 
-            // v2: recompute raw chunk embeddings for the rebuilt compartments.
-            // Partial recomp deletes + reinserts compartments, so their chunk
-            // embeddings must be regenerated or the rebuilt rows vanish from
-            // ctx_search semantic results. Gated on memory-enabled, distinct from
-            // fact promotion (which recomp skips). Fire-and-forget, best-effort.
-            if (deps.memoryEnabled !== false) {
-                const projectIdentity = resolveProjectIdentity(sessionDirectory);
-                const liveCompartments = getCompartments(db, sessionId);
-                const chunksToEmbed = liveCompartments.map((c) => ({
-                    id: c.id,
-                    startMessage: c.startMessage,
-                    endMessage: c.endMessage,
-                }));
-                // Register the embedding provider FIRST; embedBatchForProject
-                // silently no-ops for unregistered projects, leaving the rebuilt
-                // rows without chunk embeddings. This block is sync, so chain
-                // register→embed as fire-and-forget.
-                void Promise.resolve(deps.ensureProjectRegistered?.(sessionDirectory, db)).then(
-                    () =>
-                        embedAndStoreCompartmentChunks(
-                            db,
-                            sessionId,
-                            projectIdentity,
-                            chunksToEmbed,
-                        ),
-                );
-            }
+            const projectIdentity = resolveProjectIdentity(sessionDirectory);
+            const liveCompartments = getCompartments(db, sessionId);
+            const chunksToEmbed = liveCompartments.map((c) => ({
+                id: c.id,
+                startMessage: c.startMessage,
+                endMessage: c.endMessage,
+            }));
+            void Promise.resolve(deps.ensureProjectRegistered?.(sessionDirectory, db)).then(() =>
+                embedAndStoreCompartmentChunks(db, sessionId, projectIdentity, chunksToEmbed),
+            );
 
             const lastEnd = merged[merged.length - 1]?.endMessage ?? snapEnd;
             // Plan v6 §6: partial recomp is explicit (eager cache clear). Apply
@@ -402,24 +385,15 @@ export async function executePartialRecompInternal(
                 return `## Magic Recomp — Failed\n\nPartial recomp stopped because the raw chunk could not be represented safely: ${chunkCoverageError}\n\nOriginal state preserved (staging kept for retry).`;
             }
 
-            // v2 bounded reference model: 4 rotating seeds + last-6 recency
-            // (the compartments rebuilt so far in this partial-recomp run provide
-            // continuity). Structural rebuild → no <project-memory> dedup block.
+            // v2 bounded reference model: last-6 recency (the compartments
+            // rebuilt so far in this partial-recomp run provide continuity).
             const references = buildReferenceBlocks({
-                sessionId,
-                chunkStart: chunk.startIndex,
                 sessionCompartments: candidateCompartments,
             });
 
             const prompt = buildCompartmentAgentPrompt({
-                seedExamples: references.seedExamples,
                 sessionReferences: references.sessionReferences,
-                projectMemory: "",
                 inputSource: `Messages ${chunk.startIndex}-${chunk.endIndex}:\n\n${chunk.text}`,
-                // Partial recomp is structural-only — never emit facts (locked
-                // rule: no re-promotion into the curated memory store).
-                memoryEnabled: false,
-                extractionFree: true,
             });
 
             await sendIgnoredMessage(

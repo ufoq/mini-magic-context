@@ -88,7 +88,7 @@ function getLatestCommitTimeStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getEvictStatement(db: Database): PreparedStatement {
+function _getEvictStatement(db: Database): PreparedStatement {
     let stmt = evictStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(
@@ -202,7 +202,7 @@ export function enforceProjectCap(db: Database, projectPath: string, maxCommits:
     return evicted;
 }
 
-function rowToStoredCommit(row: GitCommitRow): StoredGitCommit {
+function _rowToStoredCommit(row: GitCommitRow): StoredGitCommit {
     return {
         sha: row.sha,
         projectPath: row.project_path,

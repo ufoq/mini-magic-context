@@ -15,7 +15,6 @@ describe("MagicContextConfigSchema", () => {
             expect(result).toMatchObject({
                 enabled: true,
                 fail_closed_blocking: true,
-                transform_mode: "ts",
                 cache_ttl: "5m",
                 execute_threshold_percentage: 65,
                 protected_tags: 20,
@@ -26,21 +25,18 @@ describe("MagicContextConfigSchema", () => {
                     provider: "local",
                     model: DEFAULT_LOCAL_EMBEDDING_MODEL,
                 },
-                memory: {
-                    enabled: true,
-                    injection_budget_tokens: 4000,
-                    auto_promote: true,
-                    retrieval_count_promotion_threshold: 3,
-                },
-                todowrite: {
-                    enabled: true,
-                    overlay: true,
+                journal: {
+                    auto_search: { enabled: true, score_threshold: 0.6, min_prompt_chars: 20 },
                 },
             });
             expect(result.historian).toBeUndefined();
-            expect(result.dreamer).toBeUndefined();
-            expect(result.sidekick).toBeUndefined();
             expect(result.pi).toBeUndefined();
+            expect(result).not.toHaveProperty("dreamer");
+            expect(result).not.toHaveProperty("sidekick");
+            expect(result).not.toHaveProperty("experimental");
+            expect(result).not.toHaveProperty("subc");
+            expect(result).not.toHaveProperty("shadow_embedding");
+            expect(result).not.toHaveProperty("memory");
         });
     });
 
@@ -49,8 +45,6 @@ describe("MagicContextConfigSchema", () => {
             const input = {
                 enabled: true,
                 fail_closed_blocking: true,
-                experimental: { mural: { enabled: false } },
-                transform_mode: "ts",
                 auto_update: false,
                 toast_duration_ms: 5000,
                 cache_ttl: "10m",
@@ -78,9 +72,6 @@ describe("MagicContextConfigSchema", () => {
                     overlay: false,
                 },
                 smart_drops: false,
-                shadow_embedding: {
-                    enabled: false,
-                },
                 caveman_text_compression: {
                     enabled: false,
                     min_chars: 500,
@@ -91,33 +82,15 @@ describe("MagicContextConfigSchema", () => {
                     model: "text-embedding-3-small",
                     api_key: "secret-embedding",
                 },
-                memory: {
-                    enabled: true,
-                    injection_budget_tokens: 4000,
-                    auto_promote: true,
-                    retrieval_count_promotion_threshold: 3,
+                journal: {
                     auto_search: {
                         enabled: false,
                         score_threshold: 0.6,
                         min_prompt_chars: 20,
                     },
-                    git_commit_indexing: {
-                        enabled: false,
-                        since_days: 365,
-                        max_commits: 2000,
-                    },
                 },
                 pi: {
                     subagent_extensions: ["@example/provider", "./extensions/local.ts"],
-                },
-                sidekick: {
-                    disable: false,
-                    model: "qwen-test",
-                    fallback_models: ["qwen-fallback"],
-                    temperature: 0.1,
-                    variant: "fast",
-                    timeout_ms: 12_000,
-                    system_prompt: "Custom prompt",
                 },
             } satisfies MagicContextConfig;
 
@@ -126,59 +99,54 @@ describe("MagicContextConfigSchema", () => {
             expect(result).toEqual(input);
         });
 
-        it("applies sidekick defaults when the object is present", () => {
-            const result = MagicContextConfigSchema.parse({
-                sidekick: {
-                    model: "github-copilot/gpt-5.4",
-                },
-            });
-
-            expect(result.sidekick).toEqual({
-                model: "github-copilot/gpt-5.4",
-                timeout_ms: 30000,
-            });
-        });
-
-        it("accepts disable on hidden agents and strips deprecated top-level enabled", () => {
+        it("accepts disable on the historian and strips deprecated enabled", () => {
             const result = MagicContextConfigSchema.parse({
                 historian: { disable: true },
-                dreamer: {
-                    disable: true,
-                    enabled: true,
-                    // Dreamer v2: per-task config. review-user-memories disabled,
-                    // maintain-docs scheduled.
-                    tasks: {
-                        "review-user-memories": { schedule: "" },
-                        "maintain-docs": { schedule: "0 * * * *" },
-                    },
-                },
-                sidekick: { disable: true, enabled: true },
             });
 
             expect(result.historian?.disable).toBe(true);
-            expect(result.dreamer?.disable).toBe(true);
-            expect(result.sidekick?.disable).toBe(true);
-            expect("enabled" in (result.dreamer as Record<string, unknown>)).toBe(false);
-            expect("enabled" in (result.sidekick as Record<string, unknown>)).toBe(false);
-            expect(result.dreamer?.tasks["review-user-memories"].schedule).toBe("");
-            expect(result.dreamer?.tasks["maintain-docs"].schedule).toBe("0 * * * *");
-            expect(result.dreamer?.tasks["classify-memories"].schedule).toBe("0 6 * * *");
-            expect(result.dreamer?.tasks.retrospective.schedule).toBe("0 5 * * *");
+            expect("enabled" in (result.historian as Record<string, unknown>)).toBe(false);
         });
 
-        it("defaults classify-memories and retrospective on daily in dreamer task schema", () => {
-            const result = MagicContextConfigSchema.parse({ dreamer: { model: "x/y" } });
-            expect(result.dreamer?.tasks["classify-memories"].schedule).toBe("0 6 * * *");
-            expect(result.dreamer?.tasks.retrospective.schedule).toBe("0 5 * * *");
+        it("strips the removed transform_mode from parsed output", () => {
+            const result = MagicContextConfigSchema.parse({ transform_mode: "rust" });
+            expect(result).not.toHaveProperty("transform_mode");
         });
 
-        it("parses both transform modes", () => {
-            expect(MagicContextConfigSchema.parse({ transform_mode: "ts" }).transform_mode).toBe(
-                "ts",
-            );
-            expect(MagicContextConfigSchema.parse({ transform_mode: "rust" }).transform_mode).toBe(
-                "rust",
-            );
+        it("strips dropped feature configuration", () => {
+            const result = MagicContextConfigSchema.parse({
+                dreamer: { model: "anthropic/claude-haiku-4-5" },
+                sidekick: { model: "anthropic/claude-haiku-4-5" },
+                experimental: { mural: { enabled: true } },
+                subc: { connection_file: "~/.subc.json" },
+                shadow_embedding: { enabled: true },
+                memory: {
+                    enabled: true,
+                    git_commit_indexing: { enabled: true },
+                    auto_search: { enabled: false },
+                },
+            });
+
+            expect(result).not.toHaveProperty("dreamer");
+            expect(result).not.toHaveProperty("sidekick");
+            expect(result).not.toHaveProperty("experimental");
+            expect(result).not.toHaveProperty("subc");
+            expect(result).not.toHaveProperty("shadow_embedding");
+            expect(result).not.toHaveProperty("memory");
+            expect(result.embedding).toEqual({
+                provider: "local",
+                model: DEFAULT_LOCAL_EMBEDDING_MODEL,
+            });
+            expect(() =>
+                MagicContextConfigSchema.parse({
+                    embedding: { provider: "synapse", fallback_provider: "local" },
+                }),
+            ).toThrow();
+            expect(
+                MagicContextConfigSchema.parse({ embedding: { provider: "off" } }).embedding,
+            ).toEqual({
+                provider: "off",
+            });
         });
 
         it("accepts optional auto_update user preference", () => {
@@ -216,10 +184,6 @@ describe("MagicContextConfigSchema", () => {
     });
 
     describe("validation", () => {
-        it("rejects an unknown transform mode", () => {
-            expect(() => MagicContextConfigSchema.parse({ transform_mode: "wasm" })).toThrow();
-        });
-
         it("rejects empty Pi subagent extension entries", () => {
             expect(() =>
                 MagicContextConfigSchema.parse({ pi: { subagent_extensions: ["  "] } }),

@@ -71,8 +71,8 @@ afterAll(async () => {
  * plugin-level state (pending_ops, nudge anchor, etc.). The shared
  * harness exposes only a read-only handle. */
 function openContextDbWritable(): Database {
-    // Plugin v0.16+ — shared cortexkit/magic-context path.
-    const dbPath = join(h.opencode.env.dataDir, "cortexkit", "magic-context", "context.db");
+// Plugin uses the shared cortexkit/mini-magic-context path.
+const dbPath = join(h.opencode.env.dataDir, "cortexkit", "mini-magic-context", "context.db");
     const db = openTestDb(dbPath, { readwrite: true });
     // The live plugin holds this same DB during the test; under loaded CI a write
     // here can collide with it. Wait for the lock instead of failing immediately

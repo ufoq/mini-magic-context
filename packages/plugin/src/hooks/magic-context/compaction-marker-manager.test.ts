@@ -53,7 +53,7 @@ function useTempDataHome(prefix: string): string {
     tempDirs.push(dir);
     process.env.XDG_DATA_HOME = dir;
     mkdirSync(join(dir, "opencode"), { recursive: true });
-    mkdirSync(join(dir, "cortexkit", "magic-context"), { recursive: true });
+    mkdirSync(join(dir, "cortexkit", "mini-magic-context"), { recursive: true });
     return dir;
 }
 
@@ -467,7 +467,7 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
         const dataHome = mkdtempSync(join(tmpdir(), "apply-deferred-db-err-"));
         tempDirs.push(dataHome);
         process.env.XDG_DATA_HOME = dataHome;
-        mkdirSync(join(dataHome, "cortexkit", "magic-context"), { recursive: true });
+        mkdirSync(join(dataHome, "cortexkit", "mini-magic-context"), { recursive: true });
         // No opencode/ subdir created.
 
         const db = openDatabase();

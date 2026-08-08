@@ -2,7 +2,7 @@
  * Identifier for the host harness this plugin is running inside.
  *
  * Magic Context's SQLite database lives at a vendor-scoped path
- * (`~/.local/share/cortexkit/magic-context/`) so OpenCode and Pi can share
+ * (`~/.local/share/cortexkit/mini-magic-context/`) so OpenCode and Pi can share
  * project memories, embedding cache, dreamer runs, and other project-scoped
  * state. Session-scoped tables carry a `harness` column populated from this
  * module so we can disambiguate which harness wrote each session row,

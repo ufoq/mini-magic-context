@@ -17,9 +17,7 @@ const baseOptions = {
 	scoreThreshold: 0.6,
 	minPromptChars: 12,
 	projectPath: "git:test",
-	memoryEnabled: true,
 	embeddingEnabled: false,
-	gitCommitsEnabled: false,
 };
 
 function memoryResult(
@@ -27,12 +25,12 @@ function memoryResult(
 	content = "historian cache wiring details",
 ): UnifiedSearchResult {
 	return {
-		source: "memory",
+		source: "message",
 		content,
 		score,
-		memoryId: 1,
-		category: "WORKFLOW_RULES",
-		matchType: "fts",
+		messageOrdinal: 1,
+		messageId: "m1",
+		role: "assistant",
 	};
 }
 
@@ -92,7 +90,7 @@ describe("runAutoSearchHintForPi", () => {
 			});
 
 			const options = spy.mock.calls[0]?.[4];
-			expect(options?.sources).toEqual(["memory", "message", "git_commit"]);
+			expect(options?.sources).toEqual(["message"]);
 		} finally {
 			spy.mockRestore();
 			closeQuietly(db);

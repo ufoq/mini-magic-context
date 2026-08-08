@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
 import { detectConflicts } from "@magic-context/core/shared/conflict-detector";
 import { fixConflicts } from "@magic-context/core/shared/conflict-fixer";
 import { stringify as stringifyJsonc } from "comment-json";
@@ -13,7 +13,6 @@ import {
     hasUserConfigLocationMigrationRefusal,
     migrateConfigLocationsForCli,
 } from "../lib/config-location-migration";
-import { runDreamerSetup } from "../lib/dreamer-setup";
 import { assertJsoncConfigsParseable, readJsoncConfigForUpdate } from "../lib/jsonc-config";
 import { pickModel } from "../lib/model-picker";
 import { detectOpenCode } from "../lib/opencode-detect";
@@ -49,7 +48,7 @@ export function addPluginToOpenCodeConfig(
     if (!existsAtCommit) ensureDir(dirname(configPath));
 
     // Operate on the raw plugin array — entries can be:
-    //   • a string:  "@cortexkit/opencode-magic-context@latest"
+    //   • a string:  "@ufoq/opencode-mini-magic-context@latest"
     //   • a tuple:   ["@pkg/name@latest", { ...options }]
     //   • a dev URL: "file:///abs/path/.../packages/plugin"
     // We preserve every entry shape; matchesPluginEntry / isDevPathPluginEntry
@@ -87,38 +86,6 @@ export function addPluginToOpenCodeConfig(
     compaction.prune = false;
     existing.compaction = compaction;
 
-    writeFileAtomic(configPath, `${stringifyJsonc(existing, null, 2)}\n`);
-}
-
-export function addPluginToTuiConfig(configPath: string, _format: "json" | "jsonc" | "none"): void {
-    // Config discovery may be stale after prompts; merge the commit-time contents.
-    const existsAtCommit = existsSync(configPath);
-    const existing = existsAtCommit ? readJsoncConfigForUpdate(configPath) : {};
-    if (!existsAtCommit) ensureDir(dirname(configPath));
-
-    // Same rules as the main opencode config — preserve tuple entries and
-    // never replace dev-path entries.
-    const rawPlugins: unknown[] = Array.isArray(existing.plugin) ? existing.plugin : [];
-    const hasNpmEntry = rawPlugins.some((p) => matchesPluginEntry(p, PLUGIN_NAME));
-    const hasDevEntry = rawPlugins.some((p) => isDevPathPluginEntry(p));
-    if (
-        rawPlugins.some(
-            (p) =>
-                isLocalPathPluginEntry(p) &&
-                String(p).includes("magic-context") &&
-                !isDevPathPluginEntry(p),
-        )
-    ) {
-        log.warn(
-            "An unverifiable local TUI plugin path was ignored; its package name is not Magic Context.",
-        );
-    }
-
-    if (!hasNpmEntry && !hasDevEntry) {
-        rawPlugins.push(PLUGIN_ENTRY);
-    }
-
-    existing.plugin = rawPlugins;
     writeFileAtomic(configPath, `${stringifyJsonc(existing, null, 2)}\n`);
 }
 
@@ -160,12 +127,6 @@ export function writeMagicContextConfig(
     configPath: string,
     options: {
         historianModel: string | null;
-        dreamerEnabled: boolean;
-        dreamerModel: string | null;
-        /** Per-task schedule overrides (Dreamer v2); undefined keeps schema defaults. */
-        dreamerTasks?: Record<string, { schedule: string }>;
-        sidekickEnabled: boolean;
-        sidekickModel: string | null;
         claudeMax: boolean;
     },
 ): void {
@@ -175,7 +136,7 @@ export function writeMagicContextConfig(
     // Always set $schema for editor autocomplete/validation
     if (!config.$schema) {
         config.$schema =
-            "https://raw.githubusercontent.com/cortexkit/magic-context/master/assets/magic-context.schema.json";
+            "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json";
     }
 
     if (options.historianModel) {
@@ -184,36 +145,8 @@ export function writeMagicContextConfig(
         config.historian = historian;
     }
 
-    const dreamer = (config.dreamer as Record<string, unknown>) ?? {};
-    delete dreamer.enabled;
-    if (options.dreamerEnabled) {
-        delete dreamer.disable;
-        if (options.dreamerModel) {
-            dreamer.model = options.dreamerModel;
-        }
-        // Dreamer v2 per-task schedules. Only written when the user declined the
-        // recommended defaults — otherwise we leave `tasks` unset so the schema
-        // defaults apply (and the config stays small).
-        if (options.dreamerTasks) {
-            dreamer.tasks = options.dreamerTasks;
-        }
-    } else {
-        dreamer.disable = true;
-    }
-    config.dreamer = dreamer;
-
-    const sidekick = (config.sidekick as Record<string, unknown>) ?? {};
-    delete sidekick.enabled;
-    if (options.sidekickEnabled) {
-        delete sidekick.disable;
-        if (options.sidekickModel) {
-            sidekick.model = options.sidekickModel;
-        }
-        config.sidekick = sidekick;
-    } else {
-        sidekick.disable = true;
-        config.sidekick = sidekick;
-    }
+    delete config.dreamer;
+    delete config.sidekick;
 
     if (options.claudeMax) {
         const cacheTtl = (config.cache_ttl as Record<string, string>) ?? {};
@@ -293,18 +226,12 @@ export async function runSetup(dryRun = false): Promise<number> {
     // ─── Step 3: Detect config paths ────────────────────
     const paths = detectConfigPaths();
     const hadExistingSetup =
-        paths.opencodeConfigFormat !== "none" ||
-        existsSync(paths.magicContextConfig) ||
-        paths.tuiConfigFormat !== "none";
+        paths.opencodeConfigFormat !== "none" || existsSync(paths.magicContextConfig);
 
     if (!dryRun) {
         try {
             // Fail before touching any setup target if one existing file is malformed.
-            assertJsoncConfigsParseable([
-                paths.opencodeConfig,
-                paths.magicContextConfig,
-                paths.tuiConfig,
-            ]);
+            assertJsoncConfigsParseable([paths.opencodeConfig, paths.magicContextConfig]);
         } catch (error) {
             log.error(error instanceof Error ? error.message : String(error));
             outro("Setup stopped — fix the malformed config and rerun setup.");
@@ -359,24 +286,6 @@ export async function runSetup(dryRun = false): Promise<number> {
     const historianModel = await pickModel(promptIO, allModels, "historian");
     log.success(`Historian: ${historianModel}`);
 
-    // ─── Step 6: Dreamer ────────────────────────────────
-    const dreamerEnabled = await confirm("Enable dreamer?", true);
-    let dreamerModel: string | null = null;
-    let dreamerTasks: Record<string, { schedule: string }> | undefined;
-    if (dreamerEnabled) {
-        const result = await runDreamerSetup(promptIO, allModels);
-        dreamerModel = result.model;
-        dreamerTasks = result.tasks;
-    }
-
-    // ─── Step 7: Sidekick ───────────────────────────────
-    const sidekickEnabled = await confirm("Enable sidekick?", false);
-    let sidekickModel: string | null = null;
-    if (sidekickEnabled) {
-        sidekickModel = await pickModel(promptIO, allModels, "sidekick");
-        log.success(`Sidekick: ${sidekickModel}`);
-    }
-
     // ─── Claude Max subscription ────────────────────────
     const hasAnthropic = allModels.some((m) => m.startsWith("anthropic/"));
     let claudeMax = false;
@@ -393,7 +302,6 @@ export async function runSetup(dryRun = false): Promise<number> {
 
     if (dryRun) {
         log.message(`[dry-run] would write Magic Context config to ${paths.magicContextConfig}`);
-        log.message(`[dry-run] would add the TUI sidebar plugin to ${paths.tuiConfig}`);
     }
 
     // ─── Step 8: Oh-My-OpenCode compatibility ───────────
@@ -447,16 +355,9 @@ export async function runSetup(dryRun = false): Promise<number> {
 
         writeMagicContextConfig(paths.magicContextConfig, {
             historianModel,
-            dreamerEnabled,
-            dreamerModel,
-            dreamerTasks,
-            sidekickEnabled,
-            sidekickModel,
             claudeMax,
         });
         log.success(`Config written to ${paths.magicContextConfig}`);
-        addPluginToTuiConfig(paths.tuiConfig, paths.tuiConfigFormat);
-        log.success(`TUI sidebar plugin added to ${basename(paths.tuiConfig)}`);
 
         if (disableOmoHooks) {
             const actions = fixConflicts(process.cwd(), {
@@ -478,12 +379,6 @@ export async function runSetup(dryRun = false): Promise<number> {
         `Plugin: ${PLUGIN_NAME}`,
         "Compaction: disabled",
         historianModel ? `Historian: ${historianModel}` : "Historian: fallback chain",
-        dreamerEnabled
-            ? `Dreamer: enabled${dreamerModel ? ` (${dreamerModel})` : ""}`
-            : "Dreamer: disabled",
-        sidekickEnabled
-            ? `Sidekick: enabled${sidekickModel ? ` (${sidekickModel})` : ""}`
-            : "Sidekick: disabled",
     ].join("\n");
 
     note(summary, dryRun ? "Configuration (dry run — not written)" : "Configuration");
@@ -498,14 +393,14 @@ export async function runSetup(dryRun = false): Promise<number> {
     if (shouldStar) {
         try {
             const { execSync } = await import("node:child_process");
-            execSync("gh api --silent --method PUT /user/starred/cortexkit/magic-context", {
+            execSync("gh api --silent --method PUT /user/starred/ufoq/mini-magic-context", {
                 stdio: "ignore",
                 timeout: 10_000,
             });
             log.success("Thanks for starring! ★");
         } catch {
             log.info(
-                "Couldn't star automatically. You can star manually:\n  https://github.com/cortexkit/magic-context",
+                "Couldn't star automatically. You can star manually:\n  https://github.com/ufoq/mini-magic-context",
             );
         }
     }

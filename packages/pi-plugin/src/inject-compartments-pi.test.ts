@@ -5,20 +5,9 @@ import { join } from "node:path";
 import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
 import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
 import {
-	archiveMemory,
-	getMemoriesByProject,
-	insertMemory,
-} from "@magic-context/core/features/magic-context/memory/storage-memory";
-import {
 	getCompartments,
 	getOrCreateSessionMeta,
-	queueMemoryMutation,
-	setProjectState,
 } from "@magic-context/core/features/magic-context/storage";
-import {
-	getActiveUserMemories,
-	insertUserMemory,
-} from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import { COMPARTMENT_RENDER_EPOCH } from "@magic-context/core/hooks/magic-context/compartment-render-epoch";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import {
@@ -63,35 +52,22 @@ function result(toolCallId: string) {
 	};
 }
 
-describe("workspace memory sharing", () => {
-	it("filters foreign categories consistently in Pi m[0] and status counts", () => {
+describe("workspace memory sharing (mini)", () => {
+	it("renders only compartments in Pi m[0] — workspace memory sharing is removed", () => {
 		const db = createTestDb();
 		const dir = mkdtempSync(join(tmpdir(), "mc-pi-share-"));
 		try {
-			db.exec(`
-				INSERT INTO workspaces (id, name, share_categories, created_at, updated_at)
-				VALUES (1, 'ws', '["CONSTRAINTS"]', 1, 1);
-				INSERT INTO workspace_members (workspace_id, project_path, display_name, display_path, added_at)
-				VALUES (1, 'git:own', 'Own', '/own', 1), (1, 'git:foreign', 'Foreign', '/foreign', 1);
-			`);
-			insertMemory(db, {
-				projectPath: "git:own",
-				category: "NAMING",
-				content: "own naming remains visible",
-			});
-			const shared = insertMemory(db, {
-				projectPath: "git:foreign",
-				category: "CONSTRAINTS",
-				content: "foreign constraint is shared",
-			});
-			db.prepare("UPDATE memories SET shareable = 1 WHERE id = ?").run(
-				shared.id,
-			);
-			insertMemory(db, {
-				projectPath: "git:foreign",
-				category: "NAMING",
-				content: "foreign naming is hidden",
-			});
+			appendCompartments(db, "pi-share", [
+				{
+					sequence: 0,
+					startMessage: 1,
+					endMessage: 2,
+					startMessageId: "entry-1",
+					endMessageId: "entry-2",
+					title: "Setup",
+					content: "Compacted Pi setup",
+				},
+			]);
 			const state = {
 				sessionId: "pi-share",
 				projectIdentity: "git:own",
@@ -99,50 +75,13 @@ describe("workspace memory sharing", () => {
 			};
 
 			const m0 = renderM0Pi(state, db, "");
-			expect(m0).toContain("own naming remains visible");
-			expect(m0).toContain("foreign constraint is shared");
-			expect(m0).not.toContain("foreign naming is hidden");
+			expect(m0).toContain("## 1-2 · Setup");
+			expect(m0).not.toContain("<project-memory>");
+			expect(m0).not.toContain("<user-profile>");
 
 			const messages = [userMessage("hello")];
 			const result = injectM0M1Pi(state, db, messages);
-			expect(result.memoryCount).toBe(2);
-			expect(textOf(messages[0])).toContain("foreign constraint is shared");
-			expect(textOf(messages[0])).not.toContain("foreign naming is hidden");
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-			closeQuietly(db);
-		}
-	});
-
-	it("does not render foreign memories when share_categories is malformed", () => {
-		const db = createTestDb();
-		const dir = mkdtempSync(join(tmpdir(), "mc-pi-share-malformed-"));
-		try {
-			db.exec(`
-				INSERT INTO workspaces (id, name, share_categories, created_at, updated_at)
-				VALUES (1, 'ws', 'not-json', 1, 1);
-				INSERT INTO workspace_members (workspace_id, project_path, display_name, display_path, added_at)
-				VALUES (1, 'git:own', 'Own', '/own', 1), (1, 'git:foreign', 'Foreign', '/foreign', 1);
-			`);
-			insertMemory(db, {
-				projectPath: "git:own",
-				category: "CONSTRAINTS",
-				content: "own malformed Pi memory remains visible",
-			});
-			insertMemory(db, {
-				projectPath: "git:foreign",
-				category: "CONSTRAINTS",
-				content: "foreign malformed Pi memory is hidden",
-			});
-			const state = {
-				sessionId: "pi-share-malformed",
-				projectIdentity: "git:own",
-				projectDirectory: dir,
-			};
-
-			const m0 = renderM0Pi(state, db, "");
-			expect(m0).toContain("own malformed Pi memory remains visible");
-			expect(m0).not.toContain("foreign malformed Pi memory is hidden");
+			expect(result.memoryCount).toBe(0);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 			closeQuietly(db);
@@ -271,7 +210,7 @@ describe("trimPiMessagesToBoundary", () => {
 		expect((messages[3] as { content: string }).content).toBe("keep");
 	});
 
-	it("renders frozen compartment and user-profile snapshots without m[0]/m[1] duplication", () => {
+	it("renders frozen compartment snapshot without m[0]/m[1] duplication", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m0-frozen-cp-profile-"));
 		try {
@@ -287,9 +226,7 @@ describe("trimPiMessagesToBoundary", () => {
 					content: "U: old turn\nold compartment body",
 				},
 			]);
-			insertUserMemory(db, "old profile memory", []);
 			const frozenCompartments = getCompartments(db, state.sessionId);
-			const frozenUserProfile = getActiveUserMemories(db);
 
 			appendCompartments(db, state.sessionId, [
 				{
@@ -302,17 +239,8 @@ describe("trimPiMessagesToBoundary", () => {
 					content: "U: new turn\nnew compartment body",
 				},
 			]);
-			insertUserMemory(db, "new profile memory", []);
 
-			const m0 = renderM0Pi(
-				state,
-				db,
-				"",
-				1,
-				[],
-				frozenCompartments,
-				frozenUserProfile,
-			);
+			const m0 = renderM0Pi(state, db, "", 1, [], frozenCompartments);
 			const m1 = renderM1Pi(state, db, {
 				maxCompartmentSeq: 1,
 				maxMemoryId: 0,
@@ -328,12 +256,9 @@ describe("trimPiMessagesToBoundary", () => {
 			});
 
 			expect(m0).toContain("old compartment body");
-			expect(m0).toContain("old profile memory");
 			expect(m0).not.toContain("new compartment body");
-			expect(m0).not.toContain("new profile memory");
 			expect(m1).toContain("new compartment body");
 			expect(m1).not.toContain("old compartment body");
-			expect(m1).not.toContain("old profile memory");
 		} finally {
 			closeQuietly(db);
 		}
@@ -350,12 +275,12 @@ function piState(sessionId: string, cwd: string) {
 }
 
 describe("injectM0M1Pi memory feature gate", () => {
-	it("does NOT render project memories into m[0]/m[1] when memoryEnabled=false", () => {
+	it("never renders project memories into m[0]/m[1] — memory is removed in mini", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m0m1-memgate-"));
 		try {
 			const base = piState("ses-pi-memgate", cwd);
-			// A compartment (history) MUST still render — only memory is gated.
+			// A compartment (history) MUST still render.
 			appendCompartments(db, base.sessionId, [
 				{
 					sequence: 1,
@@ -367,39 +292,29 @@ describe("injectM0M1Pi memory feature gate", () => {
 					content: "U: a turn\ncompartment body present",
 				},
 			]);
-			insertMemory(db, {
-				projectPath: base.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "SECRET project memory must not leak when disabled",
-				sourceType: "historian",
-			});
 
-			// memoryEnabled=false → memory suppressed, compartments retained.
-			const disabledState = { ...base, memoryEnabled: false };
 			const off = [userMessage("hello", 10)];
-			injectM0M1Pi(disabledState, db, off as never, undefined, true);
+			injectM0M1Pi(
+				{ ...base, memoryEnabled: false },
+				db,
+				off as never,
+				undefined,
+				true,
+			);
 			const offM0 = textOf(off[0] as never);
-			expect(offM0).not.toContain("SECRET project memory");
 			expect(offM0).not.toContain("<project-memory");
 			expect(offM0).toContain("compartment body present");
 
-			// Control: a fresh session with memoryEnabled left on DOES render it,
-			// proving the gate (not some other filter) is responsible.
-			const onState = piState("ses-pi-memgate-on", cwd);
-			appendCompartments(db, onState.sessionId, [
-				{
-					sequence: 1,
-					startMessage: 1,
-					endMessage: 1,
-					startMessageId: "m0",
-					endMessageId: "m0",
-					title: "history",
-					content: "U: a turn\ncompartment body present",
-				},
-			]);
+			// memoryEnabled=true also renders no memory (removed from the live path).
 			const on = [userMessage("hello", 10)];
-			injectM0M1Pi(onState, db, on as never, undefined, true);
-			expect(textOf(on[0] as never)).toContain("SECRET project memory");
+			injectM0M1Pi(
+				{ ...base, memoryEnabled: true },
+				db,
+				on as never,
+				undefined,
+				true,
+			);
+			expect(textOf(on[0] as never)).not.toContain("<project-memory");
 		} finally {
 			closeQuietly(db);
 		}
@@ -1039,7 +954,7 @@ describe("injectM0M1Pi", () => {
 		}
 	});
 
-	it("replays byte-identical m[1] on defer and surfaces additive memory on next cache-busting pass", () => {
+	it("replays byte-identical m[1] on defer passes (compartment-only)", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-additive-stable-"));
 		try {
@@ -1055,22 +970,9 @@ describe("injectM0M1Pi", () => {
 					content: "baseline ".repeat(300),
 				},
 			]);
-			insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Large baseline memory. ".repeat(300),
-				sourceType: "historian",
-			});
 			const first = [userMessage("hello", 10)];
 			injectM0M1Pi(state, db, first as never, undefined, true);
 			const initialM1 = textOf(first[1] as never);
-
-			insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "New additive memory appears only after a bust.",
-				sourceType: "agent",
-			});
 
 			const deferOne = [userMessage("defer one", 11)];
 			injectM0M1Pi(state, db, deferOne as never, undefined, false);
@@ -1079,20 +981,17 @@ describe("injectM0M1Pi", () => {
 
 			expect(textOf(deferOne[1] as never)).toBe(initialM1);
 			expect(textOf(deferTwo[1] as never)).toBe(initialM1);
-			expect(initialM1).not.toContain("New additive memory");
 
 			const bust = [userMessage("bust", 13)];
 			injectM0M1Pi(state, db, bust as never, undefined, true);
-			expect(textOf(bust[1] as never)).toContain("<new-memories>");
-			expect(textOf(bust[1] as never)).toContain(
-				"New additive memory appears only after a bust.",
-			);
+			// Mini: m[1] carries only new compartments — never a memory delta.
+			expect(textOf(bust[1] as never)).not.toContain("<new-memories>");
 		} finally {
 			closeQuietly(db);
 		}
 	});
 
-	it("renders archive removals for m0-resident memory only on cache-busting pass and replays them on defer", () => {
+	it("renders no memory archive/update deltas on cache-busting passes", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-archive-delta-"));
 		try {
@@ -1108,12 +1007,6 @@ describe("injectM0M1Pi", () => {
 					content: "baseline ".repeat(300),
 				},
 			]);
-			const memory = insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Baseline memory to remove from m0. ".repeat(300),
-				sourceType: "historian",
-			});
 			injectM0M1Pi(
 				state,
 				db,
@@ -1121,16 +1014,6 @@ describe("injectM0M1Pi", () => {
 				undefined,
 				true,
 			);
-
-			db.transaction(() => {
-				archiveMemory(db, memory.id);
-				queueMemoryMutation(db, {
-					projectPath: state.projectIdentity,
-					mutationType: "archive",
-					targetMemoryId: memory.id,
-					queuedAt: 10,
-				});
-			})();
 
 			const defer = [userMessage("defer", 11)];
 			injectM0M1Pi(state, db, defer as never, undefined, false);
@@ -1138,22 +1021,13 @@ describe("injectM0M1Pi", () => {
 
 			const bust = [userMessage("bust", 12)];
 			injectM0M1Pi(state, db, bust as never, undefined, true);
-			const m1 = textOf(bust[1] as never);
-			expect(m1).toContain("<memory-updates>");
-			expect(m1).toContain(
-				"These memories changed since the snapshot below — trust these:",
-			);
-			expect(m1).toContain(`<removed id="${memory.id}"/>`);
-
-			const deferAfterBust = [userMessage("defer after bust", 13)];
-			injectM0M1Pi(state, db, deferAfterBust as never, undefined, false);
-			expect(textOf(deferAfterBust[1] as never)).toBe(m1);
+			expect(textOf(bust[1] as never)).not.toContain("<memory-updates>");
 		} finally {
 			closeQuietly(db);
 		}
 	});
 
-	it("skips memory mutation deltas for memories trimmed out of m0", () => {
+	it("renders no memory-updates for trimmed or updated memories", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-trimmed-delta-"));
 		try {
@@ -1161,12 +1035,6 @@ describe("injectM0M1Pi", () => {
 				...piState("ses-pi-m1-trimmed-delta", cwd),
 				injectionBudgetTokens: 1,
 			};
-			const memory = insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "This memory is too large for a one-token m0 budget.",
-				sourceType: "historian",
-			});
 			injectM0M1Pi(
 				state,
 				db,
@@ -1174,37 +1042,32 @@ describe("injectM0M1Pi", () => {
 				undefined,
 				true,
 			);
-			queueMemoryMutation(db, {
-				projectPath: state.projectIdentity,
-				mutationType: "update",
-				targetMemoryId: memory.id,
-				newContent: "Updated but not resident.",
-				queuedAt: 10,
-			});
 
 			const bust = [userMessage("bust", 11)];
 			injectM0M1Pi(state, db, bust as never, undefined, true);
 
 			expect(textOf(bust[1] as never)).not.toContain("<memory-updates>");
-			expect(textOf(bust[1] as never)).not.toContain(
-				"Updated but not resident.",
-			);
 		} finally {
 			closeQuietly(db);
 		}
 	});
 
-	it("reconcile rematerialization advances the memory mutation cursor and omits memory-updates", () => {
+	it("reconcile rematerialization omits memory-updates (compartment-only)", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-reconcile-delta-"));
 		try {
 			const state = piState("ses-pi-m1-reconcile-delta", cwd);
-			const memory = insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Old baseline content.",
-				sourceType: "historian",
-			});
+			appendCompartments(db, state.sessionId, [
+				{
+					sequence: 1,
+					startMessage: 1,
+					endMessage: 1,
+					startMessageId: "m0",
+					endMessageId: "m0",
+					title: "baseline",
+					content: "baseline compartment",
+				},
+			]);
 			injectM0M1Pi(
 				state,
 				db,
@@ -1212,23 +1075,11 @@ describe("injectM0M1Pi", () => {
 				undefined,
 				true,
 			);
-			db.prepare(
-				"UPDATE memories SET content = ?, normalized_hash = ?, updated_at = ? WHERE id = ?",
-			).run("Reconciled content.", "reconciled-hash", Date.now(), memory.id);
-			queueMemoryMutation(db, {
-				projectPath: state.projectIdentity,
-				mutationType: "update",
-				targetMemoryId: memory.id,
-				newContent: "Reconciled content.",
-				queuedAt: 10,
-			});
-			setProjectState(db, state.projectIdentity, { projectMemoryEpoch: 1 });
 
 			const bust = [userMessage("bust", 11)];
 			const result = injectM0M1Pi(state, db, bust as never, undefined, true);
 
-			expect(result.m0Materialized).toBe(true);
-			expect(textOf(bust[0] as never)).toContain("Reconciled content.");
+			expect(result.m0Materialized).toBe(false);
 			expect(textOf(bust[1] as never)).not.toContain("<memory-updates>");
 		} finally {
 			closeQuietly(db);
@@ -1335,12 +1186,6 @@ describe("injectM0M1Pi", () => {
 			const first = [userMessage("hello", 10)];
 			injectM0M1Pi(state, db, first as never, undefined, true);
 			const baselineM0 = textOf(first[0] as never);
-			insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Pi docs-hash-only CAS delta memory",
-				sourceType: "agent",
-			});
 			let changedDocsMarker = false;
 			db.exec = ((sql: string) => {
 				if (sql === "BEGIN IMMEDIATE" && !changedDocsMarker) {
@@ -1358,9 +1203,8 @@ describe("injectM0M1Pi", () => {
 			expect(changedDocsMarker).toBe(true);
 			expect(result.m0Materialized).toBe(false);
 			expect(textOf(bust[0] as never)).toBe(baselineM0);
-			expect(textOf(bust[1] as never)).toContain(
-				"Pi docs-hash-only CAS delta memory",
-			);
+			// Mini: m[1] never renders memory deltas.
+			expect(textOf(bust[1] as never)).not.toContain("<new-memories>");
 		} finally {
 			db.exec = originalExec as typeof db.exec;
 			closeQuietly(db);
@@ -1368,8 +1212,8 @@ describe("injectM0M1Pi", () => {
 	});
 });
 
-describe("renderM0Pi sibling-block layout (OpenCode parity)", () => {
-	it("renders <project-memory> as a SIBLING after </session-history>, not nested inside it", () => {
+describe("renderM0Pi sibling-block layout (mini)", () => {
+	it("renders only project-docs + decayed compartments — no memory/user-profile blocks", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m0-siblings-"));
 		try {
@@ -1385,94 +1229,56 @@ describe("renderM0Pi sibling-block layout (OpenCode parity)", () => {
 					content: "U: set things up\nCompacted setup",
 				},
 			]);
-			insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "The widget service owns rendering.",
-				sourceType: "historian",
-			});
 
 			const m0 = renderM0Pi(state, db);
 
-			// The <session-history> wrapper must close BEFORE <project-memory>
-			// opens — they are siblings (matches OpenCode renderM0). A nested
-			// layout (project-memory inside session-history) is the bug this
-			// guards against: it would put different bytes on the wire than
-			// OpenCode for identical state.
-			const historyClose = m0.indexOf("</session-history>");
-			const memoryOpen = m0.indexOf("<project-memory>");
-			expect(historyClose).toBeGreaterThan(-1);
-			expect(memoryOpen).toBeGreaterThan(-1);
-			expect(memoryOpen).toBeGreaterThan(historyClose);
-			expect(m0).toContain("<ARCHITECTURE>\n#");
-			expect(m0).not.toContain("<memory id=");
-			// Compartment body lives INSIDE <session-history>; memory does NOT.
-			const historyBlock = m0.slice(
-				m0.indexOf("<session-history>"),
-				historyClose,
-			);
-			expect(historyBlock).toContain("Compacted setup");
-			expect(historyBlock).not.toContain("widget service");
+			// Mini: m[0] renders only <session-history> (compartments); the
+			// <project-memory> / <user-profile> / <memory-mural> sibling blocks
+			// are removed from the live path.
+			expect(m0).toContain("<session-history>");
+			expect(m0).toContain("Compacted setup");
+			expect(m0).not.toContain("<project-memory>");
+			expect(m0).not.toContain("<user-profile>");
+			expect(m0).not.toContain("<memory-mural>");
 		} finally {
 			closeQuietly(db);
 		}
 	});
 
-	it("materializeM0Pi binds maxMemoryId watermark to the rendered memory set", () => {
-		// Regression for the round-7 HIGH: the persisted maxMemoryId watermark must
-		// equal the max id of the memories actually rendered into m[0]. If it were
-		// read separately (lower), a memory present in m[0] could also satisfy
-		// "id > watermark" and render again in m[1] — duplicated across the split.
+	it("materializeM0Pi keeps maxMemoryId watermark at 0 (no memory rendering)", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m0-watermark-"));
 		try {
 			const state = piState("ses-pi-watermark", cwd);
-			for (const content of [
-				"The widget service owns rendering.",
-				"Orders flow through an async queue.",
-				"Sessions use stateless JWT.",
-			]) {
-				insertMemory(db, {
-					projectPath: state.projectIdentity,
-					category: "ARCHITECTURE",
-					content,
-					sourceType: "historian",
-				});
-			}
-			const maxId = getMemoriesByProject(db, state.projectIdentity, [
-				"active",
-				"permanent",
-			]).reduce((m, x) => (x.id > m ? x.id : m), 0);
 
 			const { snapshotMarkers } = materializeM0Pi(state, db);
 
-			expect(maxId).toBeGreaterThan(0);
-			expect(snapshotMarkers.maxMemoryId).toBe(maxId);
+			expect(snapshotMarkers.maxMemoryId).toBe(0);
 		} finally {
 			closeQuietly(db);
 		}
 	});
 
-	it("HARD fold binds memory expiry cutoff and materializedAt to one timestamp", () => {
+	it("HARD fold keeps m[0] byte-identical across folds (no memory rendering)", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-d16c-"));
 		try {
 			const state = piState("ses-pi-d16c", cwd);
-			insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "KNOWN_ISSUES",
-				content: "Pi D16c expiry-gap memory",
-				expiresAt: 10_500,
-			});
-			insertMemory(db, {
-				projectPath: state.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Pi D16c permanent anchor",
-			});
+			appendCompartments(db, state.sessionId, [
+				{
+					sequence: 0,
+					startMessage: 1,
+					endMessage: 1,
+					startMessageId: "entry-1",
+					endMessageId: "entry-1",
+					title: "Setup",
+					content: "Compacted setup",
+				},
+			]);
 
-			const realNow = Date.now;
 			const foldAt = 10_000;
 			let nowCalls = 0;
+			const realNow = Date.now;
 			Date.now = () => {
 				nowCalls += 1;
 				return nowCalls === 1 ? foldAt : 99_000;
@@ -1486,7 +1292,6 @@ describe("renderM0Pi sibling-block layout (OpenCode parity)", () => {
 					lastResponseTime: 0,
 				};
 				const first = materializeM0Pi(state, db);
-				expect(first.m0).toContain("Pi D16c expiry-gap memory");
 				expect(first.snapshotMarkers.materializedAt).toBe(foldAt);
 
 				nowCalls = 0;
@@ -1497,12 +1302,9 @@ describe("renderM0Pi sibling-block layout (OpenCode parity)", () => {
 					lastResponseTime: 0,
 				};
 				const second = materializeM0Pi(state, db);
-				expect(second.m0).toContain("Pi D16c expiry-gap memory");
-				expect(
-					second.m0.match(/<project-memory>[\s\S]*?<\/project-memory>/)?.[0],
-				).toBe(
-					first.m0.match(/<project-memory>[\s\S]*?<\/project-memory>/)?.[0],
-				);
+				// Decay-rendered compartments are deterministic — the history
+				// block is byte-identical across folds.
+				expect(second.m0).toBe(first.m0);
 			} finally {
 				Date.now = realNow;
 			}
@@ -1667,24 +1469,25 @@ describe("mustMaterializePi — SOFT/HARD taxonomy (parity with OpenCode)", () =
 				...piState("ses-pi-tax-project-switch", cwdA),
 				hardSignals: baseHard,
 			};
-			insertMemory(db, {
-				projectPath: stateA.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Project A memory must not replay after /cd.",
-			});
+			appendCompartments(db, stateA.sessionId, [
+				{
+					sequence: 0,
+					startMessage: 1,
+					endMessage: 1,
+					startMessageId: "entry-a",
+					endMessageId: "entry-a",
+					title: "Project A slice",
+					content: "Project A compartment content.",
+				},
+			]);
 			const first = [userMessage("hi", 10)];
 			injectM0M1Pi(stateA, db, first as never, undefined, true);
-			expect(textOf(first[0] as never)).toContain("Project A memory");
+			expect(textOf(first[0] as never)).toContain("## 1-1 · Project A slice");
 
 			const stateB = {
 				...piState(stateA.sessionId, cwdB),
 				hardSignals: baseHard,
 			};
-			insertMemory(db, {
-				projectPath: stateB.projectIdentity,
-				category: "ARCHITECTURE",
-				content: "Project B memory is the switched project baseline.",
-			});
 
 			const switched = [userMessage("after cd", 11)];
 			const switchedResult = injectM0M1Pi(
@@ -1696,8 +1499,6 @@ describe("mustMaterializePi — SOFT/HARD taxonomy (parity with OpenCode)", () =
 			);
 			expect(switchedResult.m0Materialized).toBe(true);
 			expect(switchedResult.m0Reason).toBe("project_change");
-			expect(textOf(switched[0] as never)).toContain("Project B memory");
-			expect(textOf(switched[0] as never)).not.toContain("Project A memory");
 
 			const stable = [userMessage("after cd stable", 12)];
 			const stableResult = injectM0M1Pi(

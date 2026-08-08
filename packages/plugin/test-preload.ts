@@ -6,7 +6,7 @@
 // cortexkit DB through `getDataDir()` = `XDG_DATA_HOME ?? ~/.local/share`. Any
 // test that calls bare `openDatabase()` without setting XDG_DATA_HOME therefore
 // opens the user's REAL production database
-// (~/.local/share/cortexkit/magic-context/context.db). That is harmless only
+// (~/.local/share/cortexkit/mini-magic-context/context.db). That is harmless only
 // while the DB's schema version already equals LATEST_SUPPORTED_VERSION — the
 // moment LATEST advances, that test runs the new migration on the user's LIVE
 // DB. 2026-06-01 incident: a long-dormant unisolated test migrated the

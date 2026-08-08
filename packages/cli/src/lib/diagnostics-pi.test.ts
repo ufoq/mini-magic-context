@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { projectPathToPiDirSlug } from "../commands/migrate";
 import { collectDiagnostics, sanitizeValue } from "./diagnostics-pi";
+import { projectPathToPiSessionSlug } from "./migration-paths";
 
 setDefaultTimeout(15_000);
 
@@ -77,7 +77,7 @@ describe("collectDiagnostics Pi path resolution", () => {
 
         const customProject = "/tmp/mcdiagnosticproject";
         const customSessionId = "2026-07-07T12-00-00-000Z_customsession";
-        const customSlugDir = join(agentDir, "sessions", projectPathToPiDirSlug(customProject));
+        const customSlugDir = join(agentDir, "sessions", projectPathToPiSessionSlug(customProject));
         mkdirSync(customSlugDir, { recursive: true });
         writeFileSync(join(customSlugDir, `${customSessionId}.jsonl`), '{"type":"session"}\n');
 
@@ -86,7 +86,7 @@ describe("collectDiagnostics Pi path resolution", () => {
             ".pi",
             "agent",
             "sessions",
-            projectPathToPiDirSlug("/tmp/homefallbackproject"),
+            projectPathToPiSessionSlug("/tmp/homefallbackproject"),
         );
         mkdirSync(homeFallbackSlugDir, { recursive: true });
         writeFileSync(

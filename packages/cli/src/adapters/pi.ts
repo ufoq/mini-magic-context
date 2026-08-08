@@ -18,7 +18,7 @@ import type {
     PluginEntryResult,
 } from "./types";
 
-const PLUGIN_NAME = "@cortexkit/pi-magic-context";
+const PLUGIN_NAME = "@ufoq/pi-mini-magic-context";
 const SETTINGS_BASENAME = "settings.json";
 
 export class PiAdapter implements HarnessAdapter {
@@ -43,7 +43,6 @@ export class PiAdapter implements HarnessAdapter {
             configDir: dir,
             pluginConfigPath: getPiUserExtensionsPath(),
             magicContextConfigPath: getPiUserConfigPath(),
-            secondaryConfigPath: null,
         };
     }
 

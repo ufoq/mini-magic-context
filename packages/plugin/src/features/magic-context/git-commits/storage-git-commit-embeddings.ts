@@ -15,10 +15,6 @@ interface CommitEmbeddingRow {
     model_id: string;
 }
 
-interface StoredCommitModelIdRow {
-    modelId: string | null;
-}
-
 interface UnembeddedRow {
     sha: string;
     message: string;
@@ -89,7 +85,7 @@ function getCountEmbeddedStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getClearProjectStatement(db: Database): PreparedStatement {
+function _getClearProjectStatement(db: Database): PreparedStatement {
     let stmt = clearProjectStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(
@@ -101,7 +97,7 @@ function getClearProjectStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getClearProjectModelStatement(db: Database): PreparedStatement {
+function _getClearProjectModelStatement(db: Database): PreparedStatement {
     let stmt = clearProjectModelStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(
@@ -113,7 +109,7 @@ function getClearProjectModelStatement(db: Database): PreparedStatement {
     return stmt;
 }
 
-function getDistinctModelIdStatement(db: Database): PreparedStatement {
+function _getDistinctModelIdStatement(db: Database): PreparedStatement {
     let stmt = distinctModelIdStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(

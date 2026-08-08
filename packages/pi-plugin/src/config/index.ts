@@ -8,9 +8,6 @@ import {
 import "@magic-context/core/config/prune-config-leaf";
 import { existsSync, readFileSync } from "node:fs";
 
-import { migrateLegacyAgentEnabledInMemory } from "@magic-context/core/config/agent-disable";
-import { migrateDreamerV2 } from "@magic-context/core/config/migrate-dreamer-v2";
-import { migrateLegacyExperimental } from "@magic-context/core/config/migrate-experimental";
 import {
 	constrainProjectThresholdOverrides,
 	dropInheritedEmbeddingKeyOnRedirect,
@@ -177,19 +174,8 @@ function parsePiConfig(
 	config: MagicContextConfig;
 	warnings: string[];
 } {
+	const migrated = rawConfig;
 	const preMigrationWarnings: string[] = [];
-	const agentMigrated = migrateLegacyAgentEnabledInMemory(
-		rawConfig,
-		preMigrationWarnings,
-	);
-	// Relocate graduated experimental.* keys (temporal_awareness, caveman →
-	// top-level; auto_search, git_commit_indexing → memory.*; user_memories,
-	// pin_key_files → dreamer.*). Shared with OpenCode so both harnesses preserve
-	// a user's opt-in/opt-out across the upgrade.
-	const migrated = migrateDreamerV2(
-		migrateLegacyExperimental(agentMigrated, preMigrationWarnings),
-		preMigrationWarnings,
-	);
 	const parsed = MagicContextConfigSchema.safeParse(migrated);
 	if (parsed.success) {
 		return { config: parsed.data, warnings: preMigrationWarnings };
@@ -216,8 +202,7 @@ function parsePiConfig(
 
 	for (const key of errorPaths) {
 		recoveredTopLevelKeys.push(key);
-		const isAgentConfig =
-			key === "historian" || key === "dreamer" || key === "sidekick";
+		const isAgentConfig = key === "historian";
 
 		if (isAgentConfig) {
 			delete patched[key];
@@ -317,7 +302,7 @@ export function loadPiConfig(
 
 	if (userLegacyFallback) {
 		warnings.push(
-			`[user config] reading legacy config from ${userLegacyFallback.path} until migration completes; run \`npx @cortexkit/magic-context doctor\` to consolidate into the shared CortexKit location.`,
+			`[user config] reading legacy config from ${userLegacyFallback.path} until migration completes; run \`npx @ufoq/mini-magic-context doctor\` to consolidate into the shared CortexKit location.`,
 		);
 	} else if (legacyUserUnmigrated) {
 		warnings.push(
@@ -327,7 +312,7 @@ export function loadPiConfig(
 
 	if (projectLegacyFallback) {
 		warnings.push(
-			`[project config] reading legacy config from ${projectLegacyFallback.path} until migration completes; run \`npx @cortexkit/magic-context doctor\` to consolidate into the shared CortexKit location.`,
+			`[project config] reading legacy config from ${projectLegacyFallback.path} until migration completes; run \`npx @ufoq/mini-magic-context doctor\` to consolidate into the shared CortexKit location.`,
 		);
 	} else if (legacyProjectUnmigrated) {
 		warnings.push(
@@ -490,7 +475,7 @@ export function loadPiConfigDetailed(
 
 	if (userLegacyFallback) {
 		warnings.push(
-			`[user config] reading legacy config from ${userLegacyFallback.path} until migration completes; run \`npx @cortexkit/magic-context doctor\` to consolidate into the shared CortexKit location.`,
+			`[user config] reading legacy config from ${userLegacyFallback.path} until migration completes; run \`npx @ufoq/mini-magic-context doctor\` to consolidate into the shared CortexKit location.`,
 		);
 	} else if (legacyUserUnmigrated) {
 		warnings.push(
@@ -500,7 +485,7 @@ export function loadPiConfigDetailed(
 
 	if (projectLegacyFallback) {
 		warnings.push(
-			`[project config] reading legacy config from ${projectLegacyFallback.path} until migration completes; run \`npx @cortexkit/magic-context doctor\` to consolidate into the shared CortexKit location.`,
+			`[project config] reading legacy config from ${projectLegacyFallback.path} until migration completes; run \`npx @ufoq/mini-magic-context doctor\` to consolidate into the shared CortexKit location.`,
 		);
 	} else if (legacyProjectUnmigrated) {
 		warnings.push(

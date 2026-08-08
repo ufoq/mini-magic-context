@@ -209,7 +209,7 @@ function installResolvablePlugin(
     const pluginDir = mkdtempSync(join(tmpdir(), "mc-pi-plugin-"));
     writeFileSync(
         join(pluginDir, "package.json"),
-        JSON.stringify({ name: "@cortexkit/pi-magic-context", version: "0.0.0" }),
+        JSON.stringify({ name: "@ufoq/pi-mini-magic-context", version: "0.0.0" }),
     );
     if (withPackage) {
         const pkgDir = join(pluginDir, "node_modules", "onnxruntime-node");

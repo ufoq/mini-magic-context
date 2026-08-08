@@ -480,7 +480,7 @@ const MIGRATIONS: Migration[] = [
         version: 7,
         description: "Add harness column to notes table for cross-harness sharing",
         // The unified `notes` table was created by migration v1. As of
-        // plugin v0.16+ we share `~/.local/share/cortexkit/magic-context/`
+        // Mini Magic Context shares `~/.local/share/cortexkit/mini-magic-context/`
         // between OpenCode and Pi, so every session-scoped table needs to
         // record which harness wrote each row. All other session-scoped
         // tables get the column via ensureColumn() in initializeDatabase()

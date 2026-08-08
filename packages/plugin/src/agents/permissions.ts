@@ -44,7 +44,7 @@ import { log } from "../shared/logger";
  *   - **historian / historian-editor / compressor**: `read` plus the
  *     read-only AFT navigation/search tools `aft_outline`, `aft_zoom`,
  *     and `aft_search`. The runner offloads large existing-state XML to
- *     a temp file under `<project>/.opencode/magic-context/historian/`
+ *     a temp file under `<project>/.cortexkit/mini-magic-context/historian/`
  *     and the prompt instructs the model to read that file. AFT
  *     navigation is allowed so historian can find or verify a symbol or
  *     file structure when writing accurate compartment summaries.

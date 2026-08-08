@@ -90,18 +90,9 @@ function isInternalOpenCodeAgent(systemPromptContent: string): boolean {
  */
 export function isMagicContextInternalAgent(systemPromptContent: string): boolean {
     return (
-        // HISTORIAN_AGENT (also used by memory-migration)
         systemPromptContent.includes(
             "You are Historian — the hippocampus of a long-running coding agent.",
-        ) ||
-        // Every dreamer task prompt (generic base + curate / maintain-docs /
-        // review-user-memories / primer-investigator) shares this identity phrase,
-        // so one substring covers them all even though their openers differ.
-        systemPromptContent.includes("for the magic-context system") ||
-        // SIDEKICK_SYSTEM_PROMPT
-        systemPromptContent.includes(
-            "You are Sidekick, a focused memory-retrieval subagent for an AI coding assistant.",
-        )
+        ) || systemPromptContent.includes("for the magic-context system")
     );
 }
 
@@ -119,12 +110,6 @@ export function isMagicContextInternalAgent(systemPromptContent: string): boolea
 export function createSystemPromptHashHandler(deps: {
     db: ContextDatabase;
     protectedTags: number;
-    dreamerEnabled: boolean;
-    /** When false (`memory.enabled: false`), the `<project-memory>` block is
-     *  never injected, so ctx_memory guidance is dropped from the prompt and the
-     *  ctx_memory tool is not registered. ctx_search guidance stays (it still
-     *  recalls conversation + git commits). Default true. */
-    memoryEnabled?: boolean;
     /** Optional language from user config for the main agent's generated text. */
     language?: string;
     /**
@@ -240,7 +225,7 @@ export function createSystemPromptHashHandler(deps: {
         ) {
             sessionLog(
                 sessionId,
-                "system-prompt-hash skipped (Magic Context internal child: historian/dreamer/sidekick/migration)",
+                "system-prompt-hash skipped (Magic Context internal child: historian)",
             );
             return;
         }
@@ -315,12 +300,12 @@ export function createSystemPromptHashHandler(deps: {
                 null,
                 deps.protectedTags,
                 effectiveCtxReduceEnabled,
-                deps.dreamerEnabled,
+                true,
                 deps.experimentalTemporalAwareness,
                 deps.experimentalCavemanTextCompression,
                 subagentReduceMode,
                 deps.language,
-                deps.memoryEnabled !== false,
+                true,
             );
             output.system.push(guidance);
             sessionLog(

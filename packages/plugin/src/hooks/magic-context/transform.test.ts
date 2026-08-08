@@ -8,8 +8,6 @@ import {
     replaceAllCompartmentState,
     replaceAllCompartments,
 } from "../../features/magic-context/compartment-storage";
-import { insertMemory } from "../../features/magic-context/memory";
-import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import {
     __resetMessageIndexAsyncForTests,
     isSessionReconciled,
@@ -208,11 +206,12 @@ describe("createTransform", () => {
         //#when
         await transform({}, { messages });
 
-        //#then — tagging happens, but the deleted rolling-nudge no longer appends.
+        //#then — tags are durable, but mini no longer injects model-visible prefixes.
         expect(text(messages[2], 0)).not.toContain("Context at ~45%");
-        expect(text(messages[0], 0)).toStartWith("§1§ ");
-        expect(text(messages[1], 0)).toContain("§2§ ");
-        expect(toolOutput(messages[1], 1)).toStartWith("§3§ ");
+        expect(text(messages[0], 0)).toBe("Plan this change");
+        expect(text(messages[1], 0)).toBe("Implemented");
+        expect(toolOutput(messages[1], 1)).toBe("tool output");
+        expect(getTagsBySession(db, "ses-1")).toHaveLength(4);
     });
 
     it("does not inject user messages for emergency nudges (handled by promptAsync)", async () => {
@@ -957,7 +956,7 @@ describe("createTransform", () => {
         // is covered in apply-operations.tool-drop.test.ts.)
         expect(secondPass).toHaveLength(1);
         expect(secondPass[0]?.info.role).toBe("user");
-        const userShellText = (secondPass[0]?.parts[0] as { text: string }).text;
+        const userShellText = (secondPass[0].parts[0] as { text: string }).text;
         expect(userShellText).toBe("[dropped \u00a71\u00a7]");
         expect(getTagById(db, "ses-1", 1)?.status).toBe("dropped");
         expect(getTagById(db, "ses-1", 2)?.status).toBe("dropped");
@@ -1030,13 +1029,13 @@ describe("createTransform", () => {
         //#then — sentinel replacement preserves array length;
         // the user message stays, assistant message neutralized to a sentinel.
         expect(secondPass).toHaveLength(2);
-        expect(text(secondPass[0], 0)).toStartWith("\u00a71\u00a7 ");
+        expect(text(secondPass[0], 0)).toBe("user prompt");
         // Assistant message (previously dropped) now carries a single sentinel
         // part. Test doesn't set providerID → `[dropped]` (safe non-anthropic).
         expect(secondPass[1].parts).toEqual([{ type: "text", text: "[dropped]" }]);
     });
 
-    it("Unit B: subagent with ctx_reduce enabled DOES get §N§ prefix (self-management)", async () => {
+    it("keeps subagent text unprefixed while still recording tags", async () => {
         //#given
         useTempDataHome("context-transform-subagent-");
         const scheduler: Scheduler = { shouldExecute: mock(() => "execute" as const) };
@@ -1071,10 +1070,7 @@ describe("createTransform", () => {
         await transform({}, { messages });
 
         //#then
-        // Unit B: subagents share the process-global ctx_reduce tool, so with
-        // ctx_reduce enabled (the default here) they DO get the §N§ prefix and
-        // self-manage tool bloat. DB tag records exist either way.
-        expect(text(messages[0], 0)).toStartWith("\u00a71\u00a7 ");
+        expect(text(messages[0], 0)).toBe("do not touch");
         expect(getTagsBySession(db, "ses-sub")).toHaveLength(1);
         expect(scheduler.shouldExecute).toHaveBeenCalled();
     });
@@ -1168,17 +1164,11 @@ describe("createTransform", () => {
         expect(text(messages[2], 0)).toContain("hello");
     });
 
-    it("injects project memory inside session-history when compartments exist", async () => {
+    it("injects compartment history without project memory", async () => {
         //#given
         useTempDataHome("context-transform-memory-compartment-");
         const scheduler: Scheduler = { shouldExecute: mock(() => "defer" as const) };
         const db = openDatabase();
-        const projectPath = resolveProjectIdentity("/repo/project");
-        insertMemory(db, {
-            projectPath,
-            category: "USER_DIRECTIVES",
-            content: "Always use Bun",
-        });
         replaceAllCompartments(db, "ses-memory", [
             {
                 sequence: 0,
@@ -1218,25 +1208,19 @@ describe("createTransform", () => {
         //#when
         await transform({}, { messages });
 
-        //#then — memory block appears inside session-history alongside compartments
+        //#then — mini renders compartments only.
         const injected = text(messages[0]!, 0);
         expect(injected).toContain("<session-history>");
-        expect(injected).toContain("<project-memory>");
-        expect(injected).toContain("Always use Bun");
+        expect(injected).not.toContain("<project-memory>");
         // A legacy compartment without a U: line decays to a title-only heading.
         expect(injected).toMatch(/## \d+-\d+ · Setup/);
     });
 
-    it("skips project memory injection for subagent sessions", async () => {
+    it("skips compartment injection for subagent sessions", async () => {
         //#given
         useTempDataHome("context-transform-memory-subagent-");
         const scheduler: Scheduler = { shouldExecute: mock(() => "defer" as const) };
         const db = openDatabase();
-        insertMemory(db, {
-            projectPath: resolveProjectIdentity("/repo/project"),
-            category: "USER_DIRECTIVES",
-            content: "Always use Bun",
-        });
         updateSessionMeta(db, "ses-sub-memory", { isSubagent: true });
         const transform = createTransform({
             tagger: createTagger(),
@@ -1321,11 +1305,8 @@ describe("createTransform", () => {
 
         await transform({}, { messages: secondPass });
 
-        // Sentinel replacement preserves array length. Unit B: subagents with
-        // ctx_reduce enabled DO get the §N§ prefix on user text.
-        // Test doesn't set providerID → `[dropped]` sentinel.
         expect(secondPass).toHaveLength(2);
-        expect(text(secondPass[0], 0)).toStartWith("\u00a71\u00a7 ");
+        expect(text(secondPass[0], 0)).toBe("keep this");
         expect(secondPass[1].parts).toEqual([{ type: "text", text: "[dropped]" }]);
         expect(getPendingOps(db, "ses-sub-drop")).toHaveLength(0);
     });
@@ -1386,10 +1367,7 @@ describe("createTransform", () => {
         expect(firstToolTag?.status).toBe("dropped");
     });
 
-    it("Unit B: subagent (ctx_reduce on) gets a Channel 1 baseline snapshot", async () => {
-        // Channel 1 (in-turn tool-output nudge) is gated on ctx_reduce being
-        // effective, NOT on fullFeatureMode — so subagents that share the
-        // process-global ctx_reduce tool DO get a baseline + nudges.
+    it("does not create Channel 1 state for subagents", async () => {
         useTempDataHome("context-transform-sub-ch1-");
         const scheduler: Scheduler = { shouldExecute: mock(() => "defer" as const) };
         const db = openDatabase();
@@ -1426,11 +1404,10 @@ describe("createTransform", () => {
                 ],
             },
         );
-        // Baseline recorded → Channel 1 is active for this subagent.
-        expect(channel1StateBySession.has("ses-sub-ch1")).toBe(true);
+        expect(channel1StateBySession.has("ses-sub-ch1")).toBe(false);
     });
 
-    it("resets the persisted Channel 1 band when baseline refresh sees a smaller tail", async () => {
+    it("leaves legacy Channel 1 band state untouched when the channel is disabled", async () => {
         useTempDataHome("context-transform-band-reset-");
         const sessionId = "ses-band-reset";
         const scheduler: Scheduler = { shouldExecute: mock(() => "defer" as const) };
@@ -1471,8 +1448,8 @@ describe("createTransform", () => {
             },
         );
 
-        expect(getLastNudgeUndropped(db, sessionId)).toBe(0);
-        expect(getLastNudgeLevel(db, sessionId)).toBe("");
+        expect(getLastNudgeUndropped(db, sessionId)).toBe(80_000);
+        expect(getLastNudgeLevel(db, sessionId)).toBe("urgent");
     });
 
     it("Unit B: primary without callable ctx_reduce gets NO Channel 1 baseline (latent-gap fix)", async () => {
@@ -1524,7 +1501,7 @@ describe("createTransform", () => {
         expect(channel1StateBySession.has("ses-noreduce-ch1")).toBe(false);
     });
 
-    it("runs caveman compression for a primary with ctx_reduce available while skipping dropped tags", async () => {
+    it("runs caveman compression for a primary while skipping dropped tags", async () => {
         useTempDataHome("context-transform-caveman-with-reduce-");
         const sessionId = "ses-caveman-with-reduce";
         let decision: "defer" | "execute" = "defer";
@@ -1583,8 +1560,6 @@ describe("createTransform", () => {
             },
         ];
 
-        // First pass tags only. The first user message explicitly allows ctx_reduce,
-        // freezing the availability gate in the reduce-enabled state.
         await transform({}, { messages });
         const firstTag = getTagsBySession(db, sessionId).find(
             (tag) => tag.messageId === "m-drop:p0",
@@ -1726,8 +1701,9 @@ describe("createTransform", () => {
         // The injected prefix must be present inside the tagged content, proving that
         // tagging happened AFTER injection (i.e. injector ran first, tagger ran second).
         const taggedText = text(messages[0], 0);
-        expect(taggedText).toStartWith("\u00a71\u00a7 ");
+        expect(taggedText).toBe(`${injectedPrefix}original user message`);
         expect(taggedText).toContain(injectedPrefix);
+        expect(getTagsBySession(openDatabase(), "ses-order")).toHaveLength(1);
     });
 
     it("assigns separate tags to multiple text parts in the same message to prevent synthetic content collision", async () => {
@@ -1768,10 +1744,9 @@ describe("createTransform", () => {
         //#then
         const firstPart = text(messages[0], 0);
         const secondPart = text(messages[0], 1);
-        expect(firstPart).toStartWith("\u00a71\u00a7 ");
-        expect(secondPart).toStartWith("\u00a72\u00a7 ");
-        expect(firstPart).toContain("[synthetic injected content]");
-        expect(secondPart).toContain("actual user message");
+        expect(firstPart).toBe("[synthetic injected content]");
+        expect(secondPart).toBe("actual user message");
+        expect(getTagsBySession(openDatabase(), "ses-multi")).toHaveLength(2);
 
         const db = openDatabase();
         queuePendingOp(db, "ses-multi", 1, "drop");
@@ -1792,8 +1767,7 @@ describe("createTransform", () => {
         // role guard in stripDroppedPlaceholderMessages), so the turn boundary
         // survives for AI SDK's Anthropic adapter. The sibling part is untouched.
         expect(text(secondPass[0], 0)).toBe("[dropped \u00a71\u00a7]");
-        expect(text(secondPass[0], 1)).toStartWith("\u00a72\u00a7 ");
-        expect(text(secondPass[0], 1)).toContain("actual user message");
+        expect(text(secondPass[0], 1)).toBe("actual user message");
     });
 
     it("clears thinking parts when a text part in the same message is dropped", async () => {
@@ -1981,7 +1955,8 @@ describe("createTransform", () => {
         await transform({}, { messages });
 
         //#then — tagging still happened (fail-open).
-        expect(text(messages[0], 0)).toStartWith("§1§ ");
+        expect(text(messages[0], 0)).toBe("hello");
+        expect(getTagsBySession(openDatabase(), "ses-scheduler-fail")).toHaveLength(2);
     });
 
     it("resets persisted usage on first pass then lazy-loads on second pass", async () => {

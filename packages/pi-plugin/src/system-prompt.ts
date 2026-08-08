@@ -40,7 +40,6 @@ export interface BuildMagicContextBlockOptions {
 	includeGuidance?: boolean;
 	protectedTags?: number;
 	ctxReduceCallable?: boolean;
-	dreamerEnabled?: boolean;
 	temporalAwarenessEnabled?: boolean;
 	cavemanTextCompressionEnabled?: boolean;
 	language?: string;
@@ -68,14 +67,12 @@ export function buildMagicContextBlock(
 		null,
 		opts.protectedTags ?? 20,
 		opts.ctxReduceCallable ?? true,
-		opts.dreamerEnabled ?? false,
+		true,
 		opts.temporalAwarenessEnabled ?? false,
 		opts.cavemanTextCompressionEnabled ?? false,
 		false,
 		opts.language,
-		// Drop ctx_memory guidance when memory is off (the tool is gated via
-		// registerMagicContextTools memoryToolEnabled). ctx_search guidance stays.
-		opts.memoryEnabled !== false,
+		true,
 	);
 }
 

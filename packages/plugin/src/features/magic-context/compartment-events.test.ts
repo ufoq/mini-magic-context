@@ -16,8 +16,8 @@ beforeEach(() => {
     prevDataHome = process.env.XDG_DATA_HOME;
     tempHome = mkdtempSync(join(tmpdir(), "mc-events-"));
     process.env.XDG_DATA_HOME = tempHome;
-    // openDatabase() requires the cortexkit/magic-context parent dir to exist.
-    mkdirSync(join(tempHome, "cortexkit", "magic-context"), { recursive: true });
+    // openDatabase() requires the CortexKit Mini storage parent directory to exist.
+    mkdirSync(join(tempHome, "cortexkit", "mini-magic-context"), { recursive: true });
     closeDatabase();
 });
 

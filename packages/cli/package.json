@@ -1,7 +1,7 @@
 {
-  "name": "@cortexkit/magic-context",
-  "version": "0.33.1",
-  "description": "Unified CLI for Magic Context — setup, doctor, and migration across OpenCode and Pi",
+  "name": "@ufoq/mini-magic-context",
+  "version": "0.1.0",
+  "description": "Unified CLI for Mini Magic Context setup and diagnostics across OpenCode and Pi",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -16,22 +16,22 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cortexkit/magic-context"
+    "url": "https://github.com/ufoq/mini-magic-context"
   },
-  "homepage": "https://github.com/cortexkit/magic-context#readme",
+  "homepage": "https://github.com/ufoq/mini-magic-context#readme",
   "bugs": {
-    "url": "https://github.com/cortexkit/magic-context/issues"
+    "url": "https://github.com/ufoq/mini-magic-context/issues"
   },
   "type": "module",
   "bin": {
-    "magic-context": "dist/index.js"
+    "mini-magic-context": "dist/index.js"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outfile dist/index.js --target node --format esm --external node:sqlite",
+    "build": "rm -rf dist && bun build src/index.ts --outfile dist/index.js --target node --format esm --external node:sqlite",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome check src",
@@ -41,7 +41,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.6.0",
-    "@cortexkit/subc-client": "0.4.1",
     "comment-json": "^5.0.0"
   },
   "devDependencies": {

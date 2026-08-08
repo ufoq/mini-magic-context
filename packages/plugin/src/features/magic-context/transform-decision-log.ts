@@ -1,6 +1,5 @@
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { getDatabasePath } from "./storage-db";
 
 export type TransformDecisionHarness = "opencode" | "pi";
 export type TransformSchedulerDecision =
@@ -212,32 +211,11 @@ export function scheduleOpenCodeTransformDecisionWrite(args: {
     messageId: string;
     inputTokens: number;
 }): boolean {
-    const pending = pendingDecisionBySession.get(args.sessionId);
-    if (!pending) return false;
-    if (lastBoundMessageIdBySession.get(args.sessionId) === args.messageId) {
-        return false;
-    }
-    const dbPath = getDatabasePath(args.db);
-    if (!dbPath) return false;
-
-    lastBoundMessageIdBySession.set(args.sessionId, args.messageId);
+    void args.db;
+    void args.inputTokens;
     pendingDecisionBySession.delete(args.sessionId);
-    const token = addScheduledWriteToken(args.sessionId);
-    setTimeout(() => {
-        try {
-            if (!hasScheduledWriteToken(args.sessionId, token)) return;
-            writeTransformDecisionBestEffort(dbPath, {
-                ...pending,
-                sessionId: args.sessionId,
-                harness: "opencode",
-                messageId: args.messageId,
-                inputTokens: args.inputTokens,
-            });
-        } finally {
-            deleteScheduledWriteToken(args.sessionId, token);
-        }
-    }, 0);
-    return true;
+    lastBoundMessageIdBySession.set(args.sessionId, args.messageId);
+    return false;
 }
 
 export function findNewestPiAssistantEntryId(
@@ -268,35 +246,13 @@ export function schedulePiTransformDecisionResolve(args: {
     sessionId: string;
     branchEntries: readonly unknown[] | null;
 }): boolean {
-    const pending = pendingPiDecisionBySession.get(args.sessionId);
-    if (!pending) return false;
-    const targetMessageId = findNewestPiAssistantEntryIdAfter(
-        args.branchEntries,
-        pending.snapshotNewestAssistantEntryId,
-    );
-    if (!targetMessageId) return false;
-    const dbPath = getDatabasePath(args.db);
-    if (!dbPath) return false;
-
+    void args.db;
+    void args.branchEntries;
     pendingPiDecisionBySession.delete(args.sessionId);
-    const token = addScheduledWriteToken(args.sessionId);
-    setTimeout(() => {
-        try {
-            if (!hasScheduledWriteToken(args.sessionId, token)) return;
-            writeTransformDecisionBestEffort(dbPath, {
-                ...pending,
-                sessionId: args.sessionId,
-                harness: "pi",
-                messageId: targetMessageId,
-            });
-        } finally {
-            deleteScheduledWriteToken(args.sessionId, token);
-        }
-    }, 0);
-    return true;
+    return false;
 }
 
-function addScheduledWriteToken(sessionId: string): symbol {
+function _addScheduledWriteToken(sessionId: string): symbol {
     const token = Symbol(sessionId);
     let tokens = scheduledWriteTokensBySession.get(sessionId);
     if (!tokens) {
@@ -307,11 +263,11 @@ function addScheduledWriteToken(sessionId: string): symbol {
     return token;
 }
 
-function hasScheduledWriteToken(sessionId: string, token: symbol): boolean {
+function _hasScheduledWriteToken(sessionId: string, token: symbol): boolean {
     return scheduledWriteTokensBySession.get(sessionId)?.has(token) === true;
 }
 
-function deleteScheduledWriteToken(sessionId: string, token: symbol): void {
+function _deleteScheduledWriteToken(sessionId: string, token: symbol): void {
     const tokens = scheduledWriteTokensBySession.get(sessionId);
     if (!tokens) return;
     tokens.delete(token);
@@ -370,7 +326,7 @@ function findNewestPiAssistantEntryIdAfter(
     return null;
 }
 
-function writeTransformDecisionBestEffort(dbPath: string, row: TransformDecisionRow): void {
+function _writeTransformDecisionBestEffort(dbPath: string, row: TransformDecisionRow): void {
     try {
         const writer = writerOverrideForTests ?? writeTransformDecisionRow;
         writer(dbPath, row);

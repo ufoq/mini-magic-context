@@ -240,4 +240,4 @@ echo ""
 
 echo "  ✓ Released $TAG"
 echo "  → GitHub Actions will now: test → build → publish"
-echo "  → Watch: https://github.com/cortexkit/magic-context/actions"
+echo "  → Watch: https://github.com/ufoq/mini-magic-context/actions"

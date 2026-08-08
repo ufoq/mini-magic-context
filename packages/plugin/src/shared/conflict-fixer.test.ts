@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseJsonc } from "comment-json";
-import { fixConflicts } from "./conflict-fixer";
 import { detectConflicts } from "./conflict-detector";
+import { fixConflicts } from "./conflict-fixer";
 
 const noOmoConflicts = {
     omoPreemptiveCompaction: false,
@@ -60,7 +60,7 @@ describe("fixConflicts", () => {
   "plugin": [
     ["@plannotator/opencode@latest", { "workflow": "plan-agent" }],
     ["@tarquinen/opencode-dcp@latest", { "enabled": true }],
-    "@cortexkit/opencode-magic-context@latest"
+    "@ufoq/opencode-mini-magic-context@latest"
   ],
   "compaction": {
     // keep this compaction comment
@@ -86,7 +86,7 @@ describe("fixConflicts", () => {
         expect(updated.compaction).toEqual({ auto: false, prune: false });
         expect(updated.plugin).toEqual([
             ["@plannotator/opencode@latest", { workflow: "plan-agent" }],
-            "@cortexkit/opencode-magic-context@latest",
+            "@ufoq/opencode-mini-magic-context@latest",
         ]);
     });
 
@@ -235,7 +235,10 @@ describe("fixConflicts", () => {
 
             expect(actions).toEqual(["Disabled conflicting oh-my-opencode hooks"]);
 
-            const updated = parseJsonc(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+            const updated = parseJsonc(readFileSync(configPath, "utf-8")) as Record<
+                string,
+                unknown
+            >;
             const opencodeBlock = updated["[opencode]"] as Record<string, unknown>;
             expect(opencodeBlock.disabled_hooks).toEqual([
                 "context-window-monitor",

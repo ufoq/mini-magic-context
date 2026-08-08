@@ -21,19 +21,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildHiddenAgentRegistrations } from "../../agents/hidden-agent-registrations";
-import { CLASSIFY_SYSTEM_PROMPT } from "../../features/magic-context/dreamer/classify-prompt";
-import { MAP_MEMORIES_SYSTEM_PROMPT } from "../../features/magic-context/dreamer/map-memories-prompt";
-import {
-    CURATE_SYSTEM_PROMPT,
-    DREAMER_SYSTEM_PROMPT,
-    MAINTAIN_DOCS_SYSTEM_PROMPT,
-    PRIMER_INVESTIGATOR_SYSTEM_PROMPT,
-    REVIEW_USER_MEMORIES_SYSTEM_PROMPT,
-} from "../../features/magic-context/dreamer/task-prompts";
-import { VERIFY_SYSTEM_PROMPT } from "../../features/magic-context/dreamer/verify-prompt";
 import { MIGRATION_SYSTEM_PROMPT } from "../../features/magic-context/memory/memory-migration";
-import { SIDEKICK_SYSTEM_PROMPT } from "../../features/magic-context/sidekick/agent";
-import { SMART_NOTE_COMPILER_SYSTEM_PROMPT } from "../../features/magic-context/smart-notes/compiler-prompt";
 import {
     closeDatabase,
     getOrCreateSessionMeta,
@@ -429,7 +417,7 @@ describe("system-prompt-hash skips OpenCode internal hidden agents (issue #52)",
 });
 
 /**
- * Magic Context's OWN hidden children (historian/dreamer/sidekick/migration)
+ * Magic Context's OWN hidden children (historian/migration)
  * must not get the guidance block — wasted spend + a contradictory second
  * identity frame. Detected by prompt signature (pass-1, timing-independent)
  * AND the title-prefix `internalChildSessions` flag.
@@ -437,27 +425,8 @@ describe("system-prompt-hash skips OpenCode internal hidden agents (issue #52)",
 describe("system-prompt-hash skips Magic Context internal child agents", () => {
     const HISTORIAN_HEAD =
         "You are Historian — the hippocampus of a long-running coding agent. You and the primary agent are one mind.";
-    const SIDEKICK_HEAD =
-        "You are Sidekick, a focused memory-retrieval subagent for an AI coding assistant.";
-    // Every dreamer task prompt shares "for the magic-context system"; each opener
-    // below must be detected so the guidance block is never injected into a dreamer
-    // child even in the title-flag race window.
-    const DREAMER_BASE_HEAD =
-        "You are a background maintenance agent for the magic-context system,";
-    const CURATE_HEAD = "You are a memory-pool curator for the magic-context system.";
-    const MAINTAIN_DOCS_HEAD = "You are a documentation maintainer for the magic-context system.";
-    const REVIEW_USER_HEAD = "You are a user-profile reviewer for the magic-context system.";
-    const PRIMER_HEAD = "You are a read-only code investigator for the magic-context system.";
 
-    for (const [label, head] of [
-        ["historian", HISTORIAN_HEAD],
-        ["dreamer-base", DREAMER_BASE_HEAD],
-        ["curate", CURATE_HEAD],
-        ["maintain-docs", MAINTAIN_DOCS_HEAD],
-        ["review-user-memories", REVIEW_USER_HEAD],
-        ["primer-investigator", PRIMER_HEAD],
-        ["sidekick", SIDEKICK_HEAD],
-    ] as const) {
+    for (const [label, head] of [["historian", HISTORIAN_HEAD]] as const) {
         it(`skips ALL injection for the ${label} agent (prompt signature)`, async () => {
             useTempDataHome(`sph-skip-mc-${label}-`);
             const { handler } = buildHandler();
@@ -471,12 +440,9 @@ describe("system-prompt-hash skips Magic Context internal child agents", () => {
 
     it("detects every registered hidden-agent prompt", () => {
         const registrations = buildHiddenAgentRegistrations({
-            dreamerPrompt: DREAMER_SYSTEM_PROMPT,
-            smartNoteCompilerPrompt: SMART_NOTE_COMPILER_SYSTEM_PROMPT,
             historianPrompt: COMPARTMENT_AGENT_SYSTEM_PROMPT,
             historianRecompPrompt: COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT,
             historianEditorPrompt: HISTORIAN_EDITOR_SYSTEM_PROMPT,
-            sidekickPrompt: SIDEKICK_SYSTEM_PROMPT,
             historianDisallowed: [],
         });
 
@@ -491,20 +457,10 @@ describe("system-prompt-hash skips Magic Context internal child agents", () => {
 
     it("detects every dedicated Magic Context child prompt constant", () => {
         const prompts = [
-            ["dreamer-base", DREAMER_SYSTEM_PROMPT],
-            ["curate", CURATE_SYSTEM_PROMPT],
-            ["maintain-docs", MAINTAIN_DOCS_SYSTEM_PROMPT],
-            ["review-user-memories", REVIEW_USER_MEMORIES_SYSTEM_PROMPT],
-            ["primer-investigator", PRIMER_INVESTIGATOR_SYSTEM_PROMPT],
-            ["map-memories", MAP_MEMORIES_SYSTEM_PROMPT],
-            ["verify", VERIFY_SYSTEM_PROMPT],
-            ["classify", CLASSIFY_SYSTEM_PROMPT],
-            ["smart-note-compiler", SMART_NOTE_COMPILER_SYSTEM_PROMPT],
             ["historian", COMPARTMENT_AGENT_SYSTEM_PROMPT],
             ["historian-recomp", COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT],
             ["historian-editor", HISTORIAN_EDITOR_SYSTEM_PROMPT],
             ["memory-migration", MIGRATION_SYSTEM_PROMPT],
-            ["sidekick", SIDEKICK_SYSTEM_PROMPT],
         ] as const;
 
         for (const [label, prompt] of prompts) {
@@ -539,15 +495,8 @@ describe("system-prompt-hash skips Magic Context internal child agents", () => {
     });
 });
 
-/**
- * Unit B: subagent self-management. A subagent session (isSubagent=true) with
- * ctx_reduce enabled gets the MINIMAL §N§ + ctx_reduce block — not the full
- * primary block, not the no-reduce block. Internal MC children still skip
- * entirely (order invariant: the internal-child skip runs BEFORE the subagent
- * branch).
- */
 describe("system-prompt-hash subagent self-management (Unit B)", () => {
-    it("injects the MINIMAL block for a subagent with ctx_reduce enabled", async () => {
+    it("injects no Magic Context block for ordinary subagents", async () => {
         useTempDataHome("sph-subagent-min-");
         const sessionId = "ses-subagent";
         const db = openDatabase();
@@ -559,14 +508,8 @@ describe("system-prompt-hash subagent self-management (Unit B)", () => {
         await handler({ sessionID: sessionId }, { system });
 
         const joined = system.join("\n");
-        // Minimal block: marker + §N§ + ctx_reduce mechanics …
-        expect(joined).toContain("## Magic Context");
-        expect(joined).toContain("§N§ identifiers");
-        expect(joined).toContain("ctx_reduce");
-        // … but NONE of the primary's role/guidance.
+        expect(joined).not.toContain("## Magic Context");
         expect(joined).not.toContain("long-term partner");
-        expect(joined).not.toContain("### Reduction Triggers");
-        expect(joined).not.toContain("ctx_memory");
         expect(joined).not.toContain("ctx_search");
     });
 
@@ -577,10 +520,6 @@ describe("system-prompt-hash subagent self-management (Unit B)", () => {
         getOrCreateSessionMeta(db, sessionId);
         updateSessionMeta(db, sessionId, { isSubagent: true });
 
-        // Tool allow-list denies ctx_reduce: the subagent has no §N§ and no tool
-        // to act on, so it must get NO Magic Context block — not the no-reduce
-        // PRIMARY block (which would leak the partner frame + memory/search/note
-        // guidance).
         clearCtxReduceAvailability(sessionId);
         resolveCtxReduceAvailabilityFromMessages(sessionId, [
             { info: { role: "user", tools: { "*": false, read: true } } },
@@ -609,10 +548,11 @@ describe("system-prompt-hash subagent self-management (Unit B)", () => {
         const joined = system.join("\n");
         expect(joined).toContain("## Magic Context");
         expect(joined).toContain("long-term partner");
-        expect(joined).toContain("ctx_memory");
+        expect(joined).not.toContain("ctx_memory");
+        expect(joined).toContain("ctx_search");
     });
 
-    it("warns primary sessions about caveman compression even when ctx_reduce is callable", async () => {
+    it("warns primary sessions about caveman compression without exposing ctx_reduce", async () => {
         useTempDataHome("sph-primary-caveman-reduce-");
         const sessionId = "ses-primary-caveman-reduce";
         const db = openDatabase();
@@ -623,7 +563,7 @@ describe("system-prompt-hash subagent self-management (Unit B)", () => {
         await handler({ sessionID: sessionId }, { system });
 
         const joined = system.join("\n");
-        expect(joined).toContain("ctx_reduce");
+        expect(joined).not.toContain("ctx_reduce");
         expect(joined).toContain("History compression is on");
         expect(joined).toContain("DO NOT mimic this style");
     });
@@ -752,7 +692,7 @@ describe("system-prompt-hash honors per-agent opt-out (issue #53)", () => {
     });
 });
 
-describe("provisional ctx_reduce availability (pre-first-user race)", () => {
+describe("mini no-reduce system prompt hashing", () => {
     function createOpenCodeDbWithFirstUser(
         dataHome: string,
         sessionId: string,
@@ -771,7 +711,7 @@ describe("provisional ctx_reduce availability (pre-first-user race)", () => {
         oc.close();
     }
 
-    it("does not persist a hash while the availability verdict is provisional", async () => {
+    it("persists a hash before the first user row because no ctx_reduce verdict is needed", async () => {
         // A system pass can run BEFORE the session's first user message is
         // persisted to opencode.db. The availability verdict is then a
         // provisional fail-open true; persisting a hash computed from the
@@ -799,11 +739,10 @@ describe("provisional ctx_reduce availability (pre-first-user race)", () => {
         const system = ["Base agent prompt"];
         await handler({ sessionID: sessionId }, { system });
 
-        // Guidance still renders (a prompt must go out)...
         expect(system.join("\n")).toContain("## Magic Context");
-        // ...but no hash baseline is written from the provisional variant.
         const meta = getOrCreateSessionMeta(db, sessionId);
-        expect(meta.systemPromptHash === "" || meta.systemPromptHash === "0").toBe(true);
+        expect(meta.systemPromptHash).not.toBe("");
+        expect(meta.systemPromptHash).not.toBe("0");
     });
 
     it("persists the hash from the frozen deny-verdict variant once the first user row exists", async () => {

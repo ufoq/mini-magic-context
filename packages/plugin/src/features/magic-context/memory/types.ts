@@ -22,7 +22,7 @@ export type MemoryCategory =
 export type MemoryStatus = "active" | "permanent" | "archived";
 export type MemoryScope = "project" | "ecosystem" | "universe";
 export type VerificationStatus = "unverified" | "verified" | "stale" | "flagged";
-export type MemorySourceType = "historian" | "agent" | "dreamer" | "user";
+export type MemorySourceType = "historian" | "agent" | "user";
 
 export interface Memory {
     id: number;
