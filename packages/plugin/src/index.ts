@@ -404,6 +404,12 @@ const server: Plugin = async (ctx) => {
             await magicContextRuntime.magicContext?.["experimental.text.complete"]?.(input, output);
         },
         config: async (config) => {
+            const existingCompaction = Reflect.get(config, "compaction");
+            const compaction =
+                existingCompaction !== null && typeof existingCompaction === "object"
+                    ? existingCompaction
+                    : {};
+            Reflect.set(config, "compaction", { ...compaction, auto: false, prune: false });
             try {
                 // If the runtime is disabled (a conflicting plugin — DCP / OMO /
                 // OpenCode auto-compaction — was detected and we fail-safed at boot),

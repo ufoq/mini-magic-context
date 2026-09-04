@@ -181,29 +181,53 @@ describe("injectCompactionMarker", () => {
         closeQuietly(inspection);
     });
 
+    it("orders the marker summary after a boundary whose database timestamp lags its ID", () => {
+        const dataHome = useTempDataHome("marker-inject-clock-skew-");
+        const db = createOpenCodeDb(dataHome);
+        const boundaryId = generateMessageId(2_000, 0n, "boundary");
+        const retainedId = generateMessageId(3_000, 0n, "retained");
+        insertMessage(db, boundaryId, "user", 1_000);
+        insertMessage(db, retainedId, "assistant", 1_001);
+        closeQuietly(db);
+
+        const result = injectCompactionMarker({
+            sessionId: "ses-1",
+            endOrdinal: 2,
+            endMessageId: retainedId,
+            summaryText: "summary placeholder",
+            directory: dataHome,
+        });
+
+        expect(result).not.toBeNull();
+        expect(boundaryId < (result?.summaryMessageId ?? "")).toBe(true);
+    });
+
     it("preserves the deterministic boundary in the healthy no-deletion case", () => {
         const dataHome = useTempDataHome("marker-inject-healthy-");
         const db = createOpenCodeDb(dataHome);
-        insertMessage(db, "msg_001_user", "user", 100);
-        insertMessage(db, "msg_002_assistant", "assistant", 200);
-        insertMessage(db, "msg_003_target", "assistant", 300);
+        const boundaryId = generateMessageId(100, 0n, "healthy-user");
+        const assistantId = generateMessageId(200, 0n, "healthy-assistant");
+        const targetId = generateMessageId(300, 0n, "healthy-target");
+        insertMessage(db, boundaryId, "user", 100);
+        insertMessage(db, assistantId, "assistant", 200);
+        insertMessage(db, targetId, "assistant", 300);
         closeQuietly(db);
 
         const result = injectCompactionMarker({
             sessionId: "ses-1",
             endOrdinal: 3,
-            endMessageId: "msg_003_target",
+            endMessageId: targetId,
             summaryText: "summary placeholder",
             directory: dataHome,
         });
 
-        expect(result?.boundaryMessageId).toBe("msg_001_user");
+        expect(result?.boundaryMessageId).toBe(boundaryId);
         expect(result?.summaryMessageId).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
 
         const retry = injectCompactionMarker({
             sessionId: "ses-1",
             endOrdinal: 3,
-            endMessageId: "msg_003_target",
+            endMessageId: targetId,
             summaryText: "summary placeholder",
             directory: dataHome,
         });

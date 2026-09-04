@@ -141,6 +141,33 @@ describe("checkCompactionMarkerConsistency", () => {
         expect(parsed.boundaryOrdinal).toBe(42);
     });
 
+    it("clears a complete marker whose summary sorts before its boundary", () => {
+        const dataHome = useTempDataHome("consistency-out-of-order-");
+        const opencodeDb = createOpenCodeDb(dataHome);
+        insertMessage(opencodeDb, "msg_z_boundary");
+        insertMessage(opencodeDb, "msg_a_summary");
+        insertPart(opencodeDb, "prt-compaction");
+        insertPart(opencodeDb, "prt-summary-text");
+        closeQuietly(opencodeDb);
+
+        const db = openDatabase();
+        setPersistedCompactionMarkerState(db, "ses-1", {
+            boundaryMessageId: "msg_z_boundary",
+            summaryMessageId: "msg_a_summary",
+            compactionPartId: "prt-compaction",
+            summaryPartId: "prt-summary-text",
+            boundaryOrdinal: 42,
+            targetEndMessageId: "msg_z_boundary",
+        });
+
+        checkCompactionMarkerConsistency(db);
+
+        const row = db
+            .prepare("SELECT compaction_marker_state FROM session_meta WHERE session_id = ?")
+            .get("ses-1") as { compaction_marker_state?: string } | null;
+        expect(row?.compaction_marker_state ?? "").toBe("");
+    });
+
     it("reconciles multiple sessions in one pass", () => {
         const dataHome = useTempDataHome("consistency-multi-");
         const opencodeDb = createOpenCodeDb(dataHome);

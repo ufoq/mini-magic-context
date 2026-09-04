@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateMessageId } from "../../features/magic-context/compaction-marker";
 import { appendCompartments } from "../../features/magic-context/compartment-storage";
 import {
     addProcessedImageStrippedIds,
@@ -578,13 +579,8 @@ describe("deferred compaction marker representation", () => {
         const insertMessage = opencodeDb.prepare(
             "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
         );
-        insertMessage.run(
-            "msg-boundary",
-            sessionId,
-            1_000,
-            1_000,
-            JSON.stringify({ role: "user" }),
-        );
+        const boundaryId = generateMessageId(1_000, 0n, "wire-stability-boundary");
+        insertMessage.run(boundaryId, sessionId, 1_000, 1_000, JSON.stringify({ role: "user" }));
         insertMessage.run(
             "msg-tail-assistant",
             sessionId,
@@ -599,15 +595,15 @@ describe("deferred compaction marker representation", () => {
                 sequence: 0,
                 startMessage: 1,
                 endMessage: 10,
-                startMessageId: "msg-boundary",
-                endMessageId: "msg-boundary",
+                startMessageId: boundaryId,
+                endMessageId: boundaryId,
                 title: "wire stability",
                 content: "test content",
             },
         ]);
         setPendingCompactionMarkerState(db, sessionId, {
             ordinal: 10,
-            endMessageId: "msg-boundary",
+            endMessageId: boundaryId,
             publishedAt: 1,
         });
 
@@ -880,6 +876,8 @@ describe("deferred compaction marker advance representation", () => {
         const insertMessage = opencodeDb.prepare(
             "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
         );
+        const newBoundaryId = generateMessageId(2_000, 0n, "marker-advance-boundary");
+        const newEndId = generateMessageId(3_000, 0n, "marker-advance-end");
         insertMessage.run(
             "old-boundary",
             sessionId,
@@ -887,15 +885,9 @@ describe("deferred compaction marker advance representation", () => {
             1_000,
             JSON.stringify({ role: "user" }),
         );
+        insertMessage.run(newBoundaryId, sessionId, 2_000, 2_000, JSON.stringify({ role: "user" }));
         insertMessage.run(
-            "new-boundary",
-            sessionId,
-            2_000,
-            2_000,
-            JSON.stringify({ role: "user" }),
-        );
-        insertMessage.run(
-            "new-end",
+            newEndId,
             sessionId,
             3_000,
             3_000,
@@ -940,7 +932,7 @@ describe("deferred compaction marker advance representation", () => {
                 startMessage: 1,
                 endMessage: 20,
                 startMessageId: "old-boundary",
-                endMessageId: "new-end",
+                endMessageId: newEndId,
                 title: "marker advance",
                 content: "test content",
             },
@@ -955,7 +947,7 @@ describe("deferred compaction marker advance representation", () => {
         });
         setPendingCompactionMarkerState(db, sessionId, {
             ordinal: 20,
-            endMessageId: "new-end",
+            endMessageId: newEndId,
             publishedAt: 2,
         });
 
@@ -986,7 +978,7 @@ describe("deferred compaction marker advance representation", () => {
                 parts: [{ type: "text", text: "retained user content" }],
             },
             {
-                info: { id: "new-end", role: "assistant", sessionID: sessionId, finish: "stop" },
+                info: { id: newEndId, role: "assistant", sessionID: sessionId, finish: "stop" },
                 parts: [{ type: "text", text: "tail content" }],
             },
         ] as unknown as MessageLike[];
@@ -1012,7 +1004,7 @@ describe("deferred compaction marker advance representation", () => {
                 pendingCompartmentInjection: {
                     block: "",
                     compartmentEndMessage: 20,
-                    compartmentEndMessageId: "new-end",
+                    compartmentEndMessageId: newEndId,
                     compartmentCount: 1,
                     skippedVisibleMessages: 0,
                     factCount: 0,
@@ -1052,7 +1044,7 @@ describe("deferred compaction marker advance representation", () => {
                 parts: [{ type: "text", text: "retained user content" }],
             },
             {
-                info: { id: "new-end", role: "assistant", sessionID: sessionId, finish: "stop" },
+                info: { id: newEndId, role: "assistant", sessionID: sessionId, finish: "stop" },
                 parts: [{ type: "text", text: "tail content" }],
             },
         ] as unknown as MessageLike[];
@@ -1081,7 +1073,7 @@ describe("deferred compaction marker advance representation", () => {
                 pendingCompartmentInjection: {
                     block: "",
                     compartmentEndMessage: 20,
-                    compartmentEndMessageId: "new-end",
+                    compartmentEndMessageId: newEndId,
                     compartmentCount: 1,
                     skippedVisibleMessages: 0,
                     factCount: 0,

@@ -41,6 +41,7 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 const ID_PREFIX_HEX_LENGTH = 12;
 const ID_SUFFIX_LENGTH = 14;
 const ID_PREFIX_MASK = (1n << BigInt(ID_PREFIX_HEX_LENGTH * 4)) - 1n;
+const MESSAGE_ID_PATTERN = /^msg_([0-9a-f]{12})[0-9A-Za-z]{14}$/;
 
 function deterministicBase62(seed: string, length: number): string {
     let value = BigInt(`0x${createHash("sha256").update(seed).digest("hex")}`);
@@ -76,6 +77,21 @@ export function generateMessageId(timestampMs: number, counter = 0n, identity = 
 
 export function generatePartId(timestampMs: number, counter = 0n, identity = ""): string {
     return generateId("prt", timestampMs, counter, identity);
+}
+
+function generateMessageIdAfter(boundaryMessageId: string, identity: string): string | null {
+    const match = MESSAGE_ID_PATTERN.exec(boundaryMessageId);
+    if (!match?.[1]) return null;
+
+    const boundaryOrder = BigInt(`0x${match[1]}`);
+    if (boundaryOrder === ID_PREFIX_MASK) return null;
+
+    const nextOrder = boundaryOrder + 1n;
+    return generateMessageId(
+        Number(nextOrder >> 12n),
+        nextOrder & 0xfffn,
+        `${identity}\0summary-message`,
+    );
 }
 
 // ── DB Access ────────────────────────────────────────────────────
@@ -439,15 +455,18 @@ export function injectCompactionMarker(
         );
         return null;
     }
-    // Use timestamps relative to the boundary so OpenCode's time/id ordering
-    // places the marker immediately after the boundary.
+    // OpenCode discovers pending compaction work by sortable message ID, not
+    // SQLite's time_created. Derive the summary ID from the boundary ID so a
+    // clock-skewed DB row cannot make our completed marker look pending.
     const boundaryTime = boundary.timeCreated;
     const markerIdentity = `${args.sessionId}\0${args.endMessageId}`;
-    const summaryMsgId = generateMessageId(
-        boundaryTime + 1,
-        1n,
-        `${markerIdentity}\0summary-message`,
-    );
+    const summaryMsgId = generateMessageIdAfter(boundary.id, markerIdentity);
+    if (!summaryMsgId) {
+        log(
+            `[magic-context] compaction-marker: unsupported boundary message ID ${boundary.id}; marker injection skipped`,
+        );
+        return null;
+    }
     const compactionPartId = generatePartId(boundaryTime, 1n, `${markerIdentity}\0compaction-part`);
     const summaryPartId = generatePartId(boundaryTime + 1, 2n, `${markerIdentity}\0summary-part`);
 

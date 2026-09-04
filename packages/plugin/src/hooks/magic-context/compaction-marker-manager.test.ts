@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateMessageId } from "../../features/magic-context/compaction-marker";
 import { appendCompartments } from "../../features/magic-context/compartment-storage";
 import { closeDatabase, openDatabase } from "../../features/magic-context/storage";
 import {
@@ -202,15 +203,21 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
     it("returns `applied` on the happy path (no existing marker)", () => {
         const dataHome = useTempDataHome("apply-deferred-applied-");
         const opencodeDb = createOpenCodeDb(dataHome);
-        insertUserMessage(opencodeDb, "msg-boundary", "ses-1", 1_000);
+        const boundaryId = generateMessageId(1_000, 0n, "applied-boundary");
+        insertUserMessage(opencodeDb, boundaryId, "ses-1", 1_000);
         closeQuietly(opencodeDb);
 
         const db = openDatabase();
-        insertCompartment(db, "ses-1", 10, "msg-boundary");
+        insertCompartment(db, "ses-1", 10, boundaryId);
         // Seed session_meta row so the manager can write boundary state into it.
         db.prepare("INSERT INTO session_meta (session_id) VALUES (?)").run("ses-1");
 
-        const outcome = applyDeferredCompactionMarker(db, "ses-1", makePending(), dataHome);
+        const outcome = applyDeferredCompactionMarker(
+            db,
+            "ses-1",
+            makePending({ endMessageId: boundaryId }),
+            dataHome,
+        );
 
         expect(outcome.kind).toBe("applied");
         if (outcome.kind === "applied") {
@@ -225,12 +232,13 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
     it("retries a post-insert state failure without minting duplicate marker rows", () => {
         const dataHome = useTempDataHome("apply-deferred-post-insert-retry-");
         const opencodeDb = createOpenCodeDb(dataHome);
-        insertUserMessage(opencodeDb, "msg-boundary", "ses-retry", 1_000);
+        const boundaryId = generateMessageId(1_000, 0n, "retry-boundary");
+        insertUserMessage(opencodeDb, boundaryId, "ses-retry", 1_000);
         insertMessage(opencodeDb, "legacy-summary", "ses-retry", 1_001, "assistant");
         opencodeDb.prepare("UPDATE message SET data = ? WHERE id = 'legacy-summary'").run(
             JSON.stringify({
                 role: "assistant",
-                parentID: "msg-boundary",
+                parentID: boundaryId,
                 summary: true,
                 finish: "stop",
                 mode: "compaction",
@@ -257,7 +265,7 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
             )
             .run(
                 "legacy-compaction-part",
-                "msg-boundary",
+                boundaryId,
                 "ses-retry",
                 1_000,
                 1_000,
@@ -266,7 +274,7 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
         closeQuietly(opencodeDb);
 
         const db = openDatabase();
-        insertCompartment(db, "ses-retry", 10, "msg-boundary");
+        insertCompartment(db, "ses-retry", 10, boundaryId);
         db.prepare("INSERT INTO session_meta (session_id) VALUES (?)").run("ses-retry");
         db.exec(`CREATE TRIGGER fail_marker_state_persist
             BEFORE UPDATE OF compaction_marker_state ON session_meta
@@ -275,7 +283,12 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
                 SELECT RAISE(ABORT, 'simulated marker state persist failure');
             END`);
 
-        const first = applyDeferredCompactionMarker(db, "ses-retry", makePending(), dataHome);
+        const first = applyDeferredCompactionMarker(
+            db,
+            "ses-retry",
+            makePending({ endMessageId: boundaryId }),
+            dataHome,
+        );
         expect(first.kind).toBe("retryable-failure");
 
         const inspectAfterCrash = new Database(join(dataHome, "opencode", "opencode.db"));
@@ -289,7 +302,12 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
         closeQuietly(inspectAfterCrash);
 
         db.exec("DROP TRIGGER fail_marker_state_persist");
-        const retry = applyDeferredCompactionMarker(db, "ses-retry", makePending(), dataHome);
+        const retry = applyDeferredCompactionMarker(
+            db,
+            "ses-retry",
+            makePending({ endMessageId: boundaryId }),
+            dataHome,
+        );
         expect(retry.kind).toBe("applied");
 
         const inspectAfterRetry = new Database(join(dataHome, "opencode", "opencode.db"));
@@ -302,20 +320,21 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
             .prepare(
                 "SELECT id FROM part WHERE session_id = ? AND message_id = ? AND json_extract(data, '$.type') = 'compaction' ORDER BY id",
             )
-            .all("ses-retry", "msg-boundary") as Array<{ id: string }>;
+            .all("ses-retry", boundaryId) as Array<{ id: string }>;
         expect(summaryIds.map((row) => row.id)).toEqual(firstSummaryIds.map((row) => row.id));
         expect(compactionParts).toHaveLength(1);
         const retryState = getPersistedCompactionMarkerState(db, "ses-retry");
         expect(retryState?.summaryMessageId).toBe(firstSummaryIds[0]?.id);
 
-        insertUserMessage(inspectAfterRetry, "clean-boundary", "ses-clean", 2_000);
+        const cleanBoundaryId = generateMessageId(2_000, 0n, "clean-boundary");
+        insertUserMessage(inspectAfterRetry, cleanBoundaryId, "ses-clean", 2_000);
         closeQuietly(inspectAfterRetry);
-        insertCompartment(db, "ses-clean", 10, "clean-boundary");
+        insertCompartment(db, "ses-clean", 10, cleanBoundaryId);
         db.prepare("INSERT INTO session_meta (session_id) VALUES (?)").run("ses-clean");
         const clean = applyDeferredCompactionMarker(
             db,
             "ses-clean",
-            makePending({ endMessageId: "clean-boundary" }),
+            makePending({ endMessageId: cleanBoundaryId }),
             dataHome,
         );
         expect(clean.kind).toBe("applied");
@@ -509,11 +528,14 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
     it("repairs an equal-ordinal marker whose boundary is after the target endMessageId", () => {
         const dataHome = useTempDataHome("apply-deferred-repair-overextended-");
         const opencodeDb = createOpenCodeDb(dataHome);
-        insertUserMessage(opencodeDb, "msg_009_prior_user", "ses-1", 900);
-        insertMessage(opencodeDb, "msg_010_target", "ses-1", 1_000, "assistant");
-        insertUserMessage(opencodeDb, "msg_020_after_user", "ses-1", 2_000);
+        const priorUserId = generateMessageId(900, 0n, "repair-prior-user");
+        const targetId = generateMessageId(1_000, 0n, "repair-target");
+        const afterUserId = generateMessageId(2_000, 0n, "repair-after-user");
+        insertUserMessage(opencodeDb, priorUserId, "ses-1", 900);
+        insertMessage(opencodeDb, targetId, "ses-1", 1_000, "assistant");
+        insertUserMessage(opencodeDb, afterUserId, "ses-1", 2_000);
         const corruptState: PersistedCompactionMarkerState = {
-            boundaryMessageId: "msg_020_after_user",
+            boundaryMessageId: afterUserId,
             summaryMessageId: "msg-corrupt-summary",
             compactionPartId: "prt-corrupt-compaction",
             summaryPartId: "prt-corrupt-summary",
@@ -524,47 +546,50 @@ describe("applyDeferredCompactionMarker — outcomes", () => {
         closeQuietly(opencodeDb);
 
         const db = openDatabase();
-        insertCompartment(db, "ses-1", 10, "msg_010_target");
+        insertCompartment(db, "ses-1", 10, targetId);
         setPersistedCompactionMarkerState(db, "ses-1", corruptState);
 
         const outcome = applyDeferredCompactionMarker(
             db,
             "ses-1",
-            makePending({ endMessageId: "msg_010_target" }),
+            makePending({ endMessageId: targetId }),
             dataHome,
         );
 
         expect(outcome.kind).toBe("applied");
         const repaired = getPersistedCompactionMarkerState(db, "ses-1");
-        expect(repaired?.boundaryMessageId).toBe("msg_009_prior_user");
-        expect(repaired?.targetEndMessageId).toBe("msg_010_target");
+        expect(repaired?.boundaryMessageId).toBe(priorUserId);
+        expect(repaired?.targetEndMessageId).toBe(targetId);
     });
 
     it("direct publication path resolves the compartment endMessageId instead of ordinal", () => {
         const dataHome = useTempDataHome("direct-marker-end-id-");
         const opencodeDb = createOpenCodeDb(dataHome);
-        insertUserMessage(opencodeDb, "msg_001_deleted_user", "ses-1", 100);
-        insertMessage(opencodeDb, "msg_002_deleted_assistant", "ses-1", 200, "assistant");
-        insertUserMessage(opencodeDb, "msg_003_prior_user", "ses-1", 300);
-        insertMessage(opencodeDb, "msg_004_target", "ses-1", 400, "assistant");
-        insertUserMessage(opencodeDb, "msg_005_after_user", "ses-1", 500);
+        const deletedUserId = generateMessageId(100, 0n, "direct-deleted-user");
+        const deletedAssistantId = generateMessageId(200, 0n, "direct-deleted-assistant");
+        const priorUserId = generateMessageId(300, 0n, "direct-prior-user");
+        const targetId = generateMessageId(400, 0n, "direct-target");
+        const afterUserId = generateMessageId(500, 0n, "direct-after-user");
+        insertUserMessage(opencodeDb, deletedUserId, "ses-1", 100);
+        insertMessage(opencodeDb, deletedAssistantId, "ses-1", 200, "assistant");
+        insertUserMessage(opencodeDb, priorUserId, "ses-1", 300);
+        insertMessage(opencodeDb, targetId, "ses-1", 400, "assistant");
+        insertUserMessage(opencodeDb, afterUserId, "ses-1", 500);
         opencodeDb
-            .prepare(
-                "DELETE FROM message WHERE id IN ('msg_001_deleted_user', 'msg_002_deleted_assistant')",
-            )
-            .run();
+            .prepare("DELETE FROM message WHERE id IN (?, ?)")
+            .run(deletedUserId, deletedAssistantId);
         closeQuietly(opencodeDb);
 
         const db = openDatabase();
-        insertCompartment(db, "ses-1", 4, "msg_004_target");
+        insertCompartment(db, "ses-1", 4, targetId);
         db.prepare("INSERT INTO session_meta (session_id) VALUES (?)").run("ses-1");
 
         expect(updateCompactionMarkerAfterPublication(db, "ses-1", 4, dataHome)).toBe(true);
 
         const persisted = getPersistedCompactionMarkerState(db, "ses-1");
-        expect(persisted?.boundaryMessageId).toBe("msg_003_prior_user");
+        expect(persisted?.boundaryMessageId).toBe(priorUserId);
         expect(persisted?.boundaryOrdinal).toBe(4);
-        expect(persisted?.targetEndMessageId).toBe("msg_004_target");
+        expect(persisted?.targetEndMessageId).toBe(targetId);
     });
 
     it("no-ops (success) on the pi harness without touching opencode.db", () => {

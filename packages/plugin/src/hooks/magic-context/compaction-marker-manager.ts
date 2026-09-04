@@ -715,8 +715,9 @@ export function checkCompactionMarkerConsistency(db: Database): void {
 
             const allPresent =
                 boundaryExists && summaryMessageExists && compactionPartExists && summaryPartExists;
+            const ordered = state.boundaryMessageId < state.summaryMessageId;
 
-            if (allPresent) continue;
+            if (allPresent && ordered) continue;
 
             // Inconsistent — best-effort clean up any surviving half-written rows,
             // then clear persisted state so next publication can re-inject.
@@ -746,13 +747,13 @@ export function checkCompactionMarkerConsistency(db: Database): void {
                 setPersistedCompactionMarkerState(db, row.session_id, null);
                 sessionLog(
                     row.session_id,
-                    `compaction-marker consistency: cleared orphaned state (boundary=${boundaryExists} summary=${summaryMessageExists} cPart=${compactionPartExists} sPart=${summaryPartExists}); next publication will re-inject`,
+                    `compaction-marker consistency: cleared invalid state (boundary=${boundaryExists} summary=${summaryMessageExists} cPart=${compactionPartExists} sPart=${summaryPartExists} ordered=${ordered}); next publication will re-inject`,
                 );
                 reconciledCount++;
             } else {
                 sessionLog(
                     row.session_id,
-                    `compaction-marker consistency: cleanup failed for orphaned state (boundary=${boundaryExists} summary=${summaryMessageExists} cPart=${compactionPartExists} sPart=${summaryPartExists}); will retry on next startup`,
+                    `compaction-marker consistency: cleanup failed for invalid state (boundary=${boundaryExists} summary=${summaryMessageExists} cPart=${compactionPartExists} sPart=${summaryPartExists} ordered=${ordered}); will retry on next startup`,
                 );
             }
         }
