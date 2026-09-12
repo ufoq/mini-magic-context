@@ -21,12 +21,7 @@ coverage/
 .cache/
 tmp/
 
-.sisyphus/
 .opencode/
-.omo/
-.claude/
-local-ignore/
-.planning/
 
 # Plugin README is copied from root at release time
 packages/plugin/README.md
@@ -34,17 +29,7 @@ packages/plugin/meta.json
 packages/pi-plugin/meta.json
 .bg-shell/
 
-# Keep only the final animation; iteration folders stay local
-packages/plugin/docs/animation[0-9]*/
-
 .pi/
-
-# Local agent task outputs / scratch state.
-# Selectively expose .alfonso/release-notes/ — CI reads it for release body
-# + Discord announcement. Must use `.alfonso/*` rather than `.alfonso/` so
-# git descends into the directory and can re-include nested paths.
-.alfonso/*
-!.alfonso/release-notes/
 
 # Prompt/model experiment harnesses (model-dispatch, replay, migration validation).
 # Kept on disk for reuse but excluded from git + CI typecheck: they intentionally
