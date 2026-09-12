@@ -6,7 +6,12 @@ import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import { replaceAllCompartments } from "./compartment-storage";
 import { closeDatabase, openDatabase, openDatabaseAsync } from "./storage-db";
-import { clearSession, getOrCreateSessionMeta } from "./storage-meta-session";
+import {
+    clearSession,
+    getOrCreateSessionMeta,
+    markSessionCleanupPending,
+    retryPendingSessionCleanups,
+} from "./storage-meta-session";
 
 const tempDirs: string[] = [];
 
@@ -85,6 +90,54 @@ describe("mini database lifecycle", () => {
             expect.arrayContaining(["session_id", "harness", "counter", "compartment_in_progress"]),
         );
         expect(db.prepare("SELECT version FROM mini_schema").get()).toEqual({ version: 1 });
+    });
+
+    test("pending_session_cleanup carries the columns live cleanup SQL writes", () => {
+        const db = requireDatabase(openDatabase(createDatabasePath()));
+        const columns = (
+            db.prepare("PRAGMA table_info(pending_session_cleanup)").all() as Array<{
+                name: string;
+            }>
+        ).map((column) => column.name);
+        // Guards the regression where the stale inline definition won the
+        // `CREATE TABLE IF NOT EXISTS` race and `markSessionCleanupPending()`
+        // threw, so session.deleted never reached clearSession().
+        expect(columns).toEqual(
+            expect.arrayContaining(["session_id", "harness", "requested_at", "last_attempt_at"]),
+        );
+        expect(() => markSessionCleanupPending(db, "ses-cleanup-marker")).not.toThrow();
+        expect(retryPendingSessionCleanups(db).attempted).toBeGreaterThan(0);
+    });
+
+    test("repairs a legacy stale pending_session_cleanup table on open", () => {
+        const dbPath = createDatabasePath();
+        const legacy = new Database(dbPath);
+        legacy.exec(`
+            CREATE TABLE mini_schema (version INTEGER PRIMARY KEY CHECK(version = 1));
+            INSERT INTO mini_schema(version) VALUES (1);
+            CREATE TABLE pending_session_cleanup (session_id TEXT PRIMARY KEY, marked_at INTEGER NOT NULL, retry_after INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO pending_session_cleanup (session_id, marked_at) VALUES ('legacy-ses', 4242);
+        `);
+        legacy.close();
+
+        const db = requireDatabase(openDatabase(dbPath));
+        const columns = (
+            db.prepare("PRAGMA table_info(pending_session_cleanup)").all() as Array<{
+                name: string;
+            }>
+        ).map((column) => column.name);
+        expect(columns).toEqual(
+            expect.arrayContaining(["session_id", "harness", "requested_at", "last_attempt_at"]),
+        );
+        expect(columns).not.toContain("marked_at");
+        // The legacy row survives the rebuild with its timestamp preserved.
+        expect(
+            db
+                .prepare(
+                    "SELECT session_id, harness, requested_at FROM pending_session_cleanup WHERE session_id = ?",
+                )
+                .get("legacy-ses"),
+        ).toEqual({ session_id: "legacy-ses", harness: "opencode", requested_at: 4242 });
     });
 
     test("persists historian and tag state, clears the session, then reopens", async () => {

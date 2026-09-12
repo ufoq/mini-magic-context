@@ -17,8 +17,7 @@ export function classifyMiniDatabase(db: Database): "fresh" | "current" | "unsup
 }
 
 export function initializeMiniDatabase(db: Database): void {
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS mini_schema (version INTEGER PRIMARY KEY CHECK(version = ${MINI_SCHEMA_VERSION}));
+    db.exec(`        CREATE TABLE IF NOT EXISTS mini_schema (version INTEGER PRIMARY KEY CHECK(version = ${MINI_SCHEMA_VERSION}));
         INSERT OR IGNORE INTO mini_schema(version) VALUES (${MINI_SCHEMA_VERSION});
         CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, message_id TEXT, type TEXT, status TEXT DEFAULT 'active', byte_size INTEGER, input_byte_size INTEGER NOT NULL DEFAULT 0, reasoning_byte_size INTEGER NOT NULL DEFAULT 0, tag_number INTEGER, tool_name TEXT, harness TEXT NOT NULL DEFAULT 'opencode', entry_fingerprint TEXT, token_count INTEGER, input_token_count INTEGER, reasoning_token_count INTEGER, call_id TEXT, tool_owner_message_id TEXT, dropped_at INTEGER, drop_mode TEXT, caveman_depth INTEGER DEFAULT 0, file_path TEXT, part_index INTEGER, UNIQUE(session_id, tag_number));
         CREATE INDEX IF NOT EXISTS idx_tags_session_status ON tags(session_id, status);
@@ -58,4 +57,54 @@ export function initializeMiniDatabase(db: Database): void {
         DROP TABLE IF EXISTS synapse_batch_ledger;
         DROP TABLE IF EXISTS plugin_messages;
     `);
+    repairStalePendingSessionCleanup(db);
+}
+
+/**
+ * Heal a pre-existing `pending_session_cleanup` table written by an earlier
+ * startup order. `initializeMiniDatabase` (storage-db.ts) historically defined
+ * this table BEFORE this authoritative initializer ran, and because both use
+ * `CREATE TABLE IF NOT EXISTS` the stale shape (`session_id, marked_at,
+ * retry_after`) won and could never be repaired. Live cleanup SQL
+ * (`storage-meta-session.ts`) writes `harness` / `requested_at` /
+ * `last_attempt_at`, so every `session.deleted` marker insert threw and
+ * `clearSession()` never ran — deleted sessions leaked tags, raw
+ * `source_contents`, compartments and embeddings forever.
+ *
+ * Fresh databases are already correct (both definitions now agree); this only
+ * rebuilds the table for databases created before the fix. Rows are preserved
+ * (the legacy `marked_at` timestamp maps onto `requested_at`).
+ */
+function repairStalePendingSessionCleanup(db: Database): void {
+    const columns = new Set(
+        (db.prepare("PRAGMA table_info(pending_session_cleanup)").all() as Array<{ name?: string }>)
+            .map((row) => row.name)
+            .filter((name): name is string => typeof name === "string"),
+    );
+    if (columns.size === 0) return; // table absent (nothing to repair)
+    if (columns.has("requested_at") && columns.has("harness") && columns.has("last_attempt_at")) {
+        return; // already correct
+    }
+    const legacyRequestedAt = columns.has("requested_at")
+        ? "requested_at"
+        : columns.has("marked_at")
+          ? "marked_at"
+          : "0";
+    const legacyHarness = columns.has("harness") ? "harness" : "'opencode'";
+    db.transaction(() => {
+        db.exec(`
+            CREATE TABLE pending_session_cleanup_migrated (
+                session_id TEXT PRIMARY KEY,
+                harness TEXT NOT NULL DEFAULT 'opencode',
+                requested_at INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at INTEGER
+            );
+            INSERT OR IGNORE INTO pending_session_cleanup_migrated
+                (session_id, harness, requested_at, last_attempt_at)
+            SELECT session_id, ${legacyHarness}, ${legacyRequestedAt}, NULL
+            FROM pending_session_cleanup;
+            DROP TABLE pending_session_cleanup;
+            ALTER TABLE pending_session_cleanup_migrated RENAME TO pending_session_cleanup;
+        `);
+    })();
 }
