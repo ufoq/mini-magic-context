@@ -11,9 +11,6 @@ import Tokenizer from "ai-tokenizer";
 import * as claudeEncoding from "ai-tokenizer/encoding/claude";
 import { buildMagicContextSection } from "../src/agents/magic-context-prompt";
 import { CTX_EXPAND_DESCRIPTION } from "../src/tools/ctx-expand/constants";
-import { CTX_MEMORY_DESCRIPTION } from "../src/tools/ctx-memory/constants";
-import { CTX_NOTE_DESCRIPTION } from "../src/tools/ctx-note/constants";
-import { CTX_REDUCE_DESCRIPTION } from "../src/tools/ctx-reduce/constants";
 import { CTX_SEARCH_DESCRIPTION } from "../src/tools/ctx-search/constants";
 
 type Row = { label: string; chars: number; tokens: number };
@@ -40,10 +37,7 @@ rows.push(
 );
 
 const descriptions: [string, string][] = [
-    ["ctx_reduce", CTX_REDUCE_DESCRIPTION],
     ["ctx_expand", CTX_EXPAND_DESCRIPTION],
-    ["ctx_note", CTX_NOTE_DESCRIPTION],
-    ["ctx_memory", CTX_MEMORY_DESCRIPTION],
     ["ctx_search", CTX_SEARCH_DESCRIPTION],
 ];
 for (const [name, desc] of descriptions) {

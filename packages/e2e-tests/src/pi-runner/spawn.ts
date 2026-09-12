@@ -168,6 +168,9 @@ export function writeConfigs(env: PiIsolatedEnv, opts: PiRunnerOptions): void {
     ...(opts.magicContextConfig ?? {}),
   };
   writeFileSync(join(env.agentDir, "magic-context.jsonc"), JSON.stringify(magicContext, null, 2));
+  // Mini Magic Context reads the CortexKit config name; write both so tests
+  // exercise the production lookup path.
+  writeFileSync(join(env.agentDir, "mini-magic-context.jsonc"), JSON.stringify(magicContext, null, 2));
 }
 
 export function childEnv(env: PiIsolatedEnv): Record<string, string> {

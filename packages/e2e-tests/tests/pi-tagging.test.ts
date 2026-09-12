@@ -14,7 +14,7 @@ afterAll(async () => {
 });
 
 describe("pi tagging", () => {
-    it("applies §N§ tags and persists them with harness='pi'", async () => {
+    it("persists tags in the DB with harness='pi' (no §N§ prefixes on the wire)", async () => {
         h.mock.reset();
         h.mock.setDefault({
             text: "tagged response",
@@ -26,7 +26,9 @@ describe("pi tagging", () => {
         expect(turn.sessionId).toBeTruthy();
 
         const req = h.mock.lastRequest();
-        expect(JSON.stringify(req!.body)).toMatch(/§\d+§/);
+        // Mini removed the ctx_reduce tool, so §N§ prefixes are intentionally
+        // suppressed on the wire (tags exist only for DB bookkeeping).
+        expect(JSON.stringify(req!.body)).not.toMatch(/§\d+§/);
 
         await h.waitFor(() => h.countTags(turn.sessionId!) > 0, {
             timeoutMs: 5000,

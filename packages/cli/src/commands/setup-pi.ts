@@ -330,7 +330,9 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
 
     prompts.note(summary, dryRun ? "Configuration (dry run — not written)" : "Configuration");
     prompts.outro(
-        dryRun ? "Dry run complete — nothing was written." : "Start a Pi session and try /ctx-status",
+        dryRun
+            ? "Dry run complete — nothing was written."
+            : "Start a Pi session and try /ctx-status",
     );
     return 0;
 }

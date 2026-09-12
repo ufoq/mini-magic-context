@@ -28,7 +28,7 @@ afterAll(async () => {
 });
 
 describe("pi tag-owner collision repro (v3.3.1 Layer C)", () => {
-  it("creates a Pi session and applies migration v10", async () => {
+  it("creates a Pi session and applies the mini schema", async () => {
     h.mock.reset();
     h.mock.setDefault({
       text: "first response",
@@ -48,10 +48,11 @@ describe("pi tag-owner collision repro (v3.3.1 Layer C)", () => {
     await h.waitFor(() => h.hasContextDb(), { label: "context.db created" });
 
     const db = h.contextDb();
-    const row = db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as {
-      v: number;
+    // Mini replaced schema_migrations with a single-row mini_schema table.
+    const row = db.prepare("SELECT version FROM mini_schema LIMIT 1").get() as {
+      version: number;
     };
-    expect(row.v).toBeGreaterThanOrEqual(10);
+    expect(row.version).toBe(1);
 
     const cols = db.prepare("PRAGMA table_info(tags)").all() as Array<{
       name: string;
