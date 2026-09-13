@@ -93,17 +93,12 @@ async function main(): Promise<void> {
 	process.env.XDG_DATA_HOME = dataDir;
 	process.env.NODE_ENV = "test";
 
-	const [
-		{ Database },
-		{ initializeDatabase },
-		{ runMigrations },
-		{ setHarness },
-	] = await Promise.all([
-		import("@magic-context/core/shared/sqlite"),
-		import("@magic-context/core/features/magic-context/storage-db"),
-		import("@magic-context/core/features/magic-context/migrations"),
-		import("@magic-context/core/shared/harness"),
-	]);
+	const [{ Database }, { initializeDatabase }, { setHarness }] =
+		await Promise.all([
+			import("@magic-context/core/shared/sqlite"),
+			import("@magic-context/core/features/magic-context/storage-db"),
+			import("@magic-context/core/shared/harness"),
+		]);
 	const [
 		{
 			registerPiContextHandler,
@@ -120,7 +115,6 @@ async function main(): Promise<void> {
 	const dbPath = join(dataDir, "context.db");
 	const rawDb = new Database(dbPath);
 	initializeDatabase(rawDb);
-	runMigrations(rawDb);
 	const dbTimer = createDatabaseTimer(rawDb);
 	const timings = createTimingCollector();
 	const restoreObserver = setPiTransformTimingObserver((sample) =>

@@ -10,7 +10,6 @@ import {
 	getCompartments,
 	getLastCompartmentEndMessage,
 } from "@magic-context/core/features/magic-context/compartment-storage";
-import { runMigrations } from "@magic-context/core/features/magic-context/migrations";
 import { updateSessionMeta } from "@magic-context/core/features/magic-context/storage";
 import { initializeDatabase } from "@magic-context/core/features/magic-context/storage-db";
 import {
@@ -35,7 +34,6 @@ import {
 function createDb(): Database {
 	const db = new Database(":memory:");
 	initializeDatabase(db);
-	runMigrations(db);
 	return db;
 }
 

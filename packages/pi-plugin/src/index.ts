@@ -34,7 +34,6 @@ import {
 	resolveHistorianContextLimit,
 } from "@magic-context/core/hooks/magic-context/derive-budgets";
 import { resolveCacheTtl } from "@magic-context/core/hooks/magic-context/event-resolvers";
-import { normalizeTodoStateJson } from "@magic-context/core/hooks/magic-context/todo-view";
 import { beginBootQuietPeriod } from "@magic-context/core/plugin/boot-quiet";
 import {
 	ANNOUNCEMENT_FEATURES,
@@ -59,7 +58,6 @@ import { registerCtxFlushCommand } from "./commands/ctx-flush";
 import { registerCtxRecompCommand } from "./commands/ctx-recomp";
 import { registerCtxStatusCommand } from "./commands/ctx-status";
 import { registerCtxWrapupCommand } from "./commands/ctx-wrapup";
-import { registerMcImportContextCommand } from "./commands/mc-import-context";
 import {
 	registerCtxStatusEntryRenderer,
 	sendCtxStatusMessage,
@@ -101,13 +99,6 @@ import {
 } from "./system-prompt";
 import { withTimeout } from "./timeout";
 import { registerMagicContextTools } from "./tools";
-import {
-	parseTodos,
-	registerTodoOverlay,
-	registerTodoStateLifecycle,
-	rememberTodowriteToolCallTodos,
-	setTodoSnapshot,
-} from "./tools/todo-view-pi";
 
 const PREFIX = "[magic-context][pi]";
 
@@ -204,105 +195,6 @@ export function persistPiMessageEndModelMeta(args: {
 	if (currentMeta.cacheTtl !== cacheTtl) {
 		updateSessionMeta(args.db, args.sessionId, { cacheTtl });
 	}
-}
-
-type TodoOverlayUpdater = { update: (sessionId?: string) => void };
-
-type CompatiblePiTodoCapture = {
-	normalized: string;
-	todos: Exclude<ReturnType<typeof parseTodos>, null>;
-};
-
-function getCompatiblePiTodoCapture(
-	todos: unknown,
-): CompatiblePiTodoCapture | null {
-	if (!Array.isArray(todos)) return null;
-	const normalized = normalizeTodoStateJson(todos);
-	if (normalized === null) return null;
-	const parsed = parseTodos(todos);
-	if (parsed === null) return null;
-	return { normalized, todos: parsed };
-}
-
-function applyCompatiblePiTodoCapture(args: {
-	db: ContextDatabase;
-	sessionId: string;
-	todowriteEnabled: boolean;
-	todoOverlay?: TodoOverlayUpdater;
-	persist: boolean;
-	toolCallId?: string;
-	capture: CompatiblePiTodoCapture;
-}): void {
-	rememberTodowriteToolCallTodos(args.toolCallId, args.capture.todos);
-	if (args.todowriteEnabled) {
-		setTodoSnapshot(args.sessionId, args.capture.todos);
-		args.todoOverlay?.update(args.sessionId);
-	}
-	if (args.persist) {
-		updateSessionMeta(args.db, args.sessionId, {
-			lastTodoState: args.capture.normalized,
-		});
-	}
-}
-
-/**
- * Capture a `todowrite` args.todos payload only when it matches Magic Context's
- * exact todo enum contract. Third-party Pi extensions can reuse the same tool
- * name, so incompatible shapes must not update `last_todo_state` or the
- * transcript render cache.
- */
-export function capturePiTodowriteArgsIfCompatible(args: {
-	db: ContextDatabase;
-	sessionId: string;
-	todos: unknown;
-	todowriteEnabled: boolean;
-	todoOverlay?: TodoOverlayUpdater;
-	persist: boolean;
-	toolCallId?: string;
-}): boolean {
-	const capture = getCompatiblePiTodoCapture(args.todos);
-	if (capture === null) return false;
-	applyCompatiblePiTodoCapture({ ...args, capture });
-	return true;
-}
-
-/**
- * Scan an assistant `message_end` payload for the first compatible `todowrite`
- * call. This keeps interop with third-party tools that share the name but only
- * captures state when their payload matches Magic Context's todo enums exactly.
- */
-export function capturePiTodowriteMessageIfCompatible(args: {
-	db: ContextDatabase;
-	sessionId: string;
-	message: unknown;
-	todowriteEnabled: boolean;
-	todoOverlay?: TodoOverlayUpdater;
-	persist: boolean;
-}): boolean {
-	const msg = args.message as { role?: unknown; content?: unknown } | undefined;
-	if (msg?.role !== "assistant" || !Array.isArray(msg.content)) {
-		return false;
-	}
-
-	for (const block of msg.content) {
-		if (!block || typeof block !== "object") continue;
-		const b = block as {
-			type?: unknown;
-			name?: unknown;
-			arguments?: unknown;
-		};
-		if (b.type !== "toolCall") continue;
-		if (typeof b.name !== "string") continue;
-		if (b.name !== "todowrite") continue;
-		const capture = getCompatiblePiTodoCapture(
-			(b.arguments as { todos?: unknown } | null | undefined)?.todos,
-		);
-		if (capture === null) continue;
-		applyCompatiblePiTodoCapture({ ...args, capture });
-		return true;
-	}
-
-	return false;
 }
 
 function info(message: string, data?: unknown): void {
@@ -479,19 +371,14 @@ const PLUGIN_VERSION: string = (() => {
 	}
 })();
 
-/** Lock the harness at module load. Safe to import this file in tests; the
- * lock is idempotent and will throw only on a conflicting reset. */
+/** Assert the Pi-only host identity at module load. */
 setHarness("pi");
 
 // ---------------------------------------------------------------------------
 // Config-driven resolvers
 //
-// Step 5b replaced the env-var stop-gaps with `loadPiConfig()`, which reads
-// the shared CortexKit config paths (project `.cortexkit/`, user `~/.config/`)
-// and falls back to Pi-owned legacy files only until migration completes. The
-// resolvers below
-// adapt the schema-shaped config into the Pi-specific options the various
-// registration helpers expect.
+// `loadPiConfig()` reads the CortexKit project and user config paths. The
+// resolvers below adapt the schema-shaped config into Pi-specific options.
 //
 // Each resolver returns `undefined` when the relevant feature is disabled
 // in config, so the registration helpers can short-circuit cleanly.
@@ -598,7 +485,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	}
 
 	// openDatabase() returns null on the schema fence (DB newer than this binary).
-	// Genuine open/migration exceptions are caught above. Either way Magic Context
+	// Genuine storage-open exceptions are caught above. Either way Magic Context
 	// cannot operate — when fail_closed_blocking is on (default), register a loud
 	// blocking surface instead of silently skipping hooks (native compaction).
 	if (!db) {
@@ -694,11 +581,8 @@ async function startPiMagicContextRuntime(
 			`project=${projectIdentity} | dir=${projectDir}`,
 	);
 
-	// Step 5b: load the user's full magic-context.jsonc config. The loader
-	// reads the shared CortexKit project/user paths, validates them through the
-	// shared Zod schema, falls back to Pi-owned legacy files only while migration
-	// is incomplete, and uses defaults for invalid fields per-key. It returns
-	// the merged config plus warnings.
+	// Load the CortexKit project/user config and validate it with the shared
+	// schema. Invalid fields are replaced by defaults and returned as warnings.
 	//
 	// We surface warnings via the standard `warn()` channel so users see
 	// them in the magic-context log. Loading never throws — bad config
@@ -779,7 +663,6 @@ async function startPiMagicContextRuntime(
 			injectDocs: true,
 			injectionBudgetTokens: 0,
 			temporalAwareness: cfg.temporal_awareness === true,
-			muralEnabled: false,
 		},
 		scheduler: {
 			executeThresholdPercentage: cfg.execute_threshold_percentage,
@@ -875,29 +758,11 @@ async function startPiMagicContextRuntime(
 
 	const bootProjectDeps = buildProjectDeps(projectDir, projectIdentity, config);
 	projectDepsByDir.set(projectDir, bootProjectDeps);
-	const todowriteEnabled = bootProjectDeps.config.todowrite.enabled !== false;
-	const todowriteOverlayEnabled =
-		todowriteEnabled && bootProjectDeps.config.todowrite.overlay !== false;
-
-	// Register the agent-facing tools. Reuses the same business logic
-	// the OpenCode plugin uses (insertMemory, unifiedSearch, addNote, …)
-	// via the shared cortexkit DB. Cross-harness memory sharing is automatic
-	// because both plugins resolve the same project identity for the same
-	// directory.
-	// Pi registers tools, commands, and widgets once at extension boot. Therefore
-	// `todowrite.enabled` follows the boot project's config: after `/cd` into a
-	// project with a different value, users need `/reload` or a Pi restart for the
-	// tool/command/overlay surface to change, matching Pi's registration lifecycle.
 	registerMagicContextTools(pi, {
 		db,
 		ensureProjectRegistered: ensureProjectRegisteredFromPiDirectory,
-		todowriteEnabled,
 	});
-	info(
-		todowriteEnabled
-			? "registered tools: ctx_search, ctx_expand, todowrite; registered /todos"
-			: "registered tools: ctx_search, ctx_expand (todowrite disabled)",
-	);
+	info("registered tools: ctx_search, ctx_expand");
 
 	pi.on("session_start", async (event, ctx) => {
 		await handlePiCloneSessionStart(event, ctx, {
@@ -906,25 +771,9 @@ async function startPiMagicContextRuntime(
 		});
 	});
 
-	const readLastTodoState = (sessionId: string) =>
-		getOrCreateSessionMeta(db, sessionId).lastTodoState;
-	if (todowriteEnabled) {
-		registerTodoStateLifecycle(pi, { readLastTodoState });
-	}
-	const todoOverlay = todowriteOverlayEnabled
-		? registerTodoOverlay(pi, {
-				readLastTodoState,
-			})
-		: undefined;
-	info(
-		todowriteOverlayEnabled
-			? "registered todowrite overlay"
-			: "registered todowrite overlay: DISABLED (todowrite.enabled=false or todowrite.overlay=false)",
-	);
-
 	// Register the per-LLM-call transform pipeline. Tags eligible message
 	// parts via the shared Tagger and applies queued drops from
-	// `pending_ops` so /ctx-flush and ctx_reduce work against Pi sessions.
+	// `pending_ops` so /ctx-flush applies queued reclamation to Pi sessions.
 	registerPiContextHandler(pi, bootProjectDeps.contextOptions);
 	info(
 		bootProjectDeps.historianConfig
@@ -983,18 +832,6 @@ async function startPiMagicContextRuntime(
 
 	registerCtxFlushCommand(pi, { db });
 	info("registered /ctx-flush");
-	registerMcImportContextCommand(pi, {
-		db,
-		projectPath: projectDir,
-		resolveProject: resolveCurrentProject,
-		afterImport: (sessionId) => {
-			clearPiM0Cache(db, sessionId, "mc-import-context");
-			signalPiDeferredHistoryRefresh(sessionId);
-			signalPiDeferredMaterialization(sessionId);
-		},
-	});
-	info("registered /mc-import-context");
-
 	// /ctx-recomp uses its own PiSubagentRunner instance — recomp can run
 	// concurrently with normal historian, and giving each its own runner
 	// avoids cross-cancellation. Same model + fallback chain as historian.
@@ -1356,52 +1193,6 @@ async function startPiMagicContextRuntime(
 		log("agent_end: returning synchronously (background work continues)");
 	});
 
-	pi.on("tool_execution_start", async (event, ctx) => {
-		try {
-			const sessionId = ctx.sessionManager.getSessionId();
-			if (event.toolName === "todowrite") {
-				const todoArgs = event.args as
-					| { todos?: Array<{ status?: string }> }
-					| undefined;
-				const toolCallId =
-					typeof (event as { toolCallId?: unknown }).toolCallId === "string"
-						? (event as { toolCallId: string }).toolCallId
-						: undefined;
-				const todos = todoArgs?.todos;
-				const sessionMeta = Array.isArray(todos)
-					? getOrCreateSessionMeta(db, sessionId)
-					: null;
-
-				// Synthetic-todowrite snapshot capture (Pi parity with
-				// OpenCode hook-handlers.ts:386-401). Persist normalized
-				// state on EVERY todowrite call so the transform-time
-				// injection path in pi-pipeline.ts always has a current
-				// snapshot to replay on the next cache-busting pass.
-				// Render-safe: this only stores validated todos in shared
-				// session state and the local tool-call cache; it does not
-				// mutate Pi messages. Subagents skip — they do not get synthetic
-				// todowrite injection. Foreign Pi extensions can share the
-				// `todowrite` name, so only the exact Magic Context todo
-				// shape updates the stored snapshot.
-				capturePiTodowriteArgsIfCompatible({
-					db,
-					sessionId,
-					todos,
-					todowriteEnabled,
-					todoOverlay,
-					persist: Boolean(sessionMeta && !sessionMeta.isSubagent),
-					toolCallId,
-				});
-			}
-		} catch (err) {
-			// tool-event hook is opportunistic; failure should not break
-			// the agent loop.
-			log(
-				`tool_execution_start hook failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	});
-
 	// Cancel Pi's native context compaction. Magic Context owns the
 	// compacted view of conversation history through its own historian
 	// pipeline (compartments + facts + memories rendered as
@@ -1514,41 +1305,6 @@ async function startPiMagicContextRuntime(
 					}
 				},
 			});
-
-			// Synthetic-todowrite capture (Pi parity with OpenCode
-			// hook-handlers.ts `tool.execute.after` for `todowrite`).
-			//
-			// Why message_end and not tool_execution_start:
-			//   Pi's `tool_execution_start` only fires for tools Pi has
-			//   actually executed (i.e. tools the agent registered).
-			//   The mocked todowrite in tests — and any user-driven
-			//   custom todowrite-shaped tool that isn't in Pi's registry
-			//   — would not trigger `tool_execution_start`. Reading the
-			//   assistant message at `message_end` catches every
-			//   todowrite-shaped `toolCall` block regardless of whether
-			//   Pi could execute it locally, matching what OpenCode
-			//   captures via `tool.execute.after` on every visible tool
-			//   call.
-			//
-			// Cache safety: pure DB write, no message mutation.
-			// Subagents skip — they don't get synthetic todowrite
-			// injection downstream (mirrors OpenCode `fullFeatureMode`
-			// gate).
-			try {
-				const sessionMetaForTodo = getOrCreateSessionMeta(db, sessionId);
-				if (!sessionMetaForTodo.isSubagent) {
-					capturePiTodowriteMessageIfCompatible({
-						db,
-						sessionId,
-						message: event.message,
-						todowriteEnabled,
-						todoOverlay,
-						persist: true,
-					});
-				}
-			} catch (err) {
-				warn("message_end: synthetic todowrite capture failed:", err);
-			}
 		} catch (err) {
 			warn("message_end: persist session_meta usage failed:", err);
 		}

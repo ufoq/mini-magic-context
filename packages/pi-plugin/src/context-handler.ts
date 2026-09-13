@@ -57,23 +57,16 @@ import {
 } from "@magic-context/core/features/magic-context/scheduler";
 import { recordSessionProjectIdentity } from "@magic-context/core/features/magic-context/session-project-storage";
 import {
-	adoptPiFallbackMessageTag,
-	adoptPiFallbackToolOwnerTag,
 	type ContextDatabase,
 	clearPendingPiCompactionMarkerStateIf,
 	deriveTagLoadFloor,
-	findAdoptableFallbackTags,
-	findPiFallbackToolOwnerTags,
 	getActiveTagsBySession,
 	getHistorianFailureState,
 	getMaxDroppedTagNumber,
 	getPendingOps,
 	getPendingPiCompactionMarkerState,
-	getPersistedToolTagAccounting,
 	getTagsByNumbers,
 	getTagsForPendingOperations,
-	hasPiFallbackMessageTags,
-	hasPiFallbackToolOwnerTags,
 	isWrapupInProgress,
 	setSessionWorkMetrics,
 	updateSessionMeta,
@@ -177,7 +170,6 @@ import {
 	trimPiMessagesToCachedBoundary,
 } from "./inject-compartments-pi";
 import { type PiHistorianDeps, runPiHistorian } from "./pi-historian-runner";
-import { injectSyntheticTodowriteForPi } from "./pi-todo-inject";
 import {
 	convertEntriesToRawMessages,
 	findLastModelKeyFromBranch,
@@ -252,17 +244,10 @@ function applyForwardPressureFloor(
 
 let injectM0M1PiForRun = injectM0M1Pi;
 let persistReasoningWatermarkForRun = updateSessionMeta;
-let persistStableIdSchemeForRun = updateSessionMeta;
-let afterFallbackAdoptionForTests:
-	| ((stableIdSchemeCutover: boolean) => void)
-	| undefined;
 
 export const __test = {
 	FORWARD_PRESSURE_LIMIT_FACTOR,
-	adoptPiFallbackTags,
 	applyForwardPressureFloor,
-	buildEntryFingerprintMap,
-	buildPiToolOwnerMap,
 	readPiBranchEntriesForContext,
 	getTaggedStableMessageIdsForTests(sessionId: string): ReadonlySet<string> {
 		return new Set(taggedStableMessageIdsBySession.get(sessionId));
@@ -294,22 +279,6 @@ export const __test = {
 			persistReasoningWatermarkForRun = updateSessionMeta;
 		};
 	},
-	setStableIdSchemePersistenceForTests(
-		fn: typeof updateSessionMeta,
-	): () => void {
-		persistStableIdSchemeForRun = fn;
-		return () => {
-			persistStableIdSchemeForRun = updateSessionMeta;
-		};
-	},
-	setAfterFallbackAdoptionForTests(
-		fn: ((stableIdSchemeCutover: boolean) => void) | undefined,
-	): () => void {
-		afterFallbackAdoptionForTests = fn;
-		return () => {
-			afterFallbackAdoptionForTests = undefined;
-		};
-	},
 };
 
 /**
@@ -318,16 +287,6 @@ export const __test = {
  * (`packages/plugin/src/config/schema/magic-context.ts:303` → `.default(50)`).
  */
 const DEFAULT_CLEAR_REASONING_AGE = 50;
-
-/**
- * Current Pi message stable-id scheme version. Bump when the durable message
- * stable-id format changes in a way that re-keys persisted tag/source_contents/
- * caveman/placeholder state. A session whose persisted `pi_stable_id_scheme` is
- * below this triggers a one-time forced execute+materialize cutover.
- *   0 (NULL) = legacy index-based `pi-msg-${index}-...` ids.
- *   1        = real-SessionEntry-id scheme (resolvePiStableId).
- */
-const PI_STABLE_ID_SCHEME = 1;
 
 /**
  * Per-session emergency-notification dedup. Mirrors OpenCode's
@@ -404,7 +363,7 @@ function recordSuccessfulTaggedMessageIds(
 ): void {
 	const liveRealIds = new Set<string>();
 	for (const entryId of entryIds) {
-		if (entryId && !entryId.startsWith("pi-msg-")) liveRealIds.add(entryId);
+		if (entryId) liveRealIds.add(entryId);
 	}
 	taggedStableMessageIdsBySession.set(sessionId, liveRealIds);
 }
@@ -931,8 +890,6 @@ export interface PiInjectionOptions {
 	injectDocs?: boolean;
 	injectionBudgetTokens: number;
 	temporalAwareness?: boolean;
-	/** experimental.mural.enabled — on-demand deterministic mural image on HARD folds. */
-	muralEnabled?: boolean;
 }
 
 /** Scheduler config — gates cache-busting stages on TTL + threshold. */
@@ -1672,251 +1629,16 @@ function firstPiTextContent(content: unknown): string | null {
 function buildEntryFingerprintMap(
 	messages: readonly PiAgentMessage[],
 	resolveStableId: (msg: unknown, index: number) => string | undefined,
-	reusableMessageIds?: ReadonlySet<string>,
-	includeReusable = true,
 ): Map<string, string> {
 	const map = new Map<string, string>();
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
 		const id = resolveStableId(msg, i);
 		if (!id) continue;
-		if (!includeReusable && reusableMessageIds?.has(id)) continue;
 		const fp = piMessageEntryFingerprint(msg);
 		if (fp) map.set(id, fp);
 	}
 	return map;
-}
-
-function piToolOwnerMapKey(timestamp: number, callId: string): string {
-	return `${timestamp}\x00${callId}`;
-}
-
-function buildPiToolOwnerMap(
-	messages: readonly PiAgentMessage[],
-	resolveStableId: (msg: unknown, index: number) => string | undefined,
-): Map<string, Set<string>> {
-	const map = new Map<string, Set<string>>();
-	for (let i = 0; i < messages.length; i++) {
-		const message = messages[i];
-		if (!message || typeof message !== "object") continue;
-		const msg = message as {
-			role?: unknown;
-			content?: unknown;
-			timestamp?: unknown;
-		};
-		if (msg.role !== "assistant") continue;
-		if (typeof msg.timestamp !== "number" || !Number.isFinite(msg.timestamp)) {
-			continue;
-		}
-		if (!Array.isArray(msg.content)) continue;
-		const ownerRealId = resolveStableId(message, i);
-		if (!ownerRealId || ownerRealId.startsWith("pi-msg-")) continue;
-		for (const part of msg.content) {
-			if (!part || typeof part !== "object") continue;
-			const p = part as { type?: unknown; id?: unknown };
-			if (p.type !== "toolCall") continue;
-			if (typeof p.id !== "string" || p.id.length === 0) continue;
-			const key = piToolOwnerMapKey(msg.timestamp, p.id);
-			let owners = map.get(key);
-			if (!owners) {
-				owners = new Set<string>();
-				map.set(key, owners);
-			}
-			owners.add(ownerRealId);
-		}
-	}
-	return map;
-}
-
-function parsePiFallbackToolOwnerId(
-	ownerMsgId: string,
-): { timestamp: number; role: string } | null {
-	const match = /^pi-msg-\d+-(\d+)-(.+)$/.exec(ownerMsgId);
-	if (!match) return null;
-	const timestamp = Number(match[1]);
-	if (!Number.isFinite(timestamp)) return null;
-	return { timestamp, role: match[2] ?? "" };
-}
-
-function databaseIsInTransaction(db: ContextDatabase): boolean {
-	const state = db as unknown as {
-		inTransaction?: unknown;
-		isTransaction?: unknown;
-	};
-	return state.inTransaction === true || state.isTransaction === true;
-}
-
-function runImmediateTransaction<T>(db: ContextDatabase, fn: () => T): T {
-	if (databaseIsInTransaction(db)) {
-		return db.transaction(fn)();
-	}
-	db.exec("BEGIN IMMEDIATE");
-	try {
-		const result = fn();
-		db.exec("COMMIT");
-		return result;
-	} catch (error) {
-		db.exec("ROLLBACK");
-		throw error;
-	}
-}
-
-interface AdoptPiFallbackTagsOptions {
-	messages?: readonly PiAgentMessage[];
-	resolveStableId?: (msg: unknown, index: number) => string | undefined;
-	hasFallbackMessageTags?: boolean;
-	hasFallbackToolOwnerTags?: boolean;
-}
-
-function hasAdoptablePiFallbackMessageTags(
-	db: ContextDatabase,
-	sessionId: string,
-	fingerprintById: ReadonlyMap<string, string>,
-): boolean {
-	for (const [realMessageId, fingerprint] of fingerprintById) {
-		if (realMessageId.startsWith("pi-msg-")) continue;
-		if (findAdoptableFallbackTags(db, sessionId, fingerprint).length > 0) {
-			return true;
-		}
-	}
-	return false;
-}
-
-/**
- * Pi fallback-tag adoption pre-pass. Runs BEFORE tagging. Message text tags are
- * matched by raw-message fingerprint; tool tags are owner-driven from stored
- * `pi-msg-*` owners to the current real assistant entry id by `(timestamp,
- * callId)`. Collision folds keep the synthetic row's tag number/drop metadata,
- * merge size/token accounting by MAX, retarget pending ops, and update the
- * tagger's in-memory aliases before `tagTranscript` looks anything up.
- */
-function adoptPiFallbackTags(
-	db: ContextDatabase,
-	sessionId: string,
-	tagger: Tagger,
-	fingerprintById: ReadonlyMap<string, string>,
-	options: AdoptPiFallbackTagsOptions = {},
-): void {
-	// A positive preflight remains a valid fast path, but a negative preflight is
-	// only advisory: a sibling connection can commit a fallback row after the
-	// fingerprint map is built. Re-probe negatives here so the decision to skip
-	// observes commits that happened before adoption starts.
-	const hasFallbackMessageTags =
-		options.hasFallbackMessageTags === true ||
-		hasPiFallbackMessageTags(db, sessionId);
-	const hasFallbackToolOwnerTags =
-		options.hasFallbackToolOwnerTags === true ||
-		hasPiFallbackToolOwnerTags(db, sessionId);
-	const shouldRunMessageMigration =
-		hasFallbackMessageTags &&
-		hasAdoptablePiFallbackMessageTags(db, sessionId, fingerprintById);
-	const shouldRunToolOwnerMigration = Boolean(
-		options.messages && options.resolveStableId && hasFallbackToolOwnerTags,
-	);
-	if (!shouldRunMessageMigration && !shouldRunToolOwnerMigration) return;
-
-	runImmediateTransaction(db, () => {
-		if (shouldRunMessageMigration) {
-			for (const [realMessageId, fingerprint] of fingerprintById) {
-				// Only real ids can be adoption targets; a pi-msg-* id has no fallback
-				// predecessor to migrate from.
-				if (realMessageId.startsWith("pi-msg-")) continue;
-				const candidates = findAdoptableFallbackTags(
-					db,
-					sessionId,
-					fingerprint,
-				);
-				if (candidates.length === 0) continue;
-				// Group candidates by their fallback message base id (strip the :pN
-				// suffix). A unique base means exactly one fallback message carried this
-				// fingerprint → safe to adopt; duplicates (same fingerprint on >1
-				// fallback message) are ambiguous → skip, let tagTranscript allocate
-				// fresh.
-				const baseIds = new Set<string>();
-				for (const c of candidates) {
-					const m = /^(.*):p\d+$/.exec(c.messageId);
-					baseIds.add(m ? m[1] : c.messageId);
-				}
-				if (baseIds.size !== 1) continue;
-				for (const c of candidates) {
-					const ordinalMatch = /:p(\d+)$/.exec(c.messageId);
-					if (!ordinalMatch) continue;
-					const realContentId = `${realMessageId}:p${ordinalMatch[1]}`;
-					const adoption = adoptPiFallbackMessageTag(
-						db,
-						sessionId,
-						c.tagNumber,
-						c.messageId,
-						realContentId,
-					);
-					if (adoption.action !== "skipped") {
-						// Drop stale fallback and collision aliases, then bind the survivor
-						// under the real key so the same-pass exact lookup hits it.
-						tagger.unbindTag(sessionId, c.messageId);
-						if (adoption.action === "folded") {
-							tagger.unbindTag(sessionId, realContentId);
-						}
-						tagger.bindTag(sessionId, realContentId, adoption.tagNumber);
-					}
-				}
-			}
-		}
-
-		if (
-			shouldRunToolOwnerMigration &&
-			options.messages &&
-			options.resolveStableId
-		) {
-			const ownerMap = buildPiToolOwnerMap(
-				options.messages,
-				options.resolveStableId,
-			);
-			for (const row of findPiFallbackToolOwnerTags(db, sessionId)) {
-				const parsed = parsePiFallbackToolOwnerId(row.toolOwnerMessageId);
-				if (parsed?.role !== "assistant") continue;
-				const owners = ownerMap.get(
-					piToolOwnerMapKey(parsed.timestamp, row.callId),
-				);
-				if (owners?.size !== 1) continue;
-				const [realOwnerId] = owners;
-				if (!realOwnerId || realOwnerId.startsWith("pi-msg-")) continue;
-				const adoption = adoptPiFallbackToolOwnerTag(
-					db,
-					sessionId,
-					row.tagNumber,
-					row.callId,
-					row.toolOwnerMessageId,
-					realOwnerId,
-				);
-				if (adoption.action !== "skipped") {
-					tagger.unbindToolTag(sessionId, row.toolOwnerMessageId, row.callId);
-					if (adoption.action === "folded") {
-						tagger.unbindToolTag(sessionId, realOwnerId, row.callId);
-					}
-					tagger.bindToolTag(
-						sessionId,
-						row.callId,
-						realOwnerId,
-						adoption.tagNumber,
-					);
-					const accounting = getPersistedToolTagAccounting(
-						db,
-						sessionId,
-						adoption.tagNumber,
-					);
-					if (accounting) {
-						// Collision folds can raise stored maxima; refresh the mirror before
-						// identity reuse uses it as the no-BPE growth baseline.
-						tagger.setToolTagAccounting(
-							sessionId,
-							adoption.tagNumber,
-							accounting,
-						);
-					}
-				}
-			}
-		}
-	});
 }
 
 /**
@@ -1970,7 +1692,6 @@ export function registerPiContextHandler(
 			}
 			sessionIdForError = sessionId;
 			const projectDirectory = ctx.cwd;
-			const fullWireMessageCount = event.messages.length;
 
 			// Resolve the effective options for THIS pass's project. On a `/cd`
 			// switch this picks up the switched-into checkout's config (caller
@@ -2365,87 +2086,6 @@ export function registerPiContextHandler(
 			}
 			logTransformTiming(sessionId, "schedulerAndUsage", tScheduler);
 
-			// Migrated/imported sessions: a Pi session loaded with a large
-			// existing JSONL has no usage data yet (pre-LLM-call) and no
-			// `last_response_time` baseline, so the scheduler returns
-			// "defer" on the brand-new-session branch — but the message
-			// array IS already enormous and WILL overflow the model on
-			// this turn. Force "execute" when the AgentMessage[] arriving
-			// for transform is much larger than any healthy fresh session
-			// would produce.
-			//
-			// Threshold: 50 messages. A normal first turn carries 1
-			// system message + 1 user message; even a complex multi-step
-			// first turn with tool calls would only reach ~10. 50 is
-			// firmly in "this came from migration or session import"
-			// territory and below it we keep the cache-friendly defer.
-			const piMessageCount = fullWireMessageCount;
-			const looksLikeImportedSession =
-				schedulerDecision === "defer" &&
-				usagePercentage === 0 &&
-				sessionMeta.lastResponseTime === 0 &&
-				piMessageCount >= 50;
-			if (looksLikeImportedSession) {
-				schedulerDecision = "execute";
-				sessionLog(
-					sessionId,
-					`transform: large imported session detected (${piMessageCount} messages, no usage baseline) — forcing execute on first pass`,
-				);
-			}
-			logTransformTiming(sessionId, "modelChangeDetection", tModelDetect);
-
-			// Pi stable-id scheme cutover (one-time, per session). When this
-			// session's persisted tags/source_contents/caveman/placeholder state
-			// were keyed under the OLD index-based pi-msg-* scheme (stored scheme <
-			// PI_STABLE_ID_SCHEME, NULL = 0 = legacy), switching to real-entry-id
-			// ids re-keys every row → the tagger re-tags and prior drops orphan.
-			// Force ONE controlled execute+materialize pass so heuristic cleanup
-			// re-drops by tag content and the prefix rebuilds in a single bust
-			// (rather than an uncontrolled defer-pass bust that could leak
-			// full-size content). Also clear stripped_placeholder_ids so the
-			// forced pass rediscovers placeholders under the new scheme. The new
-			// scheme stamp is staged until every transform phase succeeds. A failed
-			// cutover therefore retries placeholder discovery and fallback adoption on
-			// the next pass instead of hiding legacy pi-msg-* replay state.
-			const storedStableIdScheme = sessionMeta.piStableIdScheme ?? 0;
-			// Only activate the cutover when REAL SessionEntry ids are available this
-			// pass. The cutover re-keys persisted state from pi-msg-* index ids to
-			// real entry ids; if branch resolution failed (strictEntryIds null →
-			// pi-msg-* fallback), forcing an execute+materialize would burn a cache
-			// bust without re-keying anything, then either false-complete (if we
-			// stamped) or churn the placeholder set under pi-msg-* ids. Defer the
-			// whole cutover to a later pass when getBranch() succeeds.
-			const realEntryIdsAvailable =
-				strictEntryIds?.some((id) => typeof id === "string" && id.length > 0) ??
-				false;
-			const stableIdSchemeCutover =
-				storedStableIdScheme < PI_STABLE_ID_SCHEME && realEntryIdsAvailable;
-			if (
-				storedStableIdScheme < PI_STABLE_ID_SCHEME &&
-				!realEntryIdsAvailable
-			) {
-				sessionLog(
-					sessionId,
-					`stable-id scheme cutover deferred: real SessionEntry ids unavailable this pass (branch resolution failed) — will retry when getBranch() succeeds`,
-				);
-			}
-			if (stableIdSchemeCutover) {
-				schedulerDecision = "execute";
-				signalPiPendingMaterialization(sessionId);
-				// Re-keying of stripped_placeholder_ids from pi-msg-* to real ids is
-				// done by the strip's own prune this pass (forceDiscovery + carried
-				// map → finalIds = idsToStrip ∩ presentIds, and stale pi-msg-* ids
-				// aren't in the real-id presentIds, so they're dropped atomically
-				// within the strip's persist). We deliberately do NOT pre-clear the
-				// set here: an early clear before the pass succeeds would lose the
-				// placeholder set on a mid-pass failure, and forceDiscovery keeps
-				// retrying every pass until the scheme stamps anyway.
-				sessionLog(
-					sessionId,
-					`stable-id scheme cutover: stored=${storedStableIdScheme} < current=${PI_STABLE_ID_SCHEME} — forcing execute+materialize this pass`,
-				);
-			}
-
 			const tBoundaryChecks = performance.now();
 			const schedulerDecisionEarly = schedulerDecision;
 			const midTurn = isMidTurnPi(event, sessionId, branchEntries);
@@ -2681,7 +2321,6 @@ export function registerPiContextHandler(
 				entryIds,
 				entryIdByRef,
 				reusableMessageIds,
-				stableIdSchemeCutover,
 				schedulerDecision,
 				// 95% emergency forces drop-all-tools regardless of the
 				// 85% gate, so the LLM call sees the smallest possible
@@ -2800,57 +2439,6 @@ export function registerPiContextHandler(
 			}
 			logTransformTiming(sessionId, "autoSearch", tAutoSearch);
 
-			// Synthetic todowrite injection — Pi parity with OpenCode's
-			// transform-postprocess-phase.ts B7. On cache-busting passes,
-			// inject a Pi-shape toolCall + toolResult pair built from the
-			// `session_meta.last_todo_state` snapshot captured by
-			// `tool_execution_start` in index.ts. On defer passes, replay
-			// the same pair from the persisted snapshot to keep wire bytes
-			// byte-identical (Anthropic prompt cache stability).
-			//
-			// Cache-busting gate parity: OpenCode uses
-			// `isCacheBustingPass = shouldApplyPendingOps || shouldRunHeuristics`
-			// (transform-postprocess-phase.ts:273). Pi's `isCacheBusting`
-			// flag from the outer handler only covers history refresh
-			// (historian publication), so we OR it with
-			// `result.executedWorkThisPass` — pending-op materialization,
-			// heuristic cleanup, or reasoning clearing — to match
-			// OpenCode's broader "execute pass that actually mutated state"
-			// semantics.
-			//
-			// Subagents skip — they don't get synthetic injection in
-			// OpenCode either (see B7 `args.fullFeatureMode` gate).
-			const tTodoCapture = performance.now();
-			try {
-				const sessionMetaForTodo = getOrCreateSessionMeta(
-					options.db,
-					sessionId,
-				);
-				if (
-					!sessionMetaForTodo.isSubagent &&
-					sessionMetaForTodo.lastTodoState !== ""
-				) {
-					const isCacheBustingForTodo =
-						isCacheBusting || result.executedWorkThisPass;
-					outputMessages = injectSyntheticTodowriteForPi({
-						db: options.db,
-						sessionId,
-						isSubagent: sessionMetaForTodo.isSubagent,
-						isCacheBusting: isCacheBustingForTodo,
-						lastTodoState: sessionMetaForTodo.lastTodoState,
-						messages: outputMessages as unknown as Parameters<
-							typeof injectSyntheticTodowriteForPi
-						>[0]["messages"],
-					}) as unknown as typeof outputMessages;
-				}
-			} catch (err) {
-				sessionLog(
-					sessionId,
-					`synthetic todowrite injection failed: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-			logTransformTiming(sessionId, "todoCapture", tTodoCapture);
-
 			// Work-metrics update runs on EVERY transform pass (not just
 			// execute passes). The Pi compute helper is pure-read on
 			// outputMessages; setSessionWorkMetrics is a pure write to
@@ -2874,29 +2462,6 @@ export function registerPiContextHandler(
 				);
 			}
 			logTransformTiming(sessionId, "workMetrics", tWorkMetrics);
-
-			const tStableIdSchemePersist = performance.now();
-			if (stableIdSchemeCutover) {
-				// Scheme stamps only after the cutover pass completed. If this write
-				// fails, the outer fail-open path ships the original messages and the
-				// next pass repeats forced placeholder discovery.
-				persistStableIdSchemeForRun(options.db, sessionId, {
-					piStableIdScheme: PI_STABLE_ID_SCHEME,
-				});
-				invalidateTrueRawTokenCache({
-					sessionId,
-					reason: "pi.stable-id-scheme.changed",
-				});
-				sessionLog(
-					sessionId,
-					`stable-id scheme cutover complete — stamped scheme=${PI_STABLE_ID_SCHEME}`,
-				);
-			}
-			logTransformTiming(
-				sessionId,
-				"stableIdSchemePersist",
-				tStableIdSchemePersist,
-			);
 
 			logTransformTiming(sessionId, "postTransformPhase", tPostTransform);
 
@@ -3736,8 +3301,6 @@ interface RunPipelineArgs {
 		 *  injection budget. Drives compartment tier demotion in renderM0Pi. */
 		historyBudgetTokens?: number;
 		temporalAwareness?: boolean;
-		/** experimental.mural.enabled — on-demand deterministic mural image on HARD folds. */
-		muralEnabled?: boolean;
 	};
 	/**
 	 * Optional entry-id array, indexed 1:1 with `messages`, providing
@@ -3771,7 +3334,6 @@ interface RunPipelineArgs {
 	 * (pi_stable_id_scheme persisted version) is wired by the caller; when unset,
 	 * no cutover behavior runs (safe default).
 	 */
-	stableIdSchemeCutover?: boolean;
 	/**
 	 * Pre-resolved scheduler decision for THIS pass. When `"execute"`,
 	 * heuristic cleanup runs (cache-busting). When `"defer"`, only the
@@ -4115,50 +3677,11 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 			m0HardFoldThisPass ||
 			(args.schedulerDecision === "execute" && !alreadyRanHeuristicsThisTurn));
 
-	// 1. Tagging: assigns tag numbers + injects §N§ prefixes when ctx_reduce
-	// is callable. DB-side tag IDs still get created when prefixes are skipped
-	// so queued drops and automatic cleanup continue to work.
-	//
-	// Pi-only fallback-tag adoption: the newest (in-flight) message is tagged
-	// under an unstable pi-msg-* fallback id on the pass it is newest (its real
-	// SessionEntry id isn't resolvable yet), then resolves to its real id one
-	// pass later. Build a raw-message fingerprint map (BEFORE tagging mutates
-	// text) and migrate any fallback-id tag onto the real id up front, so the
-	// message keeps its tag_number/§N§ instead of getting a fresh tag. No-op for
-	// OpenCode (this path is Pi-only) and for messages already on a real id.
-	const tFallbackIdentity = performance.now();
-	// This indexed preflight avoids rebuilding fingerprints for every old message.
-	// A negative result is rechecked by adoption after this map is complete, while
-	// tool-owner adoption performs its only existence probe at that later point.
-	const hasFallbackMessageTags = hasPiFallbackMessageTags(
-		args.db,
-		args.sessionId,
-	);
+	// 1. Tagging assigns stable tag numbers for automatic cleanup and expansion.
 	const entryFingerprintByMessageId = buildEntryFingerprintMap(
 		args.messages as PiAgentMessage[],
 		stableIdResolver,
-		args.reusableMessageIds,
-		// Existing fallback rows may match any old real-id message. Once the
-		// indexed gate is empty, only the newly observed tail needs fingerprints.
-		hasFallbackMessageTags,
 	);
-	adoptPiFallbackTags(
-		args.db,
-		args.sessionId,
-		args.tagger,
-		entryFingerprintByMessageId,
-		{
-			messages: args.messages as PiAgentMessage[],
-			resolveStableId: stableIdResolver,
-			hasFallbackMessageTags,
-		},
-	);
-	logTransformTiming(
-		args.sessionId,
-		"fallbackIdentityAndAdoption",
-		tFallbackIdentity,
-	);
-	afterFallbackAdoptionForTests?.(args.stableIdSchemeCutover === true);
 	const textIdentityPlan = buildPiTextIdentityPlan(
 		args.db,
 		args.sessionId,
@@ -4522,7 +4045,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				args.messages,
 				{
 					protectedTags: args.protectedTags,
-					staleReduceStripEnabled: args.canUseEmptySentinels,
 					// Tiered emergency drop fires only at ≥85% AND when the
 					// ceiling is known. forceMaterialization already incorporates
 					// the ≥85% / emergency condition for Pi (primary-equivalent).
@@ -4544,13 +4066,11 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				heuristicsResult.droppedTools +
 				heuristicsResult.deduplicatedTools +
 				heuristicsResult.droppedInjections +
-				heuristicsResult.droppedStaleReduceCalls +
 				heuristicsResult.mutatedTextTags;
 			droppedCount +=
 				heuristicsResult.droppedTools +
 				heuristicsResult.deduplicatedTools +
 				heuristicsResult.droppedInjections +
-				heuristicsResult.droppedStaleReduceCalls +
 				heuristicsResult.mutatedTextTags;
 			emergency ||= heuristicsResult.emergencyDroppedTools > 0;
 			if (heuristicMutationCount > 0) heuristicOrReasoningDidMutate = true;
@@ -4566,7 +4086,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				args.sessionId,
 				"applyHeuristicCleanup",
 				tHeuristic,
-				`droppedTools=${heuristicsResult.droppedTools} deduplicatedTools=${heuristicsResult.deduplicatedTools} droppedInjections=${heuristicsResult.droppedInjections} staleReduce=${heuristicsResult.droppedStaleReduceCalls} compressedTextTags=${heuristicsResult.compressedTextTags} mutatedTextTags=${heuristicsResult.mutatedTextTags}`,
+				`droppedTools=${heuristicsResult.droppedTools} deduplicatedTools=${heuristicsResult.deduplicatedTools} droppedInjections=${heuristicsResult.droppedInjections} compressedTextTags=${heuristicsResult.compressedTextTags} mutatedTextTags=${heuristicsResult.mutatedTextTags}`,
 			);
 		} catch (err) {
 			sessionLog(
@@ -4690,7 +4210,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 			watermark: reclaimMeta.toolReclaimWatermark ?? 0,
 			pendingOps,
 		});
-		// Smart-drops: also reclaim older todowrite/ctx_reduce/meta outputs that
+		// Smart-drops: also reclaim superseded ctx_reduce/meta outputs that
 		// a later call supersedes, and compress superseded edits to an
 		// edit_marker (keep filePath + region hint). Merged into the same
 		// already-gated drop apply as the age-based sweep above. Dedupe (a tag
@@ -4873,7 +4393,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 					injectionBudgetTokens: args.injection.injectionBudgetTokens,
 					historyBudgetTokens: args.injection.historyBudgetTokens,
 					hardSignals: piHardSignals,
-					muralEnabled: args.injection.muralEnabled === true,
 				},
 				args.db,
 				args.messages as Parameters<typeof injectM0M1Pi>[2],
@@ -4937,7 +4456,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		// F4 cutover: when the stable-id scheme just changed, force rediscovery so
 		// previously-stripped placeholders get re-keyed under the new scheme this
 		// pass (discovery is otherwise gated on isCacheBusting = history-refresh).
-		forceDiscovery: args.stableIdSchemeCutover === true,
 	});
 	logTransformTiming(
 		args.sessionId,

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { MagicContextConfigSchema } from "@magic-context/core/config/schema/magic-context";
-import { loadPiConfig, loadPiConfigDetailed } from "./index";
+import { loadPiConfig } from "./index";
 
 const tempRoots: string[] = [];
 const originalHome = process.env.HOME;
@@ -79,43 +79,6 @@ afterEach(() => {
 });
 
 describe("loadPiConfig", () => {
-	it("marks an unmigrated legacy project config as an untrusted load", () => {
-		const cwd = makeTempRoot("mc-pi-cwd-");
-		const home = makeTempRoot("mc-pi-home-");
-		withHome(home);
-		writeFileSync(
-			join(cwd, "mini-magic-context.jsonc"),
-			'{"embedding":{"provider":"off"}}',
-			"utf-8",
-		);
-
-		const result = loadPiConfigDetailed({ cwd });
-
-		expect(result.sources.projectConfig).toBe("legacy-config-unmigrated");
-		expect(result.loadOutcome).toBe("legacy-config-unmigrated");
-		expect(result.warnings.join("\n")).toContain("legacy Magic Context config");
-	});
-
-	it("reads Pi's own legacy config instead of falling to defaults when the base is absent", () => {
-		const cwd = makeTempRoot("mc-pi-cwd-");
-		const home = makeTempRoot("mc-pi-home-");
-		withHome(home);
-		// Legacy Pi user config (~/.pi/agent/mini-magic-context.jsonc) with a disabled
-		// setting. The CortexKit base is absent (migration refused/not run), so the
-		// loader must READ this real config — not silently default the setting on.
-		writeConfig(
-			join(home, ".pi", "agent", "mini-magic-context.jsonc"),
-			'{"enabled":false}',
-		);
-
-		const result = loadPiConfigDetailed({ cwd });
-
-		expect(result.sources.userConfig).toBe("ok");
-		expect(result.loadOutcome).toBe("ok");
-		expect(result.config.enabled).toBe(false);
-		expect(result.warnings.join("\n")).toContain("reading legacy config from");
-	});
-
 	it("returns defaults with no config files", () => {
 		const cwd = makeTempRoot("mc-pi-cwd-");
 		const home = makeTempRoot("mc-pi-home-");

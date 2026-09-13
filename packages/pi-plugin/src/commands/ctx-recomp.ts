@@ -39,7 +39,6 @@ const RECOMP_USAGE = [
 	"Usage:",
 	"- `/ctx-recomp` — full rebuild from message 1 to the protected tail",
 	"- `/ctx-recomp <start>-<end>` — partial rebuild of a message range (e.g. `/ctx-recomp 1-11322`)",
-	"- `/ctx-recomp --upgrade` — upgrade legacy v1 compartments to v2 layout (Wave 3 runner)",
 ].join("\n");
 
 export interface CtxRecompRuntimeDeps {
@@ -84,15 +83,6 @@ export function registerCtxRecompCommand(
 					title: "/ctx-recomp",
 					text: `## Magic Recomp — Invalid Arguments\n\n${parsed.message}`,
 					level: "error",
-				});
-				return;
-			}
-
-			if (parsed.kind === "upgrade") {
-				sendCtxStatusMessage(pi, {
-					title: "/ctx-recomp",
-					text: executeRecompUpgradeStub(currentDeps.db, sessionId),
-					level: "info",
 				});
 				return;
 			}
@@ -273,11 +263,9 @@ function parseRecompArgs(
 ):
 	| { kind: "full" }
 	| { kind: "partial"; range: PartialRecompRange }
-	| { kind: "upgrade" }
 	| { kind: "error"; message: string } {
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) return { kind: "full" };
-	if (trimmed === "--upgrade") return { kind: "upgrade" };
 	const match = trimmed.match(/^(\d+)\s*-\s*(\d+)$/);
 	if (!match) {
 		return {
@@ -295,25 +283,6 @@ function parseRecompArgs(
 			message: `End must be >= start (got ${start}-${end}).`,
 		};
 	return { kind: "partial", range: { start, end } };
-}
-
-function executeRecompUpgradeStub(
-	db: ContextDatabase,
-	sessionId: string,
-): string {
-	const legacyCount = getCompartments(db, sessionId).filter(
-		(compartment) => compartment.legacy === 1,
-	).length;
-	if (legacyCount === 0) {
-		return "## Magic Recomp Upgrade\n\nNothing to upgrade: this session has no legacy compartments.";
-	}
-
-	return [
-		"## Magic Recomp Upgrade",
-		"",
-		`Found ${legacyCount} legacy compartment${legacyCount === 1 ? "" : "s"} for this session.`,
-		"The `--upgrade` flag is no longer supported.",
-	].join("\n");
 }
 
 function buildConfirmationWarning(

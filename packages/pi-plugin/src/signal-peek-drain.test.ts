@@ -323,25 +323,4 @@ describe("source contract: peek-then-drain in before_agent_start (system prompt)
 		);
 		expect(code).toContain("resolveProject: resolveCurrentProject");
 	});
-
-	test("todowrite capture only accepts the built-in tool name", () => {
-		expect(code).toContain('b.name !== "todowrite"');
-		expect(code).not.toContain("^todo.*write");
-	});
-
-	test("project-docs m0 injection uses the flag independent of dreamer.disable", () => {
-		expect(code).toContain("injectDocs: cfg.dreamer?.inject_docs !== false");
-		expect(code).not.toContain(
-			"isDreamerRunnable(config) && (config.dreamer?.inject_docs",
-		);
-	});
-
-	test("hash-change path remains eager for all three refresh sets", () => {
-		const idx = code.indexOf("if (result.hashChanged)");
-		expect(idx).toBeGreaterThan(0);
-		const segment = code.slice(idx, idx + 500);
-		expect(segment).toContain("signalPiHistoryRefresh(sessionId)");
-		expect(segment).toContain("signalPiSystemPromptRefresh(sessionId)");
-		expect(segment).toContain("signalPiPendingMaterialization(sessionId)");
-	});
 });

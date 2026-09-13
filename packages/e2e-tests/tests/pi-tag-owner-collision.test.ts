@@ -121,27 +121,6 @@ describe("pi tag-owner collision repro (v3.3.1 Layer C)", () => {
     }
   }, 30_000);
 
-  it("legacy NULL-owner Pi rows for the same callId still coexist", async () => {
-    const sessionId = "pi-ses-legacy-null";
-    const writable = openTestDb(h.contextDbPath());
-    try {
-      const insert = writable.prepare(
-        "INSERT INTO tags (session_id, message_id, type, tag_number, byte_size, tool_name, tool_owner_message_id, harness) VALUES (?, ?, 'tool', ?, ?, 'read', NULL, 'pi')",
-      );
-      insert.run(sessionId, "legacy:1", 1, 100);
-      insert.run(sessionId, "legacy:1", 2, 100);
-
-      const tags = writable
-        .prepare(
-          "SELECT COUNT(*) AS n FROM tags WHERE session_id = ? AND tool_owner_message_id IS NULL AND harness = 'pi'",
-        )
-        .get(sessionId) as { n: number };
-      expect(tags.n).toBe(2);
-    } finally {
-      writable.close();
-    }
-  }, 30_000);
-
   it("dropping one Pi owner leaves the colliding owner active", async () => {
     const sessionId = "pi-ses-drop-isolation";
     const writable = openTestDb(h.contextDbPath());

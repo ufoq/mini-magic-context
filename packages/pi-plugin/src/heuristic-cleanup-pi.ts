@@ -1,30 +1,9 @@
 /**
- * Pi-side heuristic cleanup — mirrors OpenCode's `applyHeuristicCleanup`
- * (packages/plugin/src/hooks/magic-context/heuristic-cleanup.ts).
+ * Pi heuristic cleanup for tool deduplication, system-injection stripping,
+ * emergency tool reclamation, and age-tier text compression.
  *
- * Same four passes, in the same order, with the same DB persistence
- * semantics. The only Pi-specific pieces are:
- *
- *   - Tool fingerprinting walks Pi `AgentMessage[]` instead of
- *     OpenCode `MessageLike[]`. Pi assistant messages carry tool calls
- *     as parts of type `"toolCall"` with `{ id, name, arguments }`.
- *     OpenCode's `extractToolInfo` checks `"tool" | "tool_use" |
- *     "tool-invocation"` shapes that don't exist in Pi.
- *   - Stale `ctx_reduce` removal also walks Pi shape directly. New discovery is
- *     gated to providers that can safely drop empty sentinels; Pi persists
- *     `tags.status='dropped'` and lets `applyFlushedStatuses` replay existing
- *     drops on every provider, which is the cache-stable mechanism Pi already uses.
- *
- *   - Everything else (drop aged tools, strip system injections from
- *     message tags, age-tier caveman compression) is tag-driven and
- *     uses the shared `TagTarget` interface produced by `tagTranscript`,
- *     so the OpenCode helpers `applyCavemanCleanup` and
- *     `stripSystemInjection` are called as-is — they don't know about
- *     the harness shape.
- *
- * Runs behind the same scheduler-execute / explicit-flush /
- * force-materialization gating as OpenCode (gating is the caller's
- * responsibility — this function unconditionally executes when called).
+ * The caller owns scheduler and force-materialization gating; this function
+ * executes unconditionally when invoked.
  *
  * Cache safety: every mutation persists to the DB (`tags.status`,
  * `tags.drop_mode`, `source_contents`, `tags.caveman_depth`). Subsequent
@@ -81,11 +60,6 @@ const DEDUP_SAFE_TOOLS = new Set([
 export interface PiHeuristicCleanupConfig {
 	protectedTags: number;
 	/**
-	 * Whether this pass may discover NEW stale ctx_reduce strips. Existing dropped
-	 * tags still replay through applyFlushedStatuses on every provider.
-	 */
-	staleReduceStripEnabled: boolean;
-	/**
 	 * Tiered target-headroom emergency drop (Phase 2). Provided only on the
 	 * ≥85% force-materialize (cache-busting) pass; undefined on routine execute
 	 * passes (routine age-based tool drops were removed). Mirrors OpenCode's
@@ -106,7 +80,6 @@ export interface PiHeuristicCleanupResult {
 	droppedTools: number;
 	deduplicatedTools: number;
 	droppedInjections: number;
-	droppedStaleReduceCalls: number;
 	emergencyDroppedTools: number;
 	compressedTextTags: number;
 	mutatedTextTags: number;
@@ -190,57 +163,6 @@ function buildPiToolFingerprints(
 }
 
 /**
- * Identify stale `ctx_reduce` tool calls by COMPOSITE (owner, callId) identity.
- *
- * A bare-callId match is unsafe: Pi/OpenCode can reuse a tool callId across
- * assistant turns (the reason tool tags carry tool_owner_message_id), so a stale
- * ctx_reduce call in an OLD assistant message must NOT cause a FRESH ctx_reduce
- * reusing the same callId in a recent turn to be dropped. We key by
- * `${ownerStableId}\x00${callId}` — the owner being the assistant message that
- * holds the toolCall part (resolveStableId of that message), which is exactly
- * what the tag row's tool_owner_message_id records.
- *
- * Returns both a composite set (for tags carrying an owner) and a bare-callId set
- * (legacy NULL-owner rows written before composite identity, matched by callId
- * alone — same lazy-adoption fallback the rest of the tag pipeline uses).
- */
-function collectStaleReduceCallIds(
-	messages: readonly unknown[],
-	messageIdToMaxTag: Map<string, number>,
-	toolAgeCutoff: number,
-	resolveStableId: (msg: unknown, index: number) => string | undefined,
-): { composite: Set<string>; bareCallIds: Set<string> } {
-	const composite = new Set<string>();
-	const bareCallIds = new Set<string>();
-	for (let i = 0; i < messages.length; i++) {
-		const raw = messages[i];
-		if (!raw || typeof raw !== "object") continue;
-		const msg = raw as {
-			role?: unknown;
-			content?: unknown;
-			timestamp?: number;
-		};
-		if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
-
-		const stableId = resolveStableId(raw, i);
-		if (!stableId) continue;
-		const maxTag = messageIdToMaxTag.get(stableId) ?? 0;
-		if (maxTag === 0 || maxTag > toolAgeCutoff) continue;
-
-		for (const part of msg.content) {
-			if (!part || typeof part !== "object") continue;
-			const p = part as { type?: unknown; name?: unknown; id?: unknown };
-			if (p.type !== "toolCall") continue;
-			if (p.name !== "ctx_reduce") continue;
-			if (typeof p.id !== "string" || p.id.length === 0) continue;
-			composite.add(`${stableId}\x00${p.id}`);
-			bareCallIds.add(p.id);
-		}
-	}
-	return { composite, bareCallIds };
-}
-
-/**
  * Apply heuristic cleanup to a Pi session. Mirrors OpenCode's
  * `applyHeuristicCleanup` 1:1 in semantics; differences are limited
  * to message-shape walking for tool fingerprinting (everything else
@@ -261,25 +183,10 @@ export function applyPiHeuristicCleanup(
 	targets: Map<number, TagTarget>,
 	piMessages: readonly unknown[],
 	config: PiHeuristicCleanupConfig,
-	preloadedTags?: TagEntry[],
-	// Stable-id resolver — MUST be the same one the transcript tagged with, so the
-	// owner ids built here match `target.message.info.id` in messageIdToMaxTag.
-	// When omitted (older tests), falls back to the legacy index-based pi-msg-* id.
-	resolveId?: (msg: unknown, index: number) => string | undefined,
+	preloadedTags: TagEntry[] | undefined,
+	// Must be the same stable-id resolver used to tag the transcript.
+	resolveStableId: (msg: unknown, index: number) => string | undefined,
 ): PiHeuristicCleanupResult {
-	// Resolve owner/stable ids the same way the transcript tagged messages, so the
-	// ids built here key into messageIdToMaxTag (= target.message.info.id) correctly.
-	// Legacy fallback (no resolver) keeps the old index-based pi-msg-* scheme.
-	const resolveStableId = (msg: unknown, index: number): string | undefined => {
-		if (resolveId) return resolveId(msg, index);
-		if (!msg || typeof msg !== "object") return undefined;
-		const m = msg as { role?: unknown; timestamp?: number };
-		const role = typeof m.role === "string" ? m.role : "unknown";
-		return typeof m.timestamp === "number"
-			? `pi-msg-${index}-${m.timestamp}-${role}`
-			: `pi-msg-${index}-${role}`;
-	};
-
 	// All work in this function short-circuits on `tag.status !== "active"`.
 	// See OpenCode `applyHeuristicCleanup` for the full P0 perf rationale.
 	const tags = preloadedTags ?? getActiveTagsBySession(db, sessionId);
@@ -289,16 +196,10 @@ export function applyPiHeuristicCleanup(
 	// single backward index seek (O(log N)).
 	const maxTag = getMaxTagNumberBySession(db, sessionId);
 	const protectedCutoff = maxTag - config.protectedTags;
-	// Stale ctx_reduce removal now uses the protected-tail window (Phase 2
-	// removed the routine age knob); a ctx_reduce call is "stale" once it ages
-	// past the protected tail, mirroring OpenCode's protected-count model.
-	const toolAgeCutoff = protectedCutoff;
-
 	let droppedTools = 0;
 	let emergencyDroppedTools = 0;
 	let deduplicatedTools = 0;
 	let droppedInjections = 0;
-	let droppedStaleReduceCalls = 0;
 
 	// ── Pass 1: tiered target-headroom emergency drop ─────────────────
 	// Replaces the old need-blind aged-drop + dropAllTools nuke. Runs only when
@@ -372,46 +273,6 @@ export function applyPiHeuristicCleanup(
 		setEmergencyDropSample(db, sessionId, emergency.currentTotalInputTokens);
 	}
 
-	// ── Pass 1b: stale ctx_reduce calls (Pi persisted-drop replay) ──────
-	const staleReduce = config.staleReduceStripEnabled
-		? collectStaleReduceCallIds(
-				piMessages,
-				buildMessageIdToMaxTagFromTargets(targets),
-				toolAgeCutoff,
-				resolveStableId,
-			)
-		: { composite: new Set<string>(), bareCallIds: new Set<string>() };
-	if (
-		config.staleReduceStripEnabled &&
-		(staleReduce.composite.size > 0 || staleReduce.bareCallIds.size > 0)
-	) {
-		db.transaction(() => {
-			for (const tag of tags) {
-				if (tag.status !== "active") continue;
-				if (tag.type !== "tool") continue;
-				if (!tag.messageId) continue;
-				// Composite match for tags carrying an owner — prevents a reused
-				// callId in a fresh turn from being dropped by a stale call in an
-				// old turn. Legacy NULL-owner rows fall back to bare callId match
-				// (lazy adoption: they predate composite identity).
-				const matched = tag.toolOwnerMessageId
-					? staleReduce.composite.has(
-							`${tag.toolOwnerMessageId}\x00${tag.messageId}`,
-						)
-					: staleReduce.bareCallIds.has(tag.messageId);
-				if (!matched) continue;
-				const target = targets.get(tag.tagNumber);
-				const result = target?.drop?.() ?? "absent";
-				if (result === "incomplete") continue;
-				updateTagDropMode(db, sessionId, tag.tagNumber, "full");
-				updateTagStatus(db, sessionId, tag.tagNumber, "dropped");
-				if (result === "removed" || result === "truncated") {
-					droppedStaleReduceCalls++;
-				}
-			}
-		})();
-	}
-
 	// ── Pass 2: strip system injections from message tags ─────────────
 	db.transaction(() => {
 		for (const tag of tags) {
@@ -457,11 +318,16 @@ export function applyPiHeuristicCleanup(
 	if (toolFingerprints.size > 0) {
 		const tagsByCompositeKey = new Map<string, TagEntry>();
 		for (const tag of tags) {
-			if (tag.type === "tool" && tag.status === "active" && tag.messageId) {
-				const key = tag.toolOwnerMessageId
-					? `${tag.toolOwnerMessageId}\x00${tag.messageId}`
-					: tag.messageId; // legacy NULL-owner fallback
-				tagsByCompositeKey.set(key, tag);
+			if (
+				tag.type === "tool" &&
+				tag.status === "active" &&
+				tag.messageId &&
+				tag.toolOwnerMessageId
+			) {
+				tagsByCompositeKey.set(
+					`${tag.toolOwnerMessageId}\x00${tag.messageId}`,
+					tag,
+				);
 			}
 		}
 
@@ -495,15 +361,10 @@ export function applyPiHeuristicCleanup(
 		})();
 	}
 
-	if (
-		droppedTools > 0 ||
-		deduplicatedTools > 0 ||
-		droppedInjections > 0 ||
-		droppedStaleReduceCalls > 0
-	) {
+	if (droppedTools > 0 || deduplicatedTools > 0 || droppedInjections > 0) {
 		sessionLog(
 			sessionId,
-			`heuristic cleanup: dropped ${droppedTools} tool tags, stale ctx_reduce=${droppedStaleReduceCalls}, deduplicated ${deduplicatedTools} tool calls, dropped ${droppedInjections} system injections`,
+			`heuristic cleanup: dropped ${droppedTools} tool tags, deduplicated ${deduplicatedTools} tool calls, dropped ${droppedInjections} system injections`,
 		);
 	}
 
@@ -527,21 +388,8 @@ export function applyPiHeuristicCleanup(
 		droppedTools,
 		deduplicatedTools,
 		droppedInjections,
-		droppedStaleReduceCalls,
 		emergencyDroppedTools,
 		compressedTextTags,
 		mutatedTextTags,
 	};
-}
-
-function buildMessageIdToMaxTagFromTargets(
-	targets: Map<number, TagTarget>,
-): Map<string, number> {
-	const byMessage = new Map<string, number>();
-	for (const [tagNumber, target] of targets) {
-		const id = target.message?.info?.id;
-		if (typeof id !== "string" || id.length === 0) continue;
-		if (tagNumber > (byMessage.get(id) ?? 0)) byMessage.set(id, tagNumber);
-	}
-	return byMessage;
 }

@@ -240,7 +240,7 @@ describe("trimPiMessagesToBoundary", () => {
 				},
 			]);
 
-			const m0 = renderM0Pi(state, db, "", 1, [], frozenCompartments);
+			const m0 = renderM0Pi(state, db, "", 1, frozenCompartments);
 			const m1 = renderM1Pi(state, db, {
 				maxCompartmentSeq: 1,
 				maxMemoryId: 0,
@@ -431,7 +431,7 @@ describe("injectM0M1Pi", () => {
 			const state = piState("ses-pi-render-epoch", cwd);
 			injectM0M1Pi(state, db, [userMessage("first", 10)] as never);
 			db.prepare(
-				"UPDATE session_meta SET cached_m0_bytes = ?, cached_m0_upgrade_state = ? WHERE session_id = ?",
+				"UPDATE session_meta SET cached_m0_bytes = ?, cached_m0_compartment_render_epoch = ? WHERE session_id = ?",
 			).run(
 				Buffer.from("<session-history>legacy renderer bytes</session-history>"),
 				"pi-m0m1-v2:ready",
@@ -460,53 +460,13 @@ describe("injectM0M1Pi", () => {
 			expect(textOf(replay1[1] as never)).toBe(foldedM1);
 			expect(textOf(replay2[1] as never)).toBe(foldedM1);
 			expect(
-				getOrCreateSessionMeta(db, state.sessionId).cachedM0UpgradeState,
+				getOrCreateSessionMeta(db, state.sessionId)
+					.cachedM0CompartmentRenderEpoch,
 			).toContain(COMPARTMENT_RENDER_EPOCH);
 			expect(mustMaterializePi(state, db)).toEqual({
 				value: false,
 				reason: null,
 			});
-		} finally {
-			closeQuietly(db);
-		}
-	});
-
-	it("rematerializes m[0] when a LEGACY compartment appears (upgrade_state HARD flip)", () => {
-		const db = createTestDb();
-		const cwd = mkdtempSync(join(tmpdir(), "pi-m0m1-compartment-"));
-		try {
-			const state = piState("ses-pi-compartment", cwd);
-			const first = [userMessage("hello", 10)];
-			injectM0M1Pi(state, db, first as never);
-			expect(textOf(first[0] as never)).not.toContain("Compacted setup");
-
-			// A LEGACY compartment (no p1 tier → legacy=1) flips upgrade_state
-			// "ready"→"legacy", which is a genuine HARD trigger (the session now
-			// needs /ctx-session-upgrade). This is NOT the new-compartment path — a
-			// v2 compartment (with p1) is a SOFT m[1] delta and does NOT re-
-			// materialize m[0] (see the SOFT-delta test below). Asserting the legacy
-			// HARD path here keeps the upgrade-detection contract pinned.
-			appendCompartments(db, state.sessionId, [
-				{
-					sequence: 1,
-					startMessage: 1,
-					endMessage: 1,
-					startMessageId: "entry-1",
-					endMessageId: "entry-1",
-					title: "Setup",
-					content: "U: set things up\nCompacted setup",
-				},
-			]);
-			const second = [userMessage("hello", 10)];
-			injectM0M1Pi(state, db, second as never, ["entry-1"]);
-
-			// m[0] re-materialized and now carries the compartment heading; the
-			// body is present because the U: line keeps the legacy row at P3.
-			expect(textOf(second[0] as never)).toContain("## 1-1 · Setup");
-			expect(textOf(second[0] as never)).toContain("Compacted setup");
-			expect(textOf(second[1] as never)).toContain(
-				"no new content since last materialization",
-			);
 		} finally {
 			closeQuietly(db);
 		}

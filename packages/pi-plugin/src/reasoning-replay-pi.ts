@@ -349,26 +349,3 @@ export function replayStrippedInlineThinkingPi(args: {
 	}
 	return stripped;
 }
-
-/**
- * @internal TEST-ONLY legacy index-id helper. NOT for production use.
- *
- * Production code resolves stable ids exclusively through
- * `resolvePiStableId` (read-session-pi.ts), which prefers the real
- * SessionEntry id and only falls back to this `pi-msg-<index>-...` format.
- * This standalone export produces ONLY the index-based fallback, which DRIFTS
- * when the visible array shifts — using it in production would reintroduce the
- * orphaned-state / cache-bust bug the unification fixed. It is retained solely
- * so the reasoning-replay unit tests can exercise the index-id shape directly.
- * Do not import it into production modules; reach for `resolvePiStableId`.
- */
-export function piMessageStableId(
-	msg: unknown,
-	index: number,
-): string | undefined {
-	if (!msg || typeof msg !== "object") return undefined;
-	const m = msg as { role?: string; timestamp?: number };
-	const role = m.role ?? "unknown";
-	if (typeof m.timestamp !== "number") return `pi-msg-${index}-${role}`;
-	return `pi-msg-${index}-${m.timestamp}-${role}`;
-}

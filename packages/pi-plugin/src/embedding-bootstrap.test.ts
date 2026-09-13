@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
 	cortexKitProjectConfigBasePath,
 	cortexKitUserConfigBasePath,
-} from "@magic-context/core/config/migrate-config-location";
+} from "@magic-context/core/config/paths";
 import {
 	_resetProjectEmbeddingRegistryForTests,
 	getProjectEmbeddingSnapshot,

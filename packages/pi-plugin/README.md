@@ -15,7 +15,6 @@ Requires `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `>= 0.80
 | **Journal search (`ctx_search`)** | Queries compressed session history with optional semantic ranking |
 | **History expansion (`ctx_expand`)** | Recovers the original transcript from any compressed compartment range |
 | **Optional embeddings** | Semantic search over compartments using local `all-MiniLM-L6-v2` or any OpenAI-compatible endpoint |
-| **Legacy import** | Imports compartments from a previous full Magic Context installation, per session |
 
 ---
 
@@ -69,7 +68,6 @@ Both are validated against a Zod schema. Invalid fields fall back to defaults; b
 | `/ctx-flush` | Force-process pending operations |
 | `/ctx-recomp` | Rebuild compartments from raw history |
 | `/ctx-wrapup [N]` | Compact older live history, keeping newest N messages raw |
-| `/mc-import-context [path]` | Import legacy Magic Context compartments |
 | `/ctx-embed` | Embedding status; start or pause compartment embedding |
 
 ---
@@ -80,7 +78,6 @@ Both are validated against a Zod schema. Invalid fields fall back to defaults; b
 |---|---|
 | `ctx_search` | Search compartments and raw session history; returns ranked results with previews |
 | `ctx_expand` | Recover the original transcript from a compressed compartment range |
-| `todowrite` | Manage structured task lists surfaced in the session view |
 
 ---
 

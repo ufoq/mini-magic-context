@@ -113,9 +113,6 @@ export const SYNTH_USER_ID_PREFIX = "synth-user-";
  *      caller resolved ids against. MANDATORY fallback: it covers the cloned-ref
  *      case (1) misses, and is valid wherever the caller passes an entryIds array
  *      still index-aligned to `msg`'s array (pre-injection-splice consumers).
- *   3. `pi-msg-${index}-${ts}-${role}` — unstable index id. Only when neither real
- *      id resolves.
- *
  * All Pi stable-id consumers MUST route through this one function so the id a
  * message gets is identical across the transcript-tag path, the reasoning-replay
  * lookup path, the heuristic-cleanup owner path, and the compaction-trim path —
@@ -136,12 +133,8 @@ export function resolvePiStableId(
 	const positional = entryIds?.[index];
 	if (typeof positional === "string" && positional.length > 0)
 		return positional;
-	// 3. Unstable index id — last resort (synthetic / unresolved messages only).
-	const m = msg as { role?: string; timestamp?: number };
-	const role = m.role ?? "unknown";
-	return typeof m.timestamp === "number"
-		? `pi-msg-${index}-${m.timestamp}-${role}`
-		: `pi-msg-${index}-${role}`;
+	// Unresolved messages are not persisted under an unstable synthetic identity.
+	return undefined;
 }
 
 export function isMidTurnPi(

@@ -94,8 +94,8 @@ function seedCompartment(
 			`INSERT INTO compartments
 			 (session_id, sequence, start_message, end_message, start_message_id,
 			  end_message_id, title, content, p1, p2, p3, p4, importance,
-			  episode_type, legacy, created_at, harness)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			  episode_type, created_at, harness)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		)
 		.run(
 			args.sessionId ?? "source",
@@ -112,7 +112,6 @@ function seedCompartment(
 			null,
 			73,
 			"feature",
-			0,
 			1000 + args.sequence,
 			"pi",
 		);
@@ -437,59 +436,6 @@ describe("Pi clone state inheritance", () => {
 				)
 				.all("clone"),
 		).toEqual([{ tag_id: 1, operation: "drop", queued_at: 100 }]);
-	});
-
-	it("migrates all todo fields together when the anchor is on the clone path", () => {
-		const database = db();
-		seedMeta(database, {
-			last_todo_state: '[{"content":"carry"}]',
-			todo_synthetic_call_id: "todo-call",
-			todo_synthetic_anchor_message_id: "a1",
-			todo_synthetic_state_json: '[{"content":"carry"}]',
-		});
-
-		copyWithEntries(database, [user("u1"), assistant("a1")]);
-
-		expect(
-			database
-				.prepare(
-					`SELECT last_todo_state, todo_synthetic_call_id,
-					        todo_synthetic_anchor_message_id, todo_synthetic_state_json
-					   FROM session_meta WHERE session_id = ?`,
-				)
-				.get("clone"),
-		).toEqual({
-			last_todo_state: '[{"content":"carry"}]',
-			todo_synthetic_call_id: "todo-call",
-			todo_synthetic_anchor_message_id: "a1",
-			todo_synthetic_state_json: '[{"content":"carry"}]',
-		});
-	});
-
-	it("migrates no todo fields when the synthetic anchor is beyond the fork", () => {
-		const database = db();
-		seedMeta(database, {
-			last_todo_state: '[{"content":"newer"}]',
-			todo_synthetic_call_id: "todo-call",
-			todo_synthetic_anchor_message_id: "a3",
-			todo_synthetic_state_json: '[{"content":"newer"}]',
-		});
-
-		copyWithEntries(database, [user("u1"), assistant("a1")]);
-
-		const row = database
-			.prepare(
-				`SELECT last_todo_state, todo_synthetic_call_id,
-				        todo_synthetic_anchor_message_id, todo_synthetic_state_json
-				   FROM session_meta WHERE session_id = ?`,
-			)
-			.get("clone");
-		expect(row).toEqual({
-			last_todo_state: "",
-			todo_synthetic_call_id: "",
-			todo_synthetic_anchor_message_id: "",
-			todo_synthetic_state_json: "",
-		});
 	});
 
 	it("copies source contents so caveman replay works on a migrated tag", () => {
