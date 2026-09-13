@@ -10,7 +10,6 @@ const getTagNumbersByMessageIdStatements = new WeakMap<Database, PreparedStateme
 const deleteTagsByMessageIdStatements = new WeakMap<Database, PreparedStatement>();
 const getMaxTagNumberBySessionStatements = new WeakMap<Database, PreparedStatement>();
 const getTagNumberByMessageIdStatements = new WeakMap<Database, PreparedStatement>();
-const hasPiFallbackMessageTagStatements = new WeakMap<Database, PreparedStatement>();
 
 function getInsertTagStatement(db: Database): PreparedStatement {
     let stmt = insertTagStatements.get(db);

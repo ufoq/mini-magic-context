@@ -3,19 +3,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import {
-    getActiveTagsBySession,
-    getActiveTagTokenAggregate,
-    getMaxDroppedTagNumber,
-    getOldestActiveUnprotectedToolTags,
-    getTagById,
-    getTagsByNumbers,
-    getTagsBySession,
-    getTopNBySize,
-    insertTag,
-    updateTagDropMode,
-    updateTagStatus,
-} from "./storage-tags";
+import { getOldestActiveUnprotectedToolTags, insertTag } from "./storage-tags";
 
 let db: Database;
 

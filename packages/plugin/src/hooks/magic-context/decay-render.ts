@@ -5,7 +5,7 @@
  * demotes oldest-first if necessary to satisfy the hard history budget.
  */
 
-import { computeBudgetPressure, renderedTier, TIER_COST, type Tier } from "./decay-curve";
+import { computeBudgetPressure, renderedTier, TIER_COST } from "./decay-curve";
 import { estimateTokens } from "./read-session-formatting";
 
 /** Default history budget when a caller doesn't supply one. */
