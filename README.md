@@ -1,6 +1,6 @@
 # Mini Magic Context
 
-A TypeScript plugin for OpenCode and Pi that keeps long coding sessions usable. A background historian compresses old history into cache-stable compartments. Journal search (`ctx_search`), raw-history expansion (`ctx_expand`), and optional semantic search over compartments let the agent find what it needs without compaction pauses.
+A TypeScript extension for [Pi](https://pi.coding) that keeps long coding sessions usable. A background historian compresses old history into cache-stable compartments. Journal search (`ctx_search`), raw-history expansion (`ctx_expand`), and optional semantic search over compartments let the agent find what it needs without compaction pauses.
 
 ## What's included
 
@@ -24,31 +24,17 @@ Mini Magic Context is a focused subset. The following features from full Magic C
 
 ## Quick start
 
-Run the setup wizard. It detects OpenCode, Pi, or both, adds the plugin, disables built-in compaction, and writes a default config.
+Run the setup wizard. It detects Pi, installs the extension, and writes a default config.
 
 ```bash
 npx @ufoq/mini-magic-context@latest setup
 ```
 
-Target one harness:
+Target the harness explicitly:
 
 ```bash
-npx @ufoq/mini-magic-context@latest setup --harness opencode
 npx @ufoq/mini-magic-context@latest setup --harness pi
 ```
-
-### Manual OpenCode setup
-
-Add the plugin and turn off built-in compaction in `opencode.json`:
-
-```jsonc
-{
-  "plugin": ["@ufoq/opencode-mini-magic-context"],
-  "compaction": { "auto": false, "prune": false }
-}
-```
-
-Then drop a `mini-magic-context.jsonc` in `<project>/.cortexkit/` (project-level) or `~/.config/cortexkit/` (user-wide defaults). See the full [configuration schema](./assets/magic-context.schema.json).
 
 ### Pi setup
 
@@ -56,7 +42,7 @@ Then drop a `mini-magic-context.jsonc` in `<project>/.cortexkit/` (project-level
 npx @ufoq/mini-magic-context@latest setup --harness pi
 ```
 
-Pi requires version 0.74.0 or later. The Pi extension shares the same database as OpenCode, so compartments written in one harness are searchable from the other.
+Pi requires version 0.74.0 or later. The extension registers itself in `~/.pi/agent/settings.json`. Drop a `mini-magic-context.jsonc` in `<project>/.cortexkit/` (project-level) or `~/.config/cortexkit/` (user-wide defaults). See the full [configuration schema](./assets/magic-context.schema.json).
 
 ### Troubleshooting
 
@@ -64,7 +50,7 @@ Pi requires version 0.74.0 or later. The Pi extension shares the same database a
 npx @ufoq/mini-magic-context@latest doctor
 ```
 
-Doctor checks plugin registration, config validity, database integrity, embedding reachability, and conflicts with other context-management plugins. Add `--force` to auto-fix or `--issue` to produce a bug report.
+Doctor checks extension registration, config validity, database integrity, and embedding reachability. Add `--force` to auto-fix or `--issue` to produce a bug report.
 
 ## How it works
 

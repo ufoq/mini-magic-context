@@ -5,7 +5,6 @@ import { DEFAULT_HISTORIAN_TIMEOUT_MS } from "../../config/schema/magic-context"
 import { openDatabase } from "../../features/magic-context/storage";
 import type { SubagentKind } from "../../features/magic-context/storage-subagent-invocations";
 import { recordChildInvocation } from "../../features/magic-context/subagent-token-capture";
-import type { PluginContext } from "../../plugin/types";
 import * as shared from "../../shared";
 import { extractLatestAssistantText } from "../../shared/assistant-message-extractor";
 import {
@@ -13,6 +12,7 @@ import {
     getProjectMagicContextHistorianDir,
 } from "../../shared/data-path";
 import { describeError, getErrorMessage } from "../../shared/error-message";
+import type { HarnessClient } from "../../shared/harness-client";
 import { shouldKeepSubagents } from "../../shared/keep-subagents";
 import { buildHistorianEditorPrompt } from "./compartment-prompt";
 import type {
@@ -44,7 +44,7 @@ interface HistorianModelOverride {
 }
 
 export async function runValidatedHistorianPass(args: {
-    client: PluginContext["client"];
+    client: HarnessClient;
     parentSessionId: string;
     sessionDirectory: string;
     prompt: string;
@@ -181,7 +181,7 @@ export async function runValidatedHistorianPass(args: {
  * silently no-op back to the draft is the cheaper and safer behavior.
  */
 async function runEditorPassOrFallback(args: {
-    client: PluginContext["client"];
+    client: HarnessClient;
     parentSessionId: string;
     sessionDirectory: string;
     chunk: {
@@ -242,7 +242,7 @@ async function runEditorPassOrFallback(args: {
 }
 
 async function runHistorianPrompt(args: {
-    client: PluginContext["client"];
+    client: HarnessClient;
     parentSessionId: string;
     sessionDirectory: string;
     prompt: string;
@@ -448,7 +448,7 @@ async function runHistorianPrompt(args: {
 }
 
 async function runFallbackHistorianPass(args: {
-    client: PluginContext["client"];
+    client: HarnessClient;
     parentSessionId: string;
     sessionDirectory: string;
     prompt: string;

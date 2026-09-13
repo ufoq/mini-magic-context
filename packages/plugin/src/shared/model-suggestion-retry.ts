@@ -1,10 +1,9 @@
-import type { createOpencodeClient } from "@opencode-ai/sdk";
-
 import { detectOverflow } from "../features/magic-context/overflow-detection";
+import type { HarnessClient } from "./harness-client";
 import { log } from "./logger";
 import { parseProviderModel } from "./resolve-fallbacks";
 
-type Client = ReturnType<typeof createOpencodeClient>;
+type Client = HarnessClient;
 
 /** Max time to wait for the best-effort child-session abort HTTP call before
  *  giving up on its response (the abort still proceeds server-side). Keeps a

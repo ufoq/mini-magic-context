@@ -1,15 +1,13 @@
 /**
- * Harness selection logic for the unified Magic Context CLI.
+ * Harness selection logic for the Magic Context CLI.
  *
  * Resolves which adapter(s) a command should target based on:
- *   1. `--harness opencode|pi` flag (hard override, no prompts)
- *   2. Auto-detect installed harnesses, prompting only when ambiguous
- *
- * Mirrors AFT's selection model — battle-tested cross-harness UX.
+ *   1. `--harness pi` flag (hard override, no prompts)
+ *   2. Auto-detect the installed harness
  */
 import { getAdapter, getInstalledAdapters } from "../adapters";
 import type { HarnessAdapter, HarnessKind } from "../adapters/types";
-import { log, selectMany, selectOne } from "./prompts";
+import { log, selectOne } from "./prompts";
 
 type HarnessFlagResult =
     | { kind: "absent" }
@@ -21,7 +19,7 @@ function parseHarnessFlag(argv: string[]): HarnessFlagResult {
     if (idx === -1) return { kind: "absent" };
     const value = argv[idx + 1];
     if (!value || value.startsWith("--")) return { kind: "invalid", value: null };
-    if (value === "opencode" || value === "pi") return { kind: "valid", harness: value };
+    if (value === "pi") return { kind: "valid", harness: value };
     return { kind: "invalid", value };
 }
 
@@ -36,12 +34,9 @@ export interface ResolveOptions {
  * Resolve which adapter(s) to act on for the given command invocation.
  *
  * Decision tree:
- *   - `--harness opencode|pi` → return that single adapter (hard override)
- *   - 0 installed → prompt user to pick one (gives install hints)
- *   - 1 installed → use it silently
- *   - 2+ installed:
- *       - allowMulti=true → multiselect
- *       - allowMulti=false → single-select
+ *   - `--harness pi` → return that single adapter (hard override)
+ *   - not installed → prompt the user to pick (gives the install hint)
+ *   - installed → use it
  */
 export async function resolveAdaptersForCommand(
     argv: string[],
@@ -52,21 +47,16 @@ export async function resolveAdaptersForCommand(
     if (flag.kind === "invalid") {
         throw new Error(
             flag.value === null
-                ? "Missing value for --harness (expected opencode or pi)"
-                : `Invalid --harness value: ${flag.value} (expected opencode or pi)`,
+                ? "Missing value for --harness (expected pi)"
+                : `Invalid --harness value: ${flag.value} (expected pi)`,
         );
     }
 
     const installed = getInstalledAdapters();
 
     if (installed.length === 0) {
-        log.warn("No supported harness was detected on PATH (opencode, pi).");
+        log.warn("No supported harness was detected on PATH (pi).");
         const pick = await selectOne(`Which harness do you want to ${options.verb}?`, [
-            {
-                label: "OpenCode",
-                value: "opencode",
-                hint: "@ufoq/opencode-mini-magic-context",
-            },
             {
                 label: "Pi",
                 value: "pi",
@@ -76,29 +66,7 @@ export async function resolveAdaptersForCommand(
         return [getAdapter(pick as HarnessKind)];
     }
 
-    if (installed.length === 1) {
-        const only = installed[0];
-        log.info(`Detected ${only.displayName} — using it for ${options.verb}.`);
-        return [only];
-    }
-
-    // Multiple installed.
-    if (options.allowMulti) {
-        const picks = await selectMany(
-            `Multiple harnesses detected — which to ${options.verb}?`,
-            installed.map((a) => ({ label: a.displayName, value: a.kind })),
-            installed.map((a) => a.kind),
-        );
-        if (picks.length === 0) {
-            log.warn("No harness selected; nothing to do.");
-            return [];
-        }
-        return picks.map((kind) => getAdapter(kind as HarnessKind));
-    }
-
-    const pick = await selectOne(
-        `Multiple harnesses detected — which one to ${options.verb}?`,
-        installed.map((a) => ({ label: a.displayName, value: a.kind })),
-    );
-    return [getAdapter(pick as HarnessKind)];
+    const only = installed[0];
+    log.info(`Detected ${only.displayName} — using it for ${options.verb}.`);
+    return [only];
 }

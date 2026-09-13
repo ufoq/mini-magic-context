@@ -128,8 +128,8 @@ run_package_tests "plugin" "$PLUGIN_DIR"
 echo "  [plugin] bun build..."
 bun run --cwd "$PLUGIN_DIR" build 2>&1 || { echo "Error: Plugin build failed"; exit 1; }
 
-# Copy root README into plugin package for npm publishing
-cp README.md "$PLUGIN_DIR/README.md"
+# Copy root README into the Pi package (this is what gets published).
+cp README.md "$PI_DIR/README.md"
 
 echo "  [pi-plugin] bun lint..."
 bun run --cwd "$PI_DIR" lint 2>&1 || { echo "Error: Pi-plugin lint failed"; exit 1; }
@@ -153,16 +153,14 @@ run_package_tests "cli" "$CLI_DIR"
 echo "  [cli] bun build..."
 bun run --cwd "$CLI_DIR" build 2>&1 || { echo "Error: CLI build failed"; exit 1; }
 
-# Host behavior E2E suite (packages/e2e-tests). This is the deep suite that
-# spawns a real `opencode serve` (and resolves Pi from node_modules) against a
-# mock provider — it lives outside the per-package `bun test` runs above and was
+# Pi host behavior E2E suite (packages/e2e-tests). This is the deep suite that
+# spawns a real Pi subprocess (resolved from node_modules) against a mock
+# provider — it lives outside the per-package `bun test` runs above and was
 # previously caught only in CI's host-e2e jobs. Running it here means a broken
 # e2e fails the release locally instead of after a full tag → CI round-trip.
 #
-# Split OpenCode (non-pi files) vs Pi (pi-*.test.ts) exactly like CI's two host
-# jobs, so the local gate mirrors what CI enforces. NODE_ENV="" matches the
-# normal runtime the spawned opencode subprocess expects (a stray NODE_ENV=test
-# changes plugin logging/behavior). opencode must be on PATH.
+# NODE_ENV="" matches the normal runtime the spawned Pi subprocess expects (a
+# stray NODE_ENV=test changes plugin logging/behavior).
 run_e2e_group() {
   local label="$1" files="$2" output status
   echo "  [e2e:$label] bun test..."
@@ -182,14 +180,7 @@ run_e2e_group() {
   fi
 }
 
-if ! command -v opencode >/dev/null 2>&1; then
-  echo "Error: 'opencode' not found on PATH — the host E2E suite spawns 'opencode serve'."
-  echo "       Install it (curl -fsSL https://opencode.ai/install | bash) and ensure ~/.opencode/bin is on PATH."
-  exit 1
-fi
-E2E_OC_FILES=$(ls "$E2E_DIR"/tests/*.test.ts | grep -v "/pi-" | sed "s#$E2E_DIR/##" | tr '\n' ' ')
 E2E_PI_FILES=$(ls "$E2E_DIR"/tests/pi-*.test.ts | sed "s#$E2E_DIR/##" | tr '\n' ' ')
-run_e2e_group "opencode" "$E2E_OC_FILES"
 run_e2e_group "pi" "$E2E_PI_FILES"
 
 echo "  ✓ All checks passed"

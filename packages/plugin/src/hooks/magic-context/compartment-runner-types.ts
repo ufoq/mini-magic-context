@@ -1,4 +1,4 @@
-import type { PluginContext } from "../../plugin/types";
+import type { HarnessClient } from "../../shared/harness-client";
 import type { Database } from "../../shared/sqlite";
 import type { ParsedEvent } from "./compartment-parser";
 import type {
@@ -55,7 +55,7 @@ export interface RecompProgress {
 }
 
 export interface CompartmentRunnerDeps {
-    client: PluginContext["client"];
+    client: HarnessClient;
     db: Database;
     sessionId: string;
     /**

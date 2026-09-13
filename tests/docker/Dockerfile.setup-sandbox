@@ -2,8 +2,7 @@
 #
 # A clean, throwaway machine for MANUALLY exercising the published setup and
 # doctor flows after a release, driven interactively (e.g. via a PTY). Unlike
-# Dockerfile.opencode / Dockerfile.pi (which copy the locally-built dist and run
-# a scripted smoke), this image installs the REAL published
+# Dockerfile.pi (which copies the locally-built dist and runs a scripted smoke), this image installs the REAL published
 # `@ufoq/mini-magic-context@latest` from npm, so what you test is exactly what a
 # user gets. Rebuild after each release to pick up the newest version.
 #
@@ -48,11 +47,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # real users frequently have it installed.
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
-
-# OpenCode (official curl|bash install), so the OpenCode setup/doctor path has a
-# real binary to detect and a real ~/.config/opencode to edit.
-RUN curl -fsSL https://opencode.ai/install | bash
-ENV PATH="/root/.opencode/bin:$PATH"
 
 # Pi coding agent, so the Pi setup/doctor path (`--harness pi`) has a real
 # binary to detect and a real ~/.pi/agent to edit.

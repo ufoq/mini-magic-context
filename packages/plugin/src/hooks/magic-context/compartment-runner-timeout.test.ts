@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { closeDatabase, openDatabase } from "../../features/magic-context/storage";
-import type { PluginContext } from "../../plugin/types";
+import type { HarnessClient } from "../../shared/harness-client";
 import * as shared from "../../shared";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
@@ -112,7 +112,7 @@ describe("historian timeout wiring", () => {
     });
 });
 
-function createHistorianClient(directory: string, output: string): PluginContext["client"] {
+function createHistorianClient(directory: string, output: string): HarnessClient {
     return {
         session: {
             get: mock(async () => ({ data: { directory } })),
@@ -128,7 +128,7 @@ function createHistorianClient(directory: string, output: string): PluginContext
             })),
             delete: mock(async () => ({})),
         },
-    } as unknown as PluginContext["client"];
+    } as unknown as HarnessClient;
 }
 
 function useTempDataHome(prefix: string): void {

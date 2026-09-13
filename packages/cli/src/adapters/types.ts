@@ -1,6 +1,6 @@
 /**
- * HarnessAdapter — abstracts what the unified Magic Context CLI needs to know
- * about a specific agent harness (OpenCode, Pi).
+ * HarnessAdapter — abstracts what the Magic Context CLI needs to know
+ * about a specific agent harness (Pi).
  *
  * Each adapter covers:
  *   1. *Detection* — is the harness installed? is the plugin registered with it?
@@ -12,10 +12,10 @@
  * structures; async work lives in the command layer.
  */
 
-export type HarnessKind = "opencode" | "pi";
+export type HarnessKind = "pi";
 
 export interface HarnessConfigPaths {
-    /** Primary config dir (e.g. `~/.config/opencode`, `~/.pi/agent`). */
+    /** Primary config dir (e.g. `~/.pi/agent`). */
     configDir: string;
     /** Path to the JSONC config file the plugin registers itself in. */
     pluginConfigPath: string;

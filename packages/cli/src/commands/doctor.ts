@@ -1,20 +1,13 @@
 /**
- * Unified `doctor` command.
+ * `doctor` command.
  *
- * Dispatches to the per-harness doctor based on `--harness` or auto-detection.
- * Supports `--force`, `--issue`, and `--clear` flags identically across both.
- *
- * `--clear` is special: it presents an interactive picker that lets the user
- * choose which caches to clear across all installed harnesses. It does NOT
- * dispatch through the per-harness flows because the goal is a single "what
- * do I want to nuke?" prompt rather than two separate flows.
+ * Dispatches to the Pi doctor based on `--harness` or auto-detection.
+ * Supports `--force` and `--issue` flags.
  */
-import { existsSync, rmSync } from "node:fs";
 import { getInstalledAdapters } from "../adapters";
 import type { HarnessAdapter } from "../adapters/types";
 import { resolveAdaptersForCommand } from "../lib/harness-select";
 import { confirm, intro, log, outro, selectMany, spinner } from "../lib/prompts";
-import { runDoctor as runOpenCodeDoctor } from "./doctor-opencode";
 import { doctor as runPiDoctor } from "./doctor-pi";
 
 export interface RunDoctorOptions {
@@ -49,12 +42,6 @@ export async function runDoctor(options: RunDoctorOptions): Promise<number> {
 
 async function dispatchDoctor(adapter: HarnessAdapter, options: RunDoctorOptions): Promise<number> {
     switch (adapter.kind) {
-        case "opencode": {
-            return runOpenCodeDoctor({
-                force: options.force,
-                issue: options.issue,
-            });
-        }
         case "pi": {
             const piArgs: string[] = [];
             if (options.force) piArgs.push("--force");
@@ -65,9 +52,9 @@ async function dispatchDoctor(adapter: HarnessAdapter, options: RunDoctorOptions
 }
 
 /**
- * Interactive cache-clear flow. Presents one combined picker showing
- * cleanable caches across every installed harness with their current
- * sizes; the user selects which to clear.
+ * Interactive cache-clear flow. Presents a picker showing cleanable caches
+ * across installed harnesses with their current sizes; the user selects
+ * which to clear.
  */
 async function runClear(): Promise<number> {
     intro("Magic Context — Clear caches");
@@ -125,6 +112,7 @@ async function runClear(): Promise<number> {
         const s = spinner();
         s.start(`Clearing ${item.path}`);
         try {
+            const { existsSync, rmSync } = await import("node:fs");
             if (existsSync(item.path)) {
                 rmSync(item.path, { recursive: true, force: true });
             }

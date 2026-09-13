@@ -3,14 +3,14 @@
  * @ufoq/mini-magic-context — unified CLI for Mini Magic Context.
  *
  * Subcommands:
- *   setup           Interactive setup wizard for OpenCode and/or Pi.
- *   doctor          Health-check + auto-fix for installed harnesses.
+ *   setup           Interactive setup wizard for Pi.
+ *   doctor          Health-check + auto-fix for the installed harness.
  *     --force         Force-clear plugin cache.
  *     --issue         Bundle a sanitized issue report and submit/open.
  *     --clear         Interactive picker to clear plugin caches.
  *
  * Common flags:
- *   --harness opencode|pi   Target one harness (default: auto-detect / prompt)
+ *   --harness pi            Target the Pi harness (default: auto-detect / prompt)
  *   --version, -v           Print CLI version and exit
  *   --help, -h              Print help and exit
  */
@@ -58,9 +58,8 @@ function printUsage(): void {
     console.log("    doctor --clear   Interactive cache cleanup picker");
     console.log("");
     console.log("  Harness selection:");
-    console.log("    --harness opencode    Target OpenCode only");
     console.log("    --harness pi          Target Pi only");
-    console.log("    (default: auto-detect, prompt if multiple installed)");
+    console.log("    (default: auto-detect, prompt if not installed)");
     console.log("");
     console.log("  Usage:");
     console.log("    npx @ufoq/mini-magic-context@latest setup");

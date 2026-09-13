@@ -9,7 +9,7 @@ import { getCompartments } from "../../features/magic-context/compartment-storag
 import { runMigrations } from "../../features/magic-context/migrations";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { reserveProtectedTailDrainTokens } from "../../features/magic-context/storage-meta-persisted";
-import type { PluginContext } from "../../plugin/types";
+import type { HarnessClient } from "../../shared/harness-client";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import { runCompartmentAgent } from "./compartment-runner";
@@ -98,7 +98,7 @@ function twoCompartmentHistorianXml(): string {
 </output>`;
 }
 
-function client(output = historianXml()): PluginContext["client"] {
+function client(output = historianXml()): HarnessClient {
     return {
         session: {
             get: mock(async () => ({ data: { directory: "/tmp/wrapup-runner" } })),
@@ -114,7 +114,7 @@ function client(output = historianXml()): PluginContext["client"] {
             })),
             delete: mock(async () => ({})),
         },
-    } as unknown as PluginContext["client"];
+    } as unknown as HarnessClient;
 }
 
 function wrapupSnapshot(

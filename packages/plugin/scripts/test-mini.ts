@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "76e05abc1075e39037ef333ce2bc83d35bfc9a4d5030a9bf3cb1dbb81e1d7b56";
+const KNOWN_TEST_INVENTORY_DIGEST = "7ed1e2dabda85f2e749bcfedb4d6b971da013059c354e425f2822b0c8de55fad";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/compartment-events.test.ts",
@@ -76,31 +76,18 @@ const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/sticky-injection-cas-race.test.ts",
     "src/features/magic-context/storage.test.ts",
     "src/features/magic-context/tagger-recovery.test.ts",
-    "src/features/magic-context/tool-definition-tokens.test.ts",
     "src/features/magic-context/tool-owner-backfill.test.ts",
     "src/features/magic-context/transform-decision-log.test.ts",
     "src/features/magic-context/user-memory/review-user-memories.test.ts",
     "src/features/magic-context/user-memory/storage-user-memory.test.ts",
     "src/features/magic-context/v22-deferred-backfill.test.ts",
     "src/features/magic-context/workspaces.test.ts",
-    "src/hooks/auto-update-checker/cache.test.ts",
-    "src/hooks/auto-update-checker/checker.test.ts",
-    "src/hooks/auto-update-checker/constants.test.ts",
-    "src/hooks/auto-update-checker/index.test.ts",
-    "src/hooks/magic-context/channel2-delivery.test.ts",
     "src/hooks/magic-context/channel2-subagent.test.ts",
-    "src/hooks/magic-context/command-handler.test.ts",
-    "src/hooks/magic-context/ctx-reduce-availability.test.ts",
     "src/hooks/magic-context/ctx-reduce-nudge.test.ts",
-    "src/hooks/magic-context/event-handler.test.ts",
-    "src/hooks/magic-context/hook.test.ts",
     "src/hooks/magic-context/inject-compartments.test.ts",
-    "src/hooks/magic-context/lkg-transform-replay.test.ts",
     "src/hooks/magic-context/note-nudger.test.ts",
     "src/hooks/magic-context/note-visibility.test.ts",
     "src/hooks/magic-context/upgrade-reminder.test.ts",
-    "src/plugin/rpc-handlers.test.ts",
-    "src/plugin/sidebar-snapshot-cache.test.ts",
 ] as const);
 
 const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();

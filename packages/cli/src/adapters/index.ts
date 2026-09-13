@@ -1,11 +1,10 @@
-import { OpenCodeAdapter } from "./opencode";
 import { PiAdapter } from "./pi";
 import type { HarnessAdapter, HarnessKind } from "./types";
 
 export type { HarnessAdapter, HarnessKind } from "./types";
-export { OpenCodeAdapter, PiAdapter };
+export { PiAdapter };
 
-const ALL: HarnessAdapter[] = [new OpenCodeAdapter(), new PiAdapter()];
+const ALL: HarnessAdapter[] = [new PiAdapter()];
 
 /** Look up an adapter by kind. Throws on unknown kind. */
 export function getAdapter(kind: HarnessKind): HarnessAdapter {

@@ -26,7 +26,7 @@ import {
     updateSessionMeta,
 } from "../../features/magic-context/storage";
 import { createTagger } from "../../features/magic-context/tagger";
-import type { PluginContext } from "../../plugin/types";
+import type { HarnessClient } from "../../shared/harness-client";
 import * as shared from "../../shared";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
@@ -144,7 +144,7 @@ describe("executeContextRecomp", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -199,7 +199,7 @@ describe("executeContextRecomp", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecompWithResult(
             {
@@ -317,7 +317,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -406,7 +406,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -477,7 +477,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -527,7 +527,7 @@ describe("executeContextRecomp", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -610,7 +610,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -666,7 +666,7 @@ describe("executeContextRecomp", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const promptSyncSpy = spyOn(shared, "promptSyncWithModelSuggestionRetry").mockRejectedValue(
             new Error("prompt timed out after 300000ms"),
@@ -770,7 +770,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -851,7 +851,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -960,7 +960,7 @@ describe("executeContextRecomp", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         const result = await executeContextRecomp({
             client,
@@ -1126,7 +1126,7 @@ describe("runCompartmentAgent", () => {
 
         try {
             startCompartmentAgent({
-                client: {} as PluginContext["client"],
+                client: {} as HarnessClient,
                 db,
                 sessionId: "ses-lease-denied",
                 historianChunkTokens: 10_000,
@@ -1158,7 +1158,7 @@ describe("runCompartmentAgent", () => {
         updateSessionMeta(db, sessionId, { compartmentInProgress: true });
 
         startCompartmentAgent({
-            client: {} as PluginContext["client"],
+            client: {} as HarnessClient,
             db,
             sessionId,
             historianChunkTokens: 10_000,
@@ -1225,7 +1225,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         startCompartmentAgent({
             client,
@@ -1292,7 +1292,7 @@ describe("runCompartmentAgent", () => {
                 messages,
                 delete: deleteSession,
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1353,7 +1353,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1411,7 +1411,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1462,7 +1462,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         let promptSyncCallCount = 0;
         const promptSyncSpy = spyOn(
@@ -1552,7 +1552,7 @@ describe("runCompartmentAgent", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1645,7 +1645,7 @@ describe("runCompartmentAgent", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1755,7 +1755,7 @@ describe("runCompartmentAgent", () => {
                 messages,
                 delete: deleteSession,
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1863,7 +1863,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -1905,7 +1905,7 @@ describe("runCompartmentAgent", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         //#when
         await runCompartmentAgentWithLease({
@@ -1962,7 +1962,7 @@ describe("runCompartmentAgent", () => {
                 messages,
                 delete: deleteSession,
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         //#when
         await runCompartmentAgentWithLease({
@@ -2026,7 +2026,7 @@ describe("runCompartmentAgent", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -2084,7 +2084,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -2127,7 +2127,7 @@ describe("runCompartmentAgent", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -2173,7 +2173,7 @@ describe("runCompartmentAgent", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -2234,7 +2234,7 @@ describe("runCompartmentAgent", () => {
                 messages,
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -2354,7 +2354,7 @@ describe("runCompartmentAgent", () => {
                 })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         await runCompartmentAgentWithLease({
             client,
@@ -2433,7 +2433,7 @@ describe("runCompartmentAgent", () => {
                 messages: mock(async () => ({ data: [] })),
                 delete: mock(async () => ({})),
             },
-        } as unknown as PluginContext["client"];
+        } as unknown as HarnessClient;
 
         startCompartmentAgent({
             client,
@@ -2592,7 +2592,7 @@ it("rolls back protected-tail drain reservation when publish throws after histor
             })),
             delete: mock(async () => ({})),
         },
-    } as unknown as PluginContext["client"];
+    } as unknown as HarnessClient;
 
     await runCompartmentAgentWithLease({
         client,

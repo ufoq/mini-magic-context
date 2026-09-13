@@ -5,7 +5,8 @@
  *
  * Synchronizes version in package.json from a git tag or explicit argument.
  * Updates packages/plugin, packages/pi-plugin, and packages/cli to the
- * same version. All three release together on each tag.
+ * same version. They are versioned together even though only the Pi extension
+ * and the CLI are published (packages/plugin is the private shared core).
  *
  * Usage:
  *   node scripts/version-sync.mjs 0.1.0           # set version to 0.1.0

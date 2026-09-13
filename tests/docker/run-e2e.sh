@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# Run all docker E2E test images locally.
+# Run the Pi docker E2E test image locally.
 #
 # Usage:
-#   tests/docker/run-e2e.sh              # both harnesses
-#   tests/docker/run-e2e.sh opencode     # OpenCode only
-#   tests/docker/run-e2e.sh pi           # Pi only
+#   tests/docker/run-e2e.sh              # Pi
 #
-# Pre-requisite: run `bun run --cwd packages/plugin build` and
-# `bun run --cwd packages/pi-plugin build` first — the Dockerfiles
-# COPY pre-built dist/ trees rather than build inside the image.
+# Pre-requisite: run `bun run --cwd packages/pi-plugin build` first — the
+# Dockerfile COPYs the pre-built dist/ tree rather than building in-image.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TARGET="${1:-all}"
+TARGET="${1:-pi}"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -52,7 +49,6 @@ run_target() {
 # inside the image. This is intentional: keeps the image small, makes
 # iteration fast, and tests the same artifact CI publishes.
 echo "Pre-building local dist artifacts..."
-bun run --cwd "$REPO_ROOT/packages/plugin" build
 bun run --cwd "$REPO_ROOT/packages/pi-plugin" build
 
 # pi-plugin runtime deps are installed inside the Pi Docker image
@@ -61,16 +57,12 @@ bun run --cwd "$REPO_ROOT/packages/pi-plugin" build
 
 EXIT=0
 case "$TARGET" in
-    all)
-        run_target opencode || EXIT=1
+    pi)
         run_target pi || EXIT=1
-        ;;
-    opencode|pi)
-        run_target "$TARGET" || EXIT=1
         ;;
     *)
         echo "Unknown target: $TARGET" >&2
-        echo "Usage: $0 [opencode|pi|all]" >&2
+        echo "Usage: $0 [pi]" >&2
         exit 2
         ;;
 esac

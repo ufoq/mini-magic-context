@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveCortexKitUserConfigPath } from "@magic-context/core/config/migrate-config-location";
@@ -7,80 +7,6 @@ import {
     getMagicContextLogPath as getMagicContextLogPathCore,
 } from "@magic-context/core/shared/data-path";
 import type { HarnessId } from "@magic-context/core/shared/harness";
-
-// ============================================================================
-// OpenCode paths
-// ============================================================================
-
-export interface ConfigPaths {
-    configDir: string;
-    /** opencode.json or opencode.jsonc */
-    opencodeConfig: string;
-    opencodeConfigFormat: "json" | "jsonc" | "none";
-    magicContextConfig: string;
-    /** oh-my-opencode/oh-my-openagent json(c) if exists */
-    omoConfig: string | null;
-}
-
-/**
- * OpenCode config dir resolution.
- *
- * OpenCode uses ~/.config/opencode on ALL platforms (including Windows),
- * not %APPDATA%. The plugin runtime resolves it the same way; setup must
- * match or it will create a config the plugin can't read.
- */
-export function getOpenCodeConfigDir(): string {
-    const envDir = process.env.OPENCODE_CONFIG_DIR?.trim();
-    if (envDir) return envDir;
-    if (process.platform === "win32") {
-        return join(homedir(), ".config", "opencode");
-    }
-    const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-    return join(xdgConfig, "opencode");
-}
-
-function findOmoConfig(configDir: string): string | null {
-    const locations = [
-        join(configDir, "oh-my-openagent.jsonc"),
-        join(configDir, "oh-my-openagent.json"),
-        join(configDir, "oh-my-opencode.jsonc"),
-        join(configDir, "oh-my-opencode.json"),
-    ];
-    for (const loc of locations) {
-        if (existsSync(loc)) return loc;
-    }
-    return null;
-}
-
-export function detectConfigPaths(): ConfigPaths {
-    const configDir = getOpenCodeConfigDir();
-
-    let opencodeConfig: string;
-    let opencodeConfigFormat: "json" | "jsonc" | "none";
-
-    const jsoncPath = join(configDir, "opencode.jsonc");
-    const jsonPath = join(configDir, "opencode.json");
-    if (existsSync(jsoncPath)) {
-        opencodeConfig = jsoncPath;
-        opencodeConfigFormat = "jsonc";
-    } else if (existsSync(jsonPath)) {
-        opencodeConfig = jsonPath;
-        opencodeConfigFormat = "json";
-    } else {
-        // Fresh installs use JSONC so users can add comments without creating a
-        // second, higher-precedence config later.
-        opencodeConfig = jsoncPath;
-        opencodeConfigFormat = "none";
-    }
-
-    return {
-        configDir,
-        opencodeConfig,
-        opencodeConfigFormat,
-        magicContextConfig: resolveCortexKitUserConfigPath(),
-        omoConfig: findOmoConfig(configDir),
-    };
-}
 
 // ============================================================================
 // Pi paths
@@ -138,22 +64,6 @@ export function getMagicContextLogPath(harness: HarnessId): string {
 /** Historian dump + state-file dir under the harness-scoped temp dir. */
 export function getMagicContextHistorianDir(harness: HarnessId): string {
     return getMagicContextHistorianDirCore(harness);
-}
-
-/**
- * Cache directory used by OpenCode for installed plugin packages.
- *
- * OpenCode uses the `xdg-basedir` package, which — on every platform, including
- * Windows — falls back to `<homedir>/.cache` when `XDG_CACHE_HOME` is unset.
- * A previous Windows-specific branch that resolved to `%LOCALAPPDATA%` did not
- * match OpenCode's own resolution and caused `doctor --force` to clear a
- * non-existent directory while the real cache at `C:\Users\<user>\.cache`
- * stayed untouched. The plugin runtime fixed the same bug in
- * packages/plugin/src/shared/data-path.ts; this CLI helper must stay aligned.
- */
-export function getOpenCodePluginCacheDir(): string {
-    const xdg = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
-    return join(xdg, "opencode", "packages");
 }
 
 /** True if `path` exists and is a directory. */

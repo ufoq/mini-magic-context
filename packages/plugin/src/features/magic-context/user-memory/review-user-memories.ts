@@ -1,9 +1,9 @@
 import { DREAMER_REVIEWER_AGENT } from "../../../agents/dreamer";
 import { withContentLanguageDirective } from "../../../agents/language-directive";
-import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
 import { extractLatestAssistantText } from "../../../shared/assistant-message-extractor";
 import { describeError, getErrorMessage } from "../../../shared/error-message";
+import type { HarnessClient } from "../../../shared/harness-client";
 import { log } from "../../../shared/logger";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
@@ -24,7 +24,7 @@ import {
 
 interface ReviewUserMemoriesArgs {
     db: Database;
-    client: PluginContext["client"];
+    client: HarnessClient;
     parentSessionId: string | undefined;
     sessionDirectory: string | undefined;
     holderId: string;

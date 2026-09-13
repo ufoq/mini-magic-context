@@ -1,19 +1,12 @@
 /**
- * Unified `setup` command.
+ * `setup` command.
  *
  * Resolves the harness target via `--harness` flag or auto-detection
- * (`resolveAdaptersForCommand`), then dispatches to the per-harness
- * setup wizard. We deliberately reuse the existing per-harness
- * setup flows (`setup-opencode.ts` and `setup-pi.ts`) instead of
- * collapsing them into a generic flow because each harness has
- * meaningfully different prompts (OpenCode picks historian models +
- * checks for DCP/OMO conflicts; Pi prompts for Pi version compat
- * + thinking_level for Copilot models).
+ * (`resolveAdaptersForCommand`), then dispatches to the Pi setup wizard.
  */
 import type { HarnessAdapter } from "../adapters/types";
 import { resolveAdaptersForCommand } from "../lib/harness-select";
 import { intro, log, note, outro } from "../lib/prompts";
-import { runSetup as runOpenCodeSetup } from "./setup-opencode";
 import { runSetup as runPiSetup } from "./setup-pi";
 
 export async function runSetup(argv: string[]): Promise<number> {
@@ -23,9 +16,6 @@ export async function runSetup(argv: string[]): Promise<number> {
     let adapters: HarnessAdapter[];
     try {
         adapters = await resolveAdaptersForCommand(argv, {
-            // Both harness wizards write the same Magic Context config. Keep setup
-            // single-target until shared choices are collected once and registration
-            // is split into harness-specific phases.
             allowMulti: false,
             verb: "setup",
         });
@@ -44,8 +34,6 @@ export async function runSetup(argv: string[]): Promise<number> {
     for (const adapter of adapters) {
         log.step(`Configuring ${adapter.displayName} (${adapter.pluginPackageName})…`);
 
-        // Each harness owns its no-host flow. In particular, an explicit OpenCode
-        // setup can continue for a Desktop or not-yet-installed host.
         const code = await dispatchSetup(adapter, dryRun);
         if (code !== 0) {
             anyFailure = true;
@@ -64,24 +52,12 @@ export async function runSetup(argv: string[]): Promise<number> {
 
 async function dispatchSetup(adapter: HarnessAdapter, dryRun: boolean): Promise<number> {
     switch (adapter.kind) {
-        case "opencode":
-            return runOpenCodeSetup(dryRun);
         case "pi":
             return runPiSetup({ dryRun });
     }
 }
 
 function printNextSteps(adapter: HarnessAdapter): void {
-    if (adapter.kind === "opencode") {
-        note(
-            [
-                "Restart OpenCode (or reload your session) so the plugin loads.",
-                "Verify with: npx @ufoq/mini-magic-context@latest doctor",
-            ].join("\n"),
-            "Next steps",
-        );
-        return;
-    }
     if (adapter.kind === "pi") {
         note(
             [
