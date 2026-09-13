@@ -717,16 +717,13 @@ function toTagEntry(row: TagRow): TagEntry {
         byteSize: row.byte_size,
         reasoningByteSize: row.reasoning_byte_size ?? 0,
         sessionId: row.session_id,
-        // ensureColumn adds DEFAULT 0 but SQLite leaves NULL on pre-existing
-        // rows. Coerce to 0 so downstream callers never see NaN arithmetic.
+        // Normalize nullable values so downstream arithmetic remains finite.
         cavemanDepth:
             typeof row.caveman_depth === "number" && Number.isFinite(row.caveman_depth)
                 ? row.caveman_depth
                 : 0,
         // tool_owner_message_id is the third axis of tool-tag identity.
-        // NULL is the legitimate value for non-tool tags AND for legacy
-        // tool tags written before plugin v0.16.x. Lazy adoption +
-        // backfill populate this column at runtime; see plan v3.3.1.
+        // NULL is the legitimate value for non-tool tags.
         toolOwnerMessageId:
             typeof row.tool_owner_message_id === "string" ? row.tool_owner_message_id : null,
     };
