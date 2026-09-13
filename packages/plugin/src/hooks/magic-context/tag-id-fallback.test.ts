@@ -43,7 +43,7 @@ describe("OpenCode tag id fallback adoption", () => {
             message("m-stable", [{ type: "metadata" }, { type: "text", text: "alpha" }]),
         ];
         tagMessages(sessionId, pass1, tagger, db);
-        expect(textAt(pass1, 0, 1)).toBe("§1§ alpha");
+        expect(textAt(pass1, 0, 1)).toBe("alpha");
         expect(tagger.getTag(sessionId, "m-stable:p1", "message")).toBe(1);
 
         // Pass 2: the same message is now exposed at part index 0. The fallback
@@ -52,13 +52,13 @@ describe("OpenCode tag id fallback adoption", () => {
         tagger.initFromDb(sessionId, db);
         const pass2 = [message("m-stable", [{ type: "text", text: "alpha" }])];
         tagMessages(sessionId, pass2, tagger, db);
-        expect(textAt(pass2, 0, 0)).toBe("§1§ alpha");
+        expect(textAt(pass2, 0, 0)).toBe("alpha");
         expect(tagger.getTag(sessionId, "m-stable:p0", "message")).toBe(1);
         expect(tagger.getTag(sessionId, "m-stable:p1", "message")).toBeUndefined();
 
         // Pass 3: m-stable:p1 is a real new text part. With the stale alias still
-        // present this would incorrectly reuse §1§; with unbind+data_version-only
-        // caching it allocates §2§ while preserving the migrated §1§ prefix.
+        // present this would incorrectly reuse tag 1; with unbind+data_version-only
+        // caching it allocates tag 2 while preserving the migrated tag 1.
         tagger.initFromDb(sessionId, db);
         const pass3 = [
             message("m-stable", [
@@ -68,8 +68,8 @@ describe("OpenCode tag id fallback adoption", () => {
         ];
         tagMessages(sessionId, pass3, tagger, db);
 
-        expect(textAt(pass3, 0, 0)).toBe("§1§ alpha");
-        expect(textAt(pass3, 0, 1)).toBe("§2§ beta");
+        expect(textAt(pass3, 0, 0)).toBe("alpha");
+        expect(textAt(pass3, 0, 1)).toBe("beta");
         expect(
             getTagsBySession(db, sessionId).map((tag) => ({
                 tagNumber: tag.tagNumber,
@@ -81,7 +81,7 @@ describe("OpenCode tag id fallback adoption", () => {
         ]);
     });
 
-    it("cold initFromDb reload preserves byte-identical tag prefixes after restart", () => {
+    it("cold initFromDb reload preserves tag identities across restart", () => {
         const db = openTestDb();
         const sessionId = "ses-cold-restart";
         const tagger = createTagger();
@@ -93,8 +93,8 @@ describe("OpenCode tag id fallback adoption", () => {
         ];
         tagMessages(sessionId, firstPass, tagger, db);
         expect(firstPass.map((msg) => (msg.parts[0] as { text: string }).text)).toEqual([
-            "§1§ one",
-            "§2§ two",
+            "one",
+            "two",
         ]);
 
         const restarted = createTagger();
@@ -106,8 +106,8 @@ describe("OpenCode tag id fallback adoption", () => {
         tagMessages(sessionId, replayPass, restarted, db);
 
         expect(replayPass.map((msg) => (msg.parts[0] as { text: string }).text)).toEqual([
-            "§1§ one",
-            "§2§ two",
+            "one",
+            "two",
         ]);
         expect(restarted.assignTag(sessionId, "m-three:p0", "message", 3, db)).toBe(3);
     });

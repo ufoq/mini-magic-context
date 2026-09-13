@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "90b95daf3fc54e9e8cb29667a9743e0407f51e8b91a97bd08b631eb1a80b5a6b";
+const KNOWN_TEST_INVENTORY_DIGEST = "76e05abc1075e39037ef333ce2bc83d35bfc9a4d5030a9bf3cb1dbb81e1d7b56";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/compartment-events.test.ts",

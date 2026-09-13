@@ -14,7 +14,7 @@ import { isReduceToolPart } from "./drop-stale-reduce-calls";
 import { estimateImageTokensFromDataUrl } from "./image-token-estimate";
 import { getMessageTimesFromOpenCodeDb } from "./read-session-db";
 import { estimateTokens } from "./read-session-formatting";
-import { byteSize, isThinkingPart, prependTag } from "./tag-content-primitives";
+import { byteSize, isThinkingPart } from "./tag-content-primitives";
 import { createExistingTagResolver } from "./tag-id-fallback";
 import {
     buildFileSourceContent,
@@ -210,13 +210,6 @@ export interface ThinkingLikePart {
 
 export type MessageLike = { info: MessageInfo; parts: unknown[] };
 
-export interface TagNormalizationTarget {
-    tagNumber: number;
-    message: MessageLike;
-    part: unknown;
-    field: "text" | "tool_state_output" | "tool_result_content";
-}
-
 export type TagTarget = {
     setContent: (content: string) => boolean;
     getContent?: () => string | null;
@@ -245,8 +238,6 @@ export interface TagMessagesResult {
     hasRecentReduceCall: boolean;
     /** Whether recent assistant messages contain git commit hash patterns */
     hasRecentCommit: boolean;
-    /** Exact part references that received a Magic Context tag prefix while tagMessages processed them. */
-    normalizationTargets: TagNormalizationTarget[];
 }
 
 function collectRelevantSourceTagIds(
@@ -359,15 +350,6 @@ function extractToolTagMetadata(part: unknown): {
 }
 
 export interface TagMessagesOptions {
-    /**
-     * When true, skip injecting §N§ prefix into message text/tool output parts.
-     * DB-level tag records are still created normally — this flag only affects
-     * whether the agent-visible part content gets the tag prefix. Used when
-     * the session's tool allow-list denies ctx_reduce so agents don't see tag
-     * markers they can't act on. Cache-safe: the availability verdict is frozen
-     * per session, so message shape stays stable.
-     */
-    skipPrefixInjection?: boolean;
     /** @internal diagnostic hook used by cache-stability/perf tests. */
     onToolOwnerFallbackLookup?: (lookup: ToolOwnerFallbackLookup) => void;
 }
@@ -379,10 +361,8 @@ export function tagMessages(
     db: ContextDatabase,
     options: TagMessagesOptions = {},
 ): TagMessagesResult {
-    const skipPrefixInjection = options.skipPrefixInjection === true;
     const onToolOwnerFallbackLookup = options.onToolOwnerFallbackLookup;
     const targets = new Map<number, TagTarget>();
-    const normalizationTargets: TagNormalizationTarget[] = [];
     const reasoningByMessage = new Map<MessageLike, ThinkingLikePart[]>();
     const messageTagNumbers = new Map<MessageLike, number>();
     // v3.3.1 Layer C: keys are composite `<ownerMsgId>\x00<callId>`,
@@ -425,7 +405,7 @@ export function tagMessages(
     // upsert). Wrapping the whole walk in an outer transaction was an old
     // cache-bust amplifier — one UNIQUE collision near the end of the walk
     // would roll back EVERY tag insert + saveSourceContent in this pass,
-    // leaving the in-memory message mutations and §N§ prefixes already
+    // leaving the in-memory message mutations already
     // applied while the DB had no record of them. The transform's catch
     // block then fell through with `targets={}` (empty), and the pass
     // emitted a message[0] whose stripped/dropped/cavemaned replays were
@@ -557,7 +537,7 @@ export function tagMessages(
                 // already does this composite DB lookup; the invocation/native
                 // tool_result observation path did not. Without it, the existing
                 // tag would be missed and a queued drop mis-detected. Rebind the
-                // EXACT persisted number so §N§ stays byte-identical.
+                // EXACT persisted number so replay stays byte-identical.
                 if (existingTagId === undefined) {
                     const persisted = getToolTagNumberByOwner(
                         db,
@@ -616,7 +596,7 @@ export function tagMessages(
                     0,
                     null,
                     // Lazy: only fires on fresh insert. textPart.text is still the
-                    // pre-prefix source here (prependTag runs after assign).
+                    // pre-prefix source here.
                     () => ({
                         tokenCount: estimateTextTagTokenCount(stripTagPrefix(textPart.text)),
                         inputTokenCount: null,
@@ -646,15 +626,6 @@ export function tagMessages(
                     message,
                     Math.max(messageTagNumbers.get(message) ?? 0, tagId),
                 );
-                if (!skipPrefixInjection) {
-                    textPart.text = prependTag(tagId, textPart.text);
-                    normalizationTargets.push({
-                        tagNumber: tagId,
-                        message,
-                        part: textPart,
-                        field: "text",
-                    });
-                }
                 targets.set(tagId, {
                     message,
                     setContent: (content) => {
@@ -732,15 +703,6 @@ export function tagMessages(
                     message,
                     Math.max(messageTagNumbers.get(message) ?? 0, tagId),
                 );
-                if (!skipPrefixInjection) {
-                    toolPart.state.output = prependTag(tagId, toolPart.state.output);
-                    normalizationTargets.push({
-                        tagNumber: tagId,
-                        message,
-                        part: toolPart,
-                        field: "tool_state_output",
-                    });
-                }
                 toolTagByCallId.set(compositeKey, tagId);
                 if (thinkingParts.length > 0 && !toolThinkingByCallId.has(compositeKey)) {
                     toolThinkingByCallId.set(compositeKey, thinkingParts);
@@ -851,6 +813,5 @@ export function tagMessages(
         batch,
         hasRecentReduceCall,
         hasRecentCommit: commitDetected,
-        normalizationTargets,
     };
 }

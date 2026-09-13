@@ -2,7 +2,6 @@ import Tokenizer from "ai-tokenizer"
 import * as claude from "ai-tokenizer/encoding/claude"
 import type { DumpMessage, DumpStats, DumpMessageCacheEntry } from "./types"
 
-const TAG_PREFIX_PATTERN = /^§\d+§ /
 const tokenizer = new Tokenizer(claude)
 
 function stringifyForCharCount(value: unknown): string {
@@ -25,46 +24,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object"
 }
 
-function countTagPrefixOverhead(message: DumpMessage): number {
-	let overhead = 0
-	for (const part of message.parts) {
-		if (!isRecord(part)) continue
-		if (part.type === "text" && typeof part.text === "string") {
-			const match = part.text.match(TAG_PREFIX_PATTERN)
-			if (match) overhead += match[0].length
-		}
-		if (part.type === "tool" && isRecord(part.state) && typeof part.state.output === "string") {
-			const match = part.state.output.match(TAG_PREFIX_PATTERN)
-			if (match) overhead += match[0].length
-		}
-	}
-	return overhead
-}
-
-function stripTagPrefixes(message: DumpMessage): DumpMessage {
-	return {
-		...message,
-		parts: message.parts.map((part) => {
-			if (!isRecord(part)) return part
-
-			const clonedPart: Record<string, unknown> = { ...part }
-
-			if (clonedPart.type === "text" && typeof clonedPart.text === "string") {
-				clonedPart.text = clonedPart.text.replace(TAG_PREFIX_PATTERN, "")
-			}
-
-			if (clonedPart.type === "tool" && isRecord(clonedPart.state) && typeof clonedPart.state.output === "string") {
-				clonedPart.state = {
-					...clonedPart.state,
-					output: clonedPart.state.output.replace(TAG_PREFIX_PATTERN, ""),
-				}
-			}
-
-			return clonedPart
-		}),
-	}
-}
-
 function messageIdentity(message: DumpMessage, fallbackIndex: number): { id: string; role: string } {
 	const id = typeof message.info.id === "string" ? message.info.id : `message_${fallbackIndex + 1}`
 	const role = typeof message.info.role === "string" ? message.info.role : "unknown"
@@ -82,13 +41,12 @@ export function buildDumpStats(originalMessages: DumpMessage[], transformedMessa
 		const { id, role } = messageIdentity(original, index)
 		const transformed = transformedById.get(id) ?? null
 		const rawChars = transformed ? countChars(transformed) : 0
-		const overhead = transformed ? countTagPrefixOverhead(transformed) : 0
 
 		return {
 			id,
 			role,
 			original_chars: countChars(original),
-			transformed_chars: rawChars - overhead,
+			transformed_chars: rawChars,
 		}
 	})
 
@@ -138,7 +96,7 @@ export function buildDumpStats(originalMessages: DumpMessage[], transformedMessa
 		const { id } = messageIdentity(original, index)
 		const transformed = transformedById.get(id)
 		if (!transformed) return sum
-		return sum + countApproxTokens(stripTagPrefixes(transformed))
+		return sum + countApproxTokens(transformed)
 	}, 0)
 	const compressionRatio =
 		originalTotalChars > 0 ? `${Math.round((1 - transformedTotalChars / originalTotalChars) * 100)}%` : "0%"

@@ -19,8 +19,7 @@
  *   1. Walk the transcript in order.
  *   2. For each tag-eligible part (text, tool_use, tool_result), assign
  *      a tag number via the shared `Tagger`.
- *   3. Inject `§N§ ` prefix into the visible text (unless skipped).
- *   4. Build a `TagTarget` so `applyPendingOperations` from
+ *   3. Build a `TagTarget` so `applyPendingOperations` from
  *      `apply-operations.ts` can replace this part with a sentinel when
  *      a queued drop fires.
  *
@@ -42,7 +41,7 @@
  *   - `Tagger` (DB-backed counter + assignment store).
  *   - `applyPendingOperations` (operates on `Map<number, TagTarget>`).
  *   - `applyFlushedStatuses` (same).
- *   - Tag prefix primitives (`prependTag`, `stripTagPrefix`, `byteSize`).
+ *   - Tag primitives (`stripTagPrefix`, `byteSize`).
  */
 
 import { createHash } from "node:crypto";
@@ -58,25 +57,13 @@ import { makeToolCompositeKey, type Tagger } from "../features/magic-context/tag
 import { applyEditMarkerToInput } from "../hooks/magic-context/edit-marker";
 import { estimateImageTokensFromDataUrl } from "../hooks/magic-context/image-token-estimate";
 import { estimateTokens } from "../hooks/magic-context/read-session-formatting";
-import {
-    byteSize,
-    prependTag,
-    stripTagPrefix,
-} from "../hooks/magic-context/tag-content-primitives";
+import { byteSize, stripTagPrefix } from "../hooks/magic-context/tag-content-primitives";
 import type { TagTarget } from "../hooks/magic-context/tag-messages";
 import type { Transcript, TranscriptPart } from "./transcript";
 
 export const TEXT_TAG_IDENTITY_MARKER = ":mc-text-v1:";
 
 export interface TagTranscriptOptions {
-    /**
-     * When true, skip injecting `§N§` prefix into visible text. Tags
-     * still get assigned in the DB so historian/drops can reference
-     * them; the agent just doesn't see the markers. Used when the session's
-     * tool surface has no `ctx_reduce` tool to act on the markers. Cache-safe
-     * because the availability verdict is frozen per session.
-     */
-    skipPrefixInjection?: boolean;
     /**
      * Pi-only: map of messageId → raw-message fingerprint. When a NEW message
      * text tag is created, its fingerprint is persisted on the tag row so a
@@ -88,8 +75,8 @@ export interface TagTranscriptOptions {
     entryFingerprintByMessageId?: ReadonlyMap<string, string>;
     /**
      * Stable Pi message ids observed on a prior pass. Their immutable parts may
-     * reuse tag assignments while this pass still reapplies visible prefixes and
-     * rebuilds the complete set of messages affected by each tag.
+     * reuse tag assignments while this pass still rebuilds the complete set of
+     * messages affected by each tag.
      */
     reuseMessageIds?: ReadonlySet<string>;
     /**
@@ -106,10 +93,7 @@ export interface TagTranscriptOptions {
     /** Exact tool-result text/count pairs retained under composite tag identity. */
     toolTokenCache?: Map<string, { text: string; tokenCount: number }>;
     /** Optional process-local benchmark callback; production callers omit it. */
-    onTiming?: (
-        phase: "identity" | "prefix" | "targets" | "tokenCounting",
-        elapsedMs: number,
-    ) => void;
+    onTiming?: (phase: "identity" | "targets" | "tokenCounting", elapsedMs: number) => void;
 }
 
 export interface TagTranscriptResult {
@@ -122,8 +106,8 @@ export interface TagTranscriptResult {
  * "Eligible" means: parts that contribute meaningfully to the LLM input
  * and whose content can be replaced when dropped. Specifically:
  *
- *   - text parts (user or assistant): tagged as type "message", inject
- *     prefix into the visible text, target supports setContent.
+ *   - text parts (user or assistant): tagged as type "message", target
+ *     supports setContent.
  *   - thinking parts: NOT tagged. Reasoning content has provider-
  *     specific signed-content semantics (Anthropic redacted_thinking,
  *     etc.) and replacing them mid-conversation breaks signature
@@ -163,7 +147,6 @@ interface ToolOccurrence {
 
 interface TagTranscriptTiming {
     identity: number;
-    prefix: number;
     targets: number;
     tokenCounting: number;
 }
@@ -211,10 +194,9 @@ export function tagTranscript(
     db: ContextDatabase,
     options: TagTranscriptOptions = {},
 ): TagTranscriptResult {
-    const skipPrefixInjection = options.skipPrefixInjection === true;
     const targets = new Map<number, TagTarget>();
     const timing: TagTranscriptTiming | undefined = options.onTiming
-        ? { identity: 0, prefix: 0, targets: 0, tokenCounting: 0 }
+        ? { identity: 0, targets: 0, tokenCounting: 0 }
         : undefined;
 
     // Tool aggregation is keyed by the same owner+callId identity used by
@@ -280,7 +262,6 @@ export function tagTranscript(
                     tagger,
                     db,
                     targets,
-                    skipPrefixInjection,
                     entryFingerprint: options.entryFingerprintByMessageId?.get(messageId) ?? null,
                     reuseIdentity: reuseIdentity || contentDerivedTextIds !== undefined,
                     timing,
@@ -312,7 +293,6 @@ export function tagTranscript(
                         tagger,
                         db,
                         targets,
-                        skipPrefixInjection,
                         reuseIdentity,
                         timing,
                     });
@@ -421,7 +401,6 @@ export function tagTranscript(
                     }
                     existing.identityReusable &&= reuseIdentity;
                     applyToolPrefixAndTarget({
-                        skipPrefixInjection,
                         part,
                         text,
                         tagId: existing.tagId,
@@ -549,7 +528,6 @@ export function tagTranscript(
                     openToolAggregateKeysByCallId.set(callId, [...pendingKeys, aggregateKey]);
                 }
                 applyToolPrefixAndTarget({
-                    skipPrefixInjection,
                     part,
                     text,
                     tagId: aggregate.tagId,
@@ -568,7 +546,6 @@ export function tagTranscript(
 
     if (timing && options.onTiming) {
         options.onTiming("identity", timing.identity);
-        options.onTiming("prefix", timing.prefix);
         options.onTiming("targets", timing.targets);
         options.onTiming("tokenCounting", timing.tokenCounting);
     }
@@ -661,7 +638,6 @@ function readAggregateToolAccounting(
 }
 
 interface ApplyToolPrefixAndTargetArgs {
-    skipPrefixInjection: boolean;
     part: TranscriptPart;
     text: string;
     tagId: number;
@@ -671,11 +647,6 @@ interface ApplyToolPrefixAndTargetArgs {
 }
 
 function applyToolPrefixAndTarget(args: ApplyToolPrefixAndTargetArgs): void {
-    if (!args.skipPrefixInjection && args.part.kind === "tool_result") {
-        const prefixStart = args.timing ? performance.now() : 0;
-        args.part.setText(prependTag(args.tagId, args.text));
-        if (args.timing) args.timing.prefix += performance.now() - prefixStart;
-    }
     const targetStart = args.timing ? performance.now() : 0;
     args.targets.set(args.tagId, buildAggregateTarget(args.tagId, args.aggregate.occurrences));
     if (args.timing) args.timing.targets += performance.now() - targetStart;
@@ -803,7 +774,6 @@ interface TagTextPartArgs {
     tagger: Tagger;
     db: ContextDatabase;
     targets: Map<number, TagTarget>;
-    skipPrefixInjection: boolean;
     entryFingerprint: string | null;
     reuseIdentity: boolean;
     timing?: TagTranscriptTiming;
@@ -876,12 +846,7 @@ function tagTextPart(args: TagTextPartArgs): void {
 }
 
 function applyTextPrefixAndTarget(args: TagTextPartArgs, tagId: number, text: string): void {
-    if (!args.skipPrefixInjection) {
-        const prefixStart = args.timing ? performance.now() : 0;
-        args.part.setText(prependTag(tagId, text));
-        if (args.timing) args.timing.prefix += performance.now() - prefixStart;
-    }
-
+    void text;
     const targetStart = args.timing ? performance.now() : 0;
     args.targets.set(tagId, buildTextTarget(args.part, args.message));
     if (args.timing) args.timing.targets += performance.now() - targetStart;
@@ -897,7 +862,6 @@ interface TagToolPartArgs {
     tagger: Tagger;
     db: ContextDatabase;
     targets: Map<number, TagTarget>;
-    skipPrefixInjection: boolean;
     reuseIdentity: boolean;
     timing?: TagTranscriptTiming;
 }
@@ -916,9 +880,8 @@ function tagToolPart(args: TagToolPartArgs): void {
         ? args.tagger.getToolTag(args.sessionId, contentId, contentId)
         : undefined;
     if (reusableTagId !== undefined) {
-        const text = args.part.kind === "tool_result" ? (args.part.getText() ?? "") : "";
         if (args.timing) args.timing.identity += performance.now() - identityStart;
-        applySingleToolPrefixAndTarget(args, reusableTagId, text);
+        applySingleToolPrefixAndTarget(args, reusableTagId);
         return;
     }
     const text = args.part.getText() ?? "";
@@ -954,19 +917,10 @@ function tagToolPart(args: TagToolPartArgs): void {
         },
     );
     if (args.timing) args.timing.identity += performance.now() - identityStart;
-    applySingleToolPrefixAndTarget(args, tagId, text);
+    applySingleToolPrefixAndTarget(args, tagId);
 }
 
-function applySingleToolPrefixAndTarget(args: TagToolPartArgs, tagId: number, text: string): void {
-    // For tool parts, the visible payload is the tool result text. We
-    // can inject the tag prefix into it for in-text references; this
-    // matches the OpenCode behavior of tagging tool outputs.
-    if (!args.skipPrefixInjection && args.part.kind === "tool_result") {
-        const prefixStart = args.timing ? performance.now() : 0;
-        args.part.setText(prependTag(tagId, text));
-        if (args.timing) args.timing.prefix += performance.now() - prefixStart;
-    }
-
+function applySingleToolPrefixAndTarget(args: TagToolPartArgs, tagId: number): void {
     const targetStart = args.timing ? performance.now() : 0;
     args.targets.set(tagId, buildToolTarget(args.part, args.message, tagId));
     if (args.timing) args.timing.targets += performance.now() - targetStart;

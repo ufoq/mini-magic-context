@@ -218,9 +218,8 @@ describe("apply operations for tool drops", () => {
         const toolTagId = tagger.getToolTag("ses-1", "call-bg", "m-bg");
         expect(toolTagId).toBeDefined();
 
-        // Snapshot AFTER tagging (tagMessages legitimately prefixes the output
-        // with §N§). The reclaim pass below must not change the live object any
-        // further — this is the byte-identity we assert.
+        // Snapshot AFTER tagging. The reclaim pass below must not change the
+        // live object any further — this is the byte-identity we assert.
         const pristine = JSON.stringify(taskPart);
 
         // Within the skeleton window → truncate (skeleton) path, as before.
@@ -398,7 +397,7 @@ describe("apply operations for tool drops", () => {
         expect(didMutate).toBe(false);
         expect(getPendingOps(db, "ses-1")).toHaveLength(1);
         expect(getTagById(db, "ses-1", messageTagId!)?.status).toBe("active");
-        expect(messages[4]?.parts).toEqual([{ type: "text", text: "§5§ five" }]);
+        expect(messages[4]?.parts).toEqual([{ type: "text", text: "five" }]);
     });
 
     it("applies deferred pending drops once they leave the protected range", () => {
@@ -644,7 +643,7 @@ describe("apply operations for tool drops", () => {
         expect(didMutate).toBe(false);
         expect(getPendingOps(db, "ses-1")).toHaveLength(0);
         expect(getTagById(db, "ses-1", messageTagId!)?.status).toBe("compacted");
-        expect(messages[1]?.parts).toEqual([{ type: "text", text: "§2§ reduce me later" }]);
+        expect(messages[1]?.parts).toEqual([{ type: "text", text: "reduce me later" }]);
     });
 
     describe("role-aware message drops (canonical [dropped §N§])", () => {

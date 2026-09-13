@@ -54,7 +54,6 @@ import {
     FORCE_MATERIALIZE_PERCENTAGE,
 } from "./compartment-trigger";
 import {
-    type CtxReduceAvailabilityVerdict,
     resolveCtxReduceAvailabilityFromMessages,
     resolveTodowriteAvailabilityFromMessages,
     type ToolAvailabilityVerdict,
@@ -101,7 +100,6 @@ import {
     applyFlushedStatuses,
     type MessageLike,
     stripStructuralNoise,
-    type TagNormalizationTarget,
     type TagTarget,
     tagMessages,
 } from "./transform-operations";
@@ -297,8 +295,8 @@ export interface TransformDeps {
     protectedTags: number;
     /**
      * ctx_reduce visibility is resolved per session from the session's tool
-     * allow-list. Tag DB rows are still maintained when the tool is unavailable,
-     * but §N§ prefixes and nudges are suppressed. See tag-messages.ts for the gate.
+     * allow-list. Legacy §N§ prefixes are never injected any more; the verdict
+     * only gates guidance text now.
      */
     /** Smart-drops (experimental, default off): also reclaim tool output that a
      *  later call supersedes, on top of the age-based auto-drop. Off → messages
@@ -477,20 +475,12 @@ export function createTransform(deps: TransformDeps) {
 
         const reducedMode = sessionMeta.isSubagent;
         const fullFeatureMode = !reducedMode;
-        // §N§ prefix + ctx_reduce + Channel 1 are gated on this single signal,
-        // NOT on subagent status. `ctx_reduce` is registered process-globally
-        // (tool-registry.ts), so subagents may have the tool — they just need
-        // the §N§ prefix + Channel 1 baseline + guidance to use it.
-        //
-        // ALSO gated on the session's actual tool availability: a parent agent
-        // can spawn this session with an explicit allow-list tools map that
-        // filters ctx_reduce out entirely — §N§ prefixes and nudges for a tool
-        // the model can't call are pure overhead plus cargo-cult risk. The
-        // verdict is frozen per session (first user message's tools map) so it
-        // can never flap mid-session and bust the cache.
-        const ctxReduceAvailability: CtxReduceAvailabilityVerdict =
-            resolveCtxReduceAvailabilityFromMessages(sessionId, messages);
-        const ctxReduceCallable = ctxReduceAvailability.callable;
+        // Pre-warm the frozen ctx_reduce availability verdict from the first
+        // user message so the system-prompt hook — which may run before this
+        // transform — observes the same frozen verdict. Nothing agent-visible
+        // consumes it any more (the `§N§` prefix surface is gone), but the
+        // cache entry keeps both paths consistent.
+        resolveCtxReduceAvailabilityFromMessages(sessionId, messages);
 
         // Same frozen-per-session verdict for the native `todowrite` tool. When
         // a session's tools map filters todowrite out, the synthetic todo-pair
@@ -1331,11 +1321,10 @@ export function createTransform(deps: TransformDeps) {
             { type: string; thinking?: string; text?: string }[]
         >();
         let messageTagNumbers = new Map<MessageLike, number>();
-        let _tagNormalizationTargets: TagNormalizationTarget[] = [];
         let batch: { finalize: () => void } | null = null;
         let hasRecentReduceCall = false;
-        // Inject temporal markers before tagging so the §N§ tag prefix wraps
-        // around our marker.
+        // Inject temporal markers before tagging so any legacy §N§ prefix is
+        // peeled around our marker.
         //
         // Intentional — this runs on EVERY transform pass, including defer /
         // cache-safe passes that are otherwise gated. Three invariants make
@@ -1372,19 +1361,12 @@ export function createTransform(deps: TransformDeps) {
             // the identical live-wire floor.
             deps.tagger.initFromDb(sessionId, db, taggerFloor);
             logTransformTiming(sessionId, "tag.initFromDb", tInitFromDb);
-            // Skip §N§ prefix injection only when ctx_reduce is unavailable in
-            // this session's tool allow-list. Subagents with the tool DO get
-            // prefixes now — they self-manage tool bloat. DB tag records are
-            // maintained either way so heuristics and drops continue to work;
-            // only the agent-visible prefix is gated.
-            const skipPrefixInjection = !ctxReduceCallable;
-            const result = tagMessages(sessionId, messages, deps.tagger, db, {
-                skipPrefixInjection,
-            });
+            // DB tag records are maintained so heuristics and drops continue
+            // to work; nothing agent-visible is emitted any more.
+            const result = tagMessages(sessionId, messages, deps.tagger, db, {});
             targets = result.targets;
             reasoningByMessage = result.reasoningByMessage;
             messageTagNumbers = result.messageTagNumbers;
-            _tagNormalizationTargets = result.normalizationTargets;
             batch = result.batch;
             hasRecentReduceCall = result.hasRecentReduceCall;
             const sawCommitLastPass = deps.commitSeenLastPass?.get(sessionId) ?? false;
@@ -1701,7 +1683,6 @@ export function createTransform(deps: TransformDeps) {
             reasoningByMessage,
             messageTagNumbers,
             tagger: deps.tagger,
-            ctxReduceAvailability,
             todowriteAvailability,
             batch,
             contextUsage,

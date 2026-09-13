@@ -294,7 +294,7 @@ describe("magic-context hook", () => {
         const hook = requireHook(createMagicContextHook(createMockDeps()));
 
         expect("experimental.chat.messages.transform" in hook).toBe(true);
-        expect("experimental.text.complete" in hook).toBe(true);
+        expect("experimental.text.complete" in hook).toBe(false);
         expect(hook).toHaveProperty("event");
         expect("command.execute.before" in hook).toBe(true);
     });
@@ -304,7 +304,6 @@ describe("magic-context hook", () => {
         const hook = requireHook(createMagicContextHook(createMockDeps()));
 
         expect(typeof hook["experimental.chat.messages.transform"]).toBe("function");
-        expect(typeof hook["experimental.text.complete"]).toBe("function");
         expect(typeof hook.event).toBe("function");
         expect(typeof hook["command.execute.before"]).toBe("function");
         expect(typeof hook["tool.execute.after"]).toBe("function");

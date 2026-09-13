@@ -144,10 +144,8 @@ function findFirstVisibleTextPart(parts: unknown[]): MutableTextPart | null {
  * previous transform pass), injection is skipped. Returns the number of
  * messages that received a new marker.
  *
- * The marker is prepended BEFORE any §N§ tag added by tagMessages runs after
- * this function, since tagging happens in the normal transform flow and
- * stripTagPrefix re-strips `§N§` on re-tagging — leaving the marker intact
- * between the tag and the user's text on subsequent passes.
+ * The marker is prepended before any legacy §N§ prefix is peeled away, so on
+ * re-tagging the marker stays between the tag and the user's text.
  */
 export function injectTemporalMarkers(messages: unknown[]): number {
     let injected = 0;

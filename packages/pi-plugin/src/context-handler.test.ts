@@ -213,7 +213,7 @@ describe("persisted Pi text identity vectors", () => {
 			const seed = createPiTranscript(seedMessages, sessionId, ["entry-m"]);
 			tagTranscript(sessionId, seed, tagger, db);
 			seed.commit();
-			expect(textOf(seedMessages[0])).toBe("§1§ A§2§ B");
+			expect(textOf(seedMessages[0])).toBe("AB");
 
 			const survivorMessages = [twoTextMessage("B")];
 			const survivor = createPiTranscript(survivorMessages, sessionId, [
@@ -240,7 +240,7 @@ describe("persisted Pi text identity vectors", () => {
 					content: Array<{ type: string; text?: string }>;
 				}
 			).content;
-			expect(survivorContent[0]?.text).toBe("§3§ B");
+			expect(survivorContent[0]?.text).toBe("B");
 			expect(survivorContent[0]?.text?.startsWith("§1§")).toBe(false);
 			const rows = db
 				.prepare(
@@ -363,7 +363,7 @@ describe("Pi fallback tag adoption", () => {
 		).run(sessionId, tagNumber, content, Date.now());
 	}
 
-	it("unbinds the pi-msg fallback alias while preserving the adopted §N§ prefix", () => {
+	it("unbinds the pi-msg fallback alias while preserving the adopted tag", () => {
 		const db = createTestDb();
 		try {
 			const sessionId = "ses-pi-fallback-adoption";
@@ -389,7 +389,7 @@ describe("Pi fallback tag adoption", () => {
 				entryFingerprintByMessageId: fallbackFingerprints,
 			});
 			fallbackTranscript.commit();
-			expect(textOf(fallbackMessages[0])).toBe("§1§ hello");
+			expect(textOf(fallbackMessages[0])).toBe("hello");
 			expect(tagger.getTag(sessionId, `${fallbackId}:p0`, "message")).toBe(1);
 
 			// Next pass starts with a data_version-only cache hit after the tagger's
@@ -419,7 +419,7 @@ describe("Pi fallback tag adoption", () => {
 				entryFingerprintByMessageId: realFingerprints,
 			});
 			realTranscript.commit();
-			expect(textOf(realMessages[0])).toBe("§1§ hello");
+			expect(textOf(realMessages[0])).toBe("hello");
 
 			// A later data_version-only cache hit must not resurrect the old alias.
 			tagger.initFromDb(sessionId, db);
@@ -885,7 +885,7 @@ describe("Pi fallback tag adoption", () => {
 				entryFingerprintByMessageId: new Map([[realId, fingerprint]]),
 			});
 			transcript.commit();
-			expect(textOf(nextPass[0])).toBe("§71§ hello");
+			expect(textOf(nextPass[0])).toBe("hello");
 		} finally {
 			closeQuietly(db);
 		}
@@ -1356,9 +1356,9 @@ describe("registerPiContextHandler", () => {
 				fakeContext("ses-context") as never,
 			);
 
-			expect(textOf(result.messages[0] as never)).toMatch(/^§1§ hello/);
-			expect(textOf(result.messages[1] as never)).toMatch(/^§2§ answer/);
-			expect(textOf(result.messages[2] as never)).toMatch(/^§3§ tool output/);
+			expect(textOf(result.messages[0] as never)).toMatch(/^hello/);
+			expect(textOf(result.messages[1] as never)).toMatch(/^answer/);
+			expect(textOf(result.messages[2] as never)).toMatch(/^tool output/);
 			expect(
 				getTagsBySession(db, "ses-context").map((tag) => tag.type),
 			).toEqual(["message", "message", "tool", "message"]);

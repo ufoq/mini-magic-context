@@ -57,11 +57,6 @@ function isFilePart(part: unknown): part is FilePart {
 	return isRecord(part) && part.type === "file" && typeof part.url === "string"
 }
 
-function prependTag(tagId: number, value: string): string {
-	const stripped = value.replace(/^§\d+§\s*/, "")
-	return `§${tagId}§ ${stripped}`
-}
-
 export function applyTransforms(
 	messages: DumpMessage[],
 	tags: ContextTagRow[],
@@ -144,7 +139,6 @@ export function applyTransforms(
 				if (sourceContent !== undefined) {
 					part.text = sourceContent
 				}
-				part.text = prependTag(tag.tagNumber, part.text)
 				messageTagNumbers.set(message, Math.max(messageTagNumbers.get(message) ?? 0, tag.tagNumber))
 
 				targets.set(tag.tagNumber, {
@@ -166,7 +160,6 @@ export function applyTransforms(
 				const tag = matcher.getByContentId(part.callID)
 				if (!tag) continue
 
-				part.state.output = prependTag(tag.tagNumber, part.state.output)
 				messageTagNumbers.set(message, Math.max(messageTagNumbers.get(message) ?? 0, tag.tagNumber))
 				toolTagByCallId.set(part.callID, tag.tagNumber)
 				if (precedingThinkingParts.length > 0 && !toolThinkingByCallId.has(part.callID)) {

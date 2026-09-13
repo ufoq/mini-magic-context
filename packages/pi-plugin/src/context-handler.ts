@@ -4021,7 +4021,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	const alreadyRanHeuristicsThisTurn =
 		currentTurnId !== null &&
 		lastHeuristicsTurnIdBySession.get(args.sessionId) === currentTurnId;
-	const ctxReduceCallable = false;
 	// Mid-turn-aware gate for consuming DEFERRED publication signals — mirrors
 	// OpenCode's canConsumeDeferredOnThisPass. `args.schedulerDecision` is ALREADY
 	// the mid-turn-adjusted decision (applyMidTurnDeferral downgrades execute→defer
@@ -4184,7 +4183,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		args.tagger,
 		args.db,
 		{
-			skipPrefixInjection: !ctxReduceCallable,
 			entryFingerprintByMessageId,
 			reuseMessageIds: textIdentityPlan.reusableMessageIds,
 			textIdentityDriftMessageIds: textIdentityPlan.driftedMessageIds,

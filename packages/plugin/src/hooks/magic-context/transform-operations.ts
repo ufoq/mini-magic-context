@@ -8,7 +8,6 @@ export {
 export { stripStructuralNoise } from "./strip-structural-noise";
 export {
     type MessageLike,
-    type TagNormalizationTarget,
     type TagTarget,
     tagMessages,
 } from "./tag-messages";

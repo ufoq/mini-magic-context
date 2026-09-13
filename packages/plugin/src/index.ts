@@ -400,9 +400,6 @@ const server: Plugin = async (ctx) => {
         "tool.execute.after": async (input, output) => {
             await magicContextRuntime.magicContext?.["tool.execute.after"]?.(input, output);
         },
-        "experimental.text.complete": async (input, output) => {
-            await magicContextRuntime.magicContext?.["experimental.text.complete"]?.(input, output);
-        },
         config: async (config) => {
             const existingCompaction = Reflect.get(config, "compaction");
             const compaction =

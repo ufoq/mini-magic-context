@@ -4,64 +4,20 @@ import {
     byteSize,
     isThinkingPart,
     peelLeadingMcTagNotation,
-    prependTag,
-    stripDanglingTagNotationGlobally,
-    stripPersistedAssistantText,
     stripTagPrefix,
-    stripTagSectionCharacters,
-    stripWellFormedLeadingTagPrefix,
 } from "./tag-content-primitives";
 
 const SECTION = "\u00a7";
 
 const DEGREE = "\u00b0";
-const CYRILLIC_HA = "\u04a9"; // ҩ — a stray closer a model improvised in the wild
 
-describe("dangling-open tag cleanup (§N + improvised closer, no closing §)", () => {
-    it("strips §N$ — the agent opened the tag and closed with $ (would orphan '$')", () => {
-        // Exact production shape: §103012$ → before this, stray-§ left "103012$".
-        expect(stripPersistedAssistantText(`${SECTION}103012$ Fixed it`)).toBe("Fixed it");
-    });
-
-    it("strips §N + a non-ASCII improvised closer (§11865ҩ → '')", () => {
-        expect(stripPersistedAssistantText(`${SECTION}11865${CYRILLIC_HA} done`)).toBe("done");
-        expect(stripDanglingTagNotationGlobally(`mid ${SECTION}11865${CYRILLIC_HA} text`)).toBe(
-            "mid  text",
-        );
-    });
-
-    it("strips a dangling §N with NO closer, keeping the content after the space", () => {
-        expect(stripPersistedAssistantText(`${SECTION}42 files changed`)).toBe("files changed");
-    });
-
-    it("strips a dangling leading §N$ via stripTagPrefix without orphaning", () => {
-        expect(stripTagPrefix(`${SECTION}103012$ Fixed it`)).toBe("Fixed it");
-    });
-
-    it("does NOT eat a real letter following §N (only a non-word closer)", () => {
-        // `i` is a word char, so it is NOT consumed as a closer.
-        expect(stripDanglingTagNotationGlobally(`${SECTION}42important`)).toBe("important");
-    });
-
-    it("leaves well-formed §N§ to the pair/prefix passes (not mangled by dangling)", () => {
-        expect(stripPersistedAssistantText(`${SECTION}42${SECTION} hi`)).toBe("hi");
-        expect(stripTagPrefix(`${SECTION}42${SECTION} hi`)).toBe("hi");
-    });
-
-    it("does not touch bare digits (no leading §)", () => {
-        expect(stripDanglingTagNotationGlobally("99 files, 2024 roadmap")).toBe(
-            "99 files, 2024 roadmap",
-        );
-    });
-});
-
-describe("stripTagPrefix (transform §N§ notation only)", () => {
+describe("stripTagPrefix (legacy canonical §N§ notation only)", () => {
     it("#given well-formed leading prefix #when stripTagPrefix runs #then removes it", () => {
         expect(stripTagPrefix(`${SECTION}42${SECTION} Hello`)).toBe("Hello");
     });
 
-    it("#given malformed xml hybrid prefix #when stripTagPrefix runs #then removes it", () => {
-        expect(stripTagPrefix(`${SECTION}15298">${SECTION}15298${SECTION} hello`)).toBe("hello");
+    it("#given stacked well-formed prefixes #when stripTagPrefix runs #then removes them", () => {
+        expect(stripTagPrefix(`${SECTION}2030${SECTION} ${SECTION}2030${SECTION} Run`)).toBe("Run");
     });
 
     it("#given accumulated bare digit residue #when stripTagPrefix runs #then preserves digits", () => {
@@ -91,76 +47,19 @@ describe("stripTagPrefix (transform §N§ notation only)", () => {
             `2030  ${SECTION}42${SECTION} Hello`,
         );
     });
-});
 
-describe("stripPersistedAssistantText (persistence boundary)", () => {
-    it("#given leading well-formed prefixes #when strip runs #then removes pairs cleanly", () => {
-        expect(
-            stripPersistedAssistantText(`${SECTION}2030${SECTION} ${SECTION}2030${SECTION} Run`),
-        ).toBe("Run");
-    });
-
-    it("#given mid-text cargo-cult pair #when strip runs #then removes whole pair", () => {
-        expect(
-            stripPersistedAssistantText(`Looking at ${SECTION}40827${SECTION} the result is X`),
-        ).toBe("Looking at  the result is X");
-    });
-
-    it("#given tag after bare digits #when strip runs #then removes mid-text pair only", () => {
-        expect(stripPersistedAssistantText(`2030  ${SECTION}42${SECTION} Hello`)).toBe(
-            "2030   Hello",
+    it("#given a leading law citation #when stripTagPrefix runs #then leaves it intact", () => {
+        // Regression for the deleted dangling/malformed passes: `§823` is
+        // legitimate legal prose, not a Mini tag prefix.
+        expect(stripTagPrefix(`${SECTION}823 BGB`)).toBe(`${SECTION}823 BGB`);
+        expect(stripTagPrefix(`${SECTION}5.1 of the contract`)).toBe(
+            `${SECTION}5.1 of the contract`,
         );
     });
 
-    it("#given malformed hybrid mid-text #when strip runs #then removes hybrid", () => {
-        expect(stripPersistedAssistantText(`Hello ${SECTION}40827">Oracle confirmed`)).toBe(
-            "Hello Oracle confirmed",
-        );
-    });
-
-    it("#given bare digit residue without ? #when strip runs #then leaves digits", () => {
-        expect(stripPersistedAssistantText(`2030  2030  2030${DEGREE} Run clippy`)).toBe(
-            `2030  2030  2030${DEGREE} Run clippy`,
-        );
-
-        expect(stripPersistedAssistantText("99  Actually executing now. Running fmt:")).toBe(
-            "99  Actually executing now. Running fmt:",
-        );
-    });
-});
-
-describe("stripWellFormedLeadingTagPrefix", () => {
-    it("#given leading ?N? prefix #when stripWellFormedLeadingTagPrefix runs #then removes it", () => {
-        expect(stripWellFormedLeadingTagPrefix(`${SECTION}42${SECTION} Hello`)).toBe("Hello");
-    });
-});
-
-describe("stripTagSectionCharacters", () => {
-    it("#given ? characters #when stripTagSectionCharacters runs #then removes them", () => {
-        expect(stripTagSectionCharacters(`${SECTION}42${SECTION}`)).toBe("42");
-    });
-});
-
-describe("prependTag", () => {
-    it("#given bare digit residue #when prependTag runs #then does not strip digits", () => {
-        expect(prependTag(7, `2030  2030  2030${DEGREE} Run clippy`)).toBe(
-            `${SECTION}7${SECTION} 2030  2030  2030${DEGREE} Run clippy`,
-        );
-    });
-
-    it("#given existing well-formed prefix #when prependTag runs #then replaces with new tag", () => {
-        expect(prependTag(9, `${SECTION}3${SECTION} Hello`)).toBe(`${SECTION}9${SECTION} Hello`);
-    });
-
-    it("#given malformed xml hybrid prefix #when prependTag runs #then strips before prepending", () => {
-        expect(prependTag(11, `${SECTION}15298">${SECTION}15298${SECTION} hello`)).toBe(
-            `${SECTION}11${SECTION} hello`,
-        );
-    });
-
-    it("#given legitimate numbers #when prependTag runs #then preserves them", () => {
-        expect(prependTag(5, "99 files are located")).toBe(
-            `${SECTION}5${SECTION} 99 files are located`,
+    it("#given a stray section sign mid-text #when stripTagPrefix runs #then leaves it intact", () => {
+        expect(stripTagPrefix(`See ${SECTION}5 of the contract.`)).toBe(
+            `See ${SECTION}5 of the contract.`,
         );
     });
 });
@@ -174,26 +73,11 @@ describe("peelLeadingMcTagNotation", () => {
         });
     });
 
-    it("#given malformed leading prefix #when peel runs #then splits raw prefix before strip", () => {
-        expect(peelLeadingMcTagNotation(`${SECTION}9">${SECTION}9${SECTION} body`)).toEqual({
-            tagPrefix: `${SECTION}9">${SECTION}9${SECTION} `,
-
-            body: "body",
+    it("#given no leading prefix #when peel runs #then returns empty prefix", () => {
+        expect(peelLeadingMcTagNotation("plain body")).toEqual({
+            tagPrefix: "",
+            body: "plain body",
         });
-    });
-});
-
-describe("stripPersistedAssistantText edge cases", () => {
-    it("#given malformed prefix with trailing space #when strip runs #then trims result", () => {
-        expect(stripPersistedAssistantText(`${SECTION}15298">§15298§ `)).toBe("");
-    });
-
-    it("#given tag-only text with trailing space #when strip runs #then returns empty", () => {
-        expect(stripPersistedAssistantText(`${SECTION}42${SECTION} `)).toBe("");
-    });
-
-    it("#given whitespace-only after strip #when strip runs #then trims to empty", () => {
-        expect(stripPersistedAssistantText(`   `)).toBe("");
     });
 });
 

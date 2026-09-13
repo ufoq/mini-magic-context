@@ -431,7 +431,7 @@ describe("deferred compaction marker representation", () => {
         expect(replay).toEqual(messages);
     });
 
-    it("keeps a provisional marker untagged and freezes the callable tag choice", () => {
+    it("always represents the marker with the plain summary text and is idempotent", () => {
         db = new Database(":memory:");
         initializeDatabase(db);
         const sessionId = "ses-marker-provisional-availability";
@@ -448,7 +448,6 @@ describe("deferred compaction marker representation", () => {
             db,
             sessionId,
             tagger: createTagger(),
-            ctxReduceAvailability: { callable: true, frozen: false },
         };
         const provisional = [
             {
@@ -459,24 +458,19 @@ describe("deferred compaction marker representation", () => {
         reconcileMarkerRepresentation(provisional, state, options);
         expect(provisional[0]?.parts[0]).toEqual({ type: "text", text: MARKER_SUMMARY_TEXT });
 
-        const frozen = [
+        const replay = [
             {
                 info: { role: "user", sessionID: sessionId },
                 parts: [{ type: "text", text: "turn" }],
             },
         ] as unknown as MessageLike[];
-        reconcileMarkerRepresentation(frozen, state, {
-            ...options,
-            ctxReduceAvailability: { callable: true, frozen: true },
-        });
-        const taggedText = (frozen[0].parts[0] as { text?: string }).text;
-        expect(taggedText).toMatch(/^§\d+§ /);
-        const stable = structuredClone(frozen);
-        reconcileMarkerRepresentation(stable, state, {
-            ...options,
-            ctxReduceAvailability: { callable: true, frozen: true },
-        });
-        expect(stable).toEqual(frozen);
+        reconcileMarkerRepresentation(replay, state, options);
+        const summaryText = (replay[0].parts[0] as { text?: string }).text;
+        expect(summaryText).toBe(MARKER_SUMMARY_TEXT);
+        expect(summaryText).not.toMatch(/§\d+§/);
+        const stable = structuredClone(replay);
+        reconcileMarkerRepresentation(stable, state, options);
+        expect(stable).toEqual(replay);
     });
 
     it("keeps todo synthesis at the head when the only assistant is a summary", async () => {

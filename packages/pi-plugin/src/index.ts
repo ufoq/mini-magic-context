@@ -89,7 +89,6 @@ import { computePiPressure, extractAssistantUsage } from "./pi-pressure";
 import { awaitInFlightRecomps } from "./pi-recomp-runner";
 import { readPiSessionMessages } from "./read-session-pi";
 import { registerStatusLine, updateStatusLine } from "./status-line";
-import { stripTagPrefixFromAssistantMessage } from "./strip-tag-prefix";
 import {
 	configurePiSubagentExtensions,
 	MAGIC_CONTEXT_PI_SUBAGENT_ENV,
@@ -1444,36 +1443,7 @@ async function startPiMagicContextRuntime(
 		return { cancel: true };
 	});
 
-	// Strip injected `§N§` tag prefix from assistant text BEFORE Pi
-	// persists the message to disk and renders it to the UI. Mirrors
-	// OpenCode's `experimental.text.complete` handler which scrubs the
-	// prefix from `output.text` before the assistant message lands in
-	// `opencode.db`.
-	//
-	// Pi's `agent-session.ts` emits `message_end` to extensions BEFORE
-	// calling `sessionManager.appendMessage(event.message)`. Mutating
-	// the message reference in this handler is therefore visible to
-	// the persistence call — same effect as OpenCode's hook on a
-	// different harness.
-	//
-	// Why this matters: LLMs frequently mimic the `§N§` prefix they
-	// see on prior assistant messages and emit `§4§ Yes...` at the
-	// start of a fresh response. The mimicry is harmless for cache
-	// (we re-strip and re-inject on the next transform pass), but the
-	// stored text is what Pi's UI renders — without this scrub, users
-	// see internal tag IDs at the start of every assistant turn.
 	pi.on("message_end", async (event, ctx) => {
-		try {
-			const msg = event.message as unknown;
-			if (msg !== null && typeof msg === "object") {
-				stripTagPrefixFromAssistantMessage(
-					msg as { role: string; content: unknown },
-				);
-			}
-		} catch (err) {
-			warn("message_end: stripTagPrefixFromAssistantMessage threw:", err);
-		}
-
 		// Update last_response_time + last_input_tokens + last_context_percentage
 		// so the scheduler's TTL gating can decide between execute and defer
 		// on the next transform pass. Without this, every Pi pass would either

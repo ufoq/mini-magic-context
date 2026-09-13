@@ -62,7 +62,6 @@ import { dropSlot } from "./lkg-slot";
 import { findLastAssistantModelFromOpenCodeDb } from "./read-session-db";
 import type { ManagedRecompContext } from "./recomp-orchestrator";
 import { runManagedRecomp, setRecompStarting, setRecompTerminal } from "./recomp-orchestrator";
-import { createTextCompleteHandler } from "./text-complete";
 import { createTransform } from "./transform";
 import { type ManagedWrapupContext, runManagedWrapup } from "./wrapup-orchestrator";
 
@@ -853,7 +852,6 @@ export function createMagicContextHook(deps: MagicContextDeps) {
     const hooks = {
         "experimental.chat.messages.transform": transform,
         "experimental.chat.system.transform": systemPromptHashHandler,
-        "experimental.text.complete": createTextCompleteHandler(),
         "chat.message": createChatMessageHook({
             db,
             liveModelBySession,

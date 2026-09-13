@@ -18,7 +18,7 @@ const SYSTEM_INJECTION_PATTERNS = [
 ];
 
 function isSystemInjectedText(text: string): boolean {
-    // Remove §N§ tag prefix that our tagger adds
+    // Remove any legacy §N§ tag prefix before testing for injection shapes.
     const stripped = text.trim().replace(TAG_PREFIX_PATTERN, "").trim();
     if (stripped.length === 0) return false;
     return SYSTEM_INJECTION_PATTERNS.some((pattern) => pattern.test(stripped));

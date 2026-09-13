@@ -574,13 +574,17 @@ describe("tool-drop-target", () => {
             expect(hasMeaningfulPart({ type: "text", text: "   " })).toBe(false);
         });
 
-        it("returns false for text containing only tag prefixes", () => {
+        it("returns false for text containing only canonical tag prefixes", () => {
             expect(hasMeaningfulPart({ type: "text", text: "§424§ " })).toBe(false);
             expect(hasMeaningfulPart({ type: "text", text: "§424§" })).toBe(false);
             expect(hasMeaningfulPart({ type: "text", text: "§424§   " })).toBe(false);
             expect(hasMeaningfulPart({ type: "text", text: "§1§ §2§ " })).toBe(false);
-            expect(hasMeaningfulPart({ type: "text", text: '§15298">§15298§ ' })).toBe(false);
-            expect(hasMeaningfulPart({ type: "text", text: '§15298">§ ' })).toBe(false);
+        });
+
+        it("treats improvised/malformed tag-like text as meaningful (it is preserved content)", () => {
+            expect(hasMeaningfulPart({ type: "text", text: '§15298">§15298§ ' })).toBe(true);
+            expect(hasMeaningfulPart({ type: "text", text: '§15298">§ ' })).toBe(true);
+            expect(hasMeaningfulPart({ type: "text", text: "§823 BGB" })).toBe(true);
         });
 
         it("returns true for text with actual content", () => {

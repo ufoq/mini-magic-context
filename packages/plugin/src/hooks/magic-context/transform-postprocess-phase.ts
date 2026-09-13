@@ -38,10 +38,7 @@ import { isRecord } from "../../shared/record-type-guard";
 import { runAutoSearchHint } from "./auto-search-runner";
 import { applyDeferredCompactionMarker, MARKER_SUMMARY_TEXT } from "./compaction-marker-manager";
 import { getActiveCompartmentRun } from "./compartment-runner";
-import type {
-    CtxReduceAvailabilityVerdict,
-    ToolAvailabilityVerdict,
-} from "./ctx-reduce-availability";
+import type { ToolAvailabilityVerdict } from "./ctx-reduce-availability";
 import { dropStaleReduceCalls } from "./drop-stale-reduce-calls";
 import { applyHeuristicCleanup } from "./heuristic-cleanup";
 import {
@@ -65,7 +62,7 @@ import {
     stripSystemInjectedMessages,
 } from "./strip-content";
 import { buildEditSupersessionReclaim, buildSupersessionReclaimOps } from "./supersession-reclaim";
-import { byteSize, prependTag } from "./tag-content-primitives";
+import { byteSize } from "./tag-content-primitives";
 import { buildSyntheticTodoPart, type SyntheticTodoPart } from "./todo-view";
 import {
     advanceToolReclaimWatermarkToCurrentMax,
@@ -227,7 +224,6 @@ export function reconcileMarkerRepresentation(
         db: ContextDatabase;
         sessionId: string;
         tagger: Tagger;
-        ctxReduceAvailability: CtxReduceAvailabilityVerdict;
     },
 ): boolean {
     const retainedMessages: MessageLike[] = [];
@@ -254,7 +250,7 @@ export function reconcileMarkerRepresentation(
     if (removedSummary) messages.splice(0, messages.length, ...retainedMessages);
     if (persistedMarkerState === null) return removedSummary;
 
-    const summaryTagNumber = options.tagger.assignTag(
+    options.tagger.assignTag(
         options.sessionId,
         `${persistedMarkerState.summaryMessageId}:p0`,
         "message",
@@ -270,10 +266,7 @@ export function reconcileMarkerRepresentation(
             reasoningTokenCount: null,
         }),
     );
-    const summaryText =
-        options.ctxReduceAvailability.frozen && options.ctxReduceAvailability.callable
-            ? prependTag(summaryTagNumber, MARKER_SUMMARY_TEXT)
-            : MARKER_SUMMARY_TEXT;
+    const summaryText = MARKER_SUMMARY_TEXT;
     const summaryMessage: MessageLike = {
         info: {
             id: persistedMarkerState.summaryMessageId,
@@ -341,7 +334,6 @@ interface RunPostTransformPhaseArgs {
     reasoningByMessage: Map<MessageLike, { type: string; thinking?: string; text?: string }[]>;
     messageTagNumbers: Map<MessageLike, number>;
     tagger: Tagger;
-    ctxReduceAvailability: CtxReduceAvailabilityVerdict;
     /** Frozen-per-session verdict for the native `todowrite` tool. Gates the
      *  synthetic todo-pair injection below: a session whose tools map filters
      *  todowrite out must not get a synthetic pair for a tool it cannot call. */
@@ -1431,7 +1423,6 @@ export async function runPostTransformPhase(
             db: args.db,
             sessionId: args.sessionId,
             tagger: args.tagger,
-            ctxReduceAvailability: args.ctxReduceAvailability,
         },
     );
 
