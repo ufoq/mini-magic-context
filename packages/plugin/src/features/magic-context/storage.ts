@@ -53,16 +53,6 @@ export {
     queueM0Mutation as appendM0Mutation,
 } from "./storage-m0-mutation-log";
 export {
-    getMaxMemoryMutationId,
-    getMaxMemoryMutationIdForProjects,
-    getMemoryMutation,
-    getMemoryMutationsForRender,
-    getMemoryMutationsForRenderByProjects,
-    type MemoryMutationLogRow,
-    type MemoryMutationType,
-    queueMemoryMutation,
-} from "./storage-memory-mutation-log";
-export {
     type AcquireWrapupResult,
     type AppendAutoSearchHintOutcome,
     type AutoSearchHintDecision,
@@ -148,38 +138,11 @@ export {
 } from "./storage-meta";
 export { bumpSessionFactsVersion } from "./storage-meta-shared";
 export {
-    addNote,
-    deleteNote,
-    dismissNote,
-    getNotes,
-    getPendingSmartNotes,
-    getReadySmartNotes,
-    getSessionNotes,
-    getSmartNotes,
-    markNoteChecked,
-    markNoteReady,
-    type Note,
-    type NoteStatus,
-    type NoteType,
-    replaceAllSessionNotes,
-    updateNote,
-} from "./storage-notes";
-export {
     clearPendingOps,
     getPendingOps,
     queuePendingOp,
     removePendingOp,
 } from "./storage-ops";
-export {
-    bumpProjectMemoryEpoch,
-    bumpProjectUserProfileVersion,
-    deleteProjectState,
-    ensureProjectState,
-    GLOBAL_USER_PROFILE_PROJECT_PATH,
-    getProjectState,
-    type ProjectStateRow,
-    setProjectState,
-} from "./storage-project-state";
 export {
     getSourceContents,
     replaceSourceContent,
