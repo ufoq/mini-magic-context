@@ -13,8 +13,19 @@ describe("executeStatus", () => {
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
         db.prepare(
-            "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        ).run(SESSION_ID, 1, 12, 34, "m12", "m34", "Status arc", "status body", Date.now());
+            "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ).run(
+            SESSION_ID,
+            1,
+            12,
+            34,
+            "m12",
+            "m34",
+            "Status arc",
+            "status body",
+            "status body",
+            Date.now(),
+        );
 
         const status = executeStatus(db, SESSION_ID, 20);
         const expected = estimateTokens("## 12-34 · Status arc\nstatus body\n");

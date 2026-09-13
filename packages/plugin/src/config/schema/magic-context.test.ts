@@ -67,10 +67,6 @@ describe("MagicContextConfigSchema", () => {
                 },
                 temporal_awareness: false,
                 keep_subagents: false,
-                todowrite: {
-                    enabled: false,
-                    overlay: false,
-                },
                 smart_drops: false,
                 caveman_text_compression: {
                     enabled: false,

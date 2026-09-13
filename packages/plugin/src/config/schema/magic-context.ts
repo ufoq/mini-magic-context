@@ -211,16 +211,10 @@ export interface MagicContextConfig {
      * USER config only — project tier cannot set this. Not recommended to disable.
      */
     fail_closed_blocking: boolean;
-    /** Pi-only controls for Magic Context's todowrite surface. */
-    todowrite: {
-        enabled: boolean;
-        overlay: boolean;
-    };
     /** Pi-only child-process extension controls. */
     pi?: PiConfig;
     /** Content-aware reclaim of tool output that a later call supersedes, added
-     *  to the normal age-based auto-drop: superseded todowrite/ctx_reduce/meta
-     *  outputs are dropped, and older edits to a file are compressed to a marker
+     *  to the normal age-based auto-drop: superseded meta outputs are dropped, and older edits to a file are compressed to a marker
      *  that keeps only the filePath. Only runs on a transform pass that is
      *  already rewriting the messages, so it never triggers a prompt-cache miss
      *  on its own; when off, the messages sent to the model are byte-identical to
@@ -438,25 +432,6 @@ export const MagicContextConfigSchema = z
             .describe(
                 "When Magic Context cannot operate (schema fence mismatch, storage open/migration failure), block the primary-session prompt with a loud recovery error instead of silently degrading to native compaction. Default true. Set false only to restore the old degrade-silently behavior (not recommended). USER-LEVEL ONLY — ignored in project config for security. Requires a restart.",
             ),
-        todowrite: z
-            .object({
-                enabled: z
-                    .boolean()
-                    .default(true)
-                    .describe(
-                        "Register Magic Context's todowrite task-list tool. Disable it if you use another todo extension.",
-                    ),
-                overlay: z
-                    .boolean()
-                    .default(true)
-                    .describe(
-                        "Pi only: show the persistent todo overlay above the editor while tasks are active.",
-                    ),
-            })
-            .default({ enabled: true, overlay: true })
-            .describe(
-                "Pi-only todowrite tool and overlay controls. Pi registers tools and widgets at extension boot, so changing this after /cd requires /reload or restart.",
-            ),
         pi: PiConfigSchema.describe(
             "Pi-only child-process extension controls. This setting is user-level only; project configuration cannot choose which extensions a user's subagent children load.",
         ),
@@ -464,7 +439,7 @@ export const MagicContextConfigSchema = z
             .boolean()
             .default(false)
             .describe(
-                "Content-aware reclaim of provably-superseded tool output, layered on the existing execute-pass auto-drop. When on: superseded todowrite (keep newest 1), spent reduction calls (keep newest 5), and zero-value meta (bash_status, bash_kill) outputs are dropped; older edits to a file are compressed to a filePath-preserving marker while the newest edit per file stays full. Only acts on passes already busting the cache, so it never originates a cache bust. Honors the protected-tag reserve. Experimental: opt-in, default off until cache stability is proven; when off the wire is byte-identical to the positional-only reclaim. Requires a restart.",
+                "Content-aware reclaim of provably-superseded tool output, layered on the existing execute-pass auto-drop. When on: zero-value meta (bash_status, bash_kill) outputs are dropped; older edits to a file are compressed to a filePath-preserving marker while the newest edit per file stays full. Only acts on passes already busting the cache, so it never originates a cache bust. Honors the protected-tag reserve. Experimental: opt-in, default off until cache stability is proven; when off the wire is byte-identical to the positional-only reclaim. Requires a restart.",
             ),
         caveman_text_compression: z
             .object({

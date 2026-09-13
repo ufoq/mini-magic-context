@@ -32,12 +32,6 @@ interface PersistedReasoningWatermarkRow {
     cleared_reasoning_through_tag: number;
 }
 
-interface PersistedTodoSyntheticAnchorRow {
-    todo_synthetic_call_id: string;
-    todo_synthetic_anchor_message_id: string;
-    todo_synthetic_state_json: string;
-}
-
 interface PersistedHistorianFailureRow {
     historian_failure_count: number;
     historian_last_error: string | null;
@@ -60,18 +54,6 @@ export type AppendAutoSearchHintOutcome =
     | { ok: true; kind: "appended"; decision: AutoSearchHintDecision }
     | { ok: true; kind: "already-present"; decision: AutoSearchHintDecision }
     | { ok: false; kind: "cas-exhausted" };
-
-export interface PersistedTodoSyntheticAnchor {
-    callId: string;
-    messageId: string;
-    /**
-     * Snapshot JSON of the todos as they existed at the moment we injected.
-     * Source of truth for defer-pass replay so the prefix bytes stay
-     * identical across T0-cache-bust → T1-defer even when a real
-     * `todowrite` mutates `last_todo_state` between T0 and T1.
-     */
-    stateJson: string;
-}
 
 export interface PersistedHistorianFailureState {
     failureCount: number;
@@ -192,16 +174,6 @@ function parseJsonArray<T>(
     } catch {
         return [];
     }
-}
-
-function isPersistedTodoSyntheticAnchorRow(row: unknown): row is PersistedTodoSyntheticAnchorRow {
-    if (row === null || typeof row !== "object") return false;
-    const r = row as Record<string, unknown>;
-    return (
-        typeof r.todo_synthetic_call_id === "string" &&
-        typeof r.todo_synthetic_anchor_message_id === "string" &&
-        typeof r.todo_synthetic_state_json === "string"
-    );
 }
 
 function isPersistedHistorianFailureRow(row: unknown): row is PersistedHistorianFailureRow {
@@ -940,67 +912,6 @@ export function removeAutoSearchHintDecisionByMessageId(
     return ok && removed;
 }
 
-export function getPersistedTodoSyntheticAnchor(
-    db: Database,
-    sessionId: string,
-): PersistedTodoSyntheticAnchor | null {
-    const result = db
-        .prepare(
-            "SELECT todo_synthetic_call_id, todo_synthetic_anchor_message_id, todo_synthetic_state_json FROM session_meta WHERE session_id = ?",
-        )
-        .get(sessionId);
-
-    if (!isPersistedTodoSyntheticAnchorRow(result)) {
-        return null;
-    }
-
-    if (
-        result.todo_synthetic_call_id.length === 0 ||
-        result.todo_synthetic_anchor_message_id.length === 0
-    ) {
-        return null;
-    }
-
-    return {
-        callId: result.todo_synthetic_call_id,
-        messageId: result.todo_synthetic_anchor_message_id,
-        // stateJson may be empty for rows persisted by the pre-Finding-#1
-        // version of this code path. Defer-pass replay falls back to skip
-        // when stateJson is empty, which is the same behavior as before.
-        stateJson: result.todo_synthetic_state_json,
-    };
-}
-
-export function setPersistedTodoSyntheticAnchor(
-    db: Database,
-    sessionId: string,
-    callId: string,
-    messageId: string,
-    stateJson: string,
-): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare(
-            "UPDATE session_meta SET todo_synthetic_call_id = ?, todo_synthetic_anchor_message_id = ?, todo_synthetic_state_json = ? WHERE session_id = ?",
-        ).run(callId, messageId, stateJson, sessionId);
-    })();
-}
-
-export function clearPersistedTodoSyntheticAnchor(db: Database, sessionId: string): void {
-    db.prepare(
-        "UPDATE session_meta SET todo_synthetic_call_id = '', todo_synthetic_anchor_message_id = '', todo_synthetic_state_json = '' WHERE session_id = ?",
-    ).run(sessionId);
-}
-
-/**
- * Return the timestamp of the most recent ctx_note(read) call for this session,
- * or 0 when the session has never called it. Used by note-nudger to suppress
- * reminders when the agent has already seen notes in recent context.
- */
-/**
- * Record that ctx_note(read) was just called for this session. The watermark is
- * compared against note updated_at / created_at on each nudge decision.
- */
 export function getHistorianFailureState(
     db: Database,
     sessionId: string,
@@ -1399,70 +1310,9 @@ export function removeStrippedPlaceholderId(
     return true;
 }
 
-// ── Stale ctx_reduce stripped message IDs (frozen replay watermark) ──
-
-/**
- * Message ids whose ctx_reduce parts have been sentinel-stripped because they
- * aged past the protected window. This set is the FROZEN replay watermark for
- * `dropStaleReduceCalls`: it advances ONLY on cache-busting passes (where the
- * wire is allowed to change) and is replayed verbatim on every pass. Replaying
- * a frozen id set — instead of recomputing a live `messages.length - protected`
- * boundary every pass — is what keeps defer passes byte-identical: tail growth
- * can never push an older ctx_reduce call past a moving boundary and strip it
- * mid-prefix on a defer pass (which busts the Anthropic prompt cache).
- */
-export function getStaleReduceStrippedIds(db: Database, sessionId: string): Set<string> {
-    const row = db
-        .prepare("SELECT stale_reduce_stripped_ids FROM session_meta WHERE session_id = ?")
-        .get(sessionId) as { stale_reduce_stripped_ids?: string } | null;
-    return new Set(parseStrippedBlob(row?.stale_reduce_stripped_ids));
-}
-
-/**
- * CAS-merge new aged ctx_reduce message ids into the frozen set, retrying on a
- * concurrent write so sibling processes sharing the session DB merge instead of
- * clobbering. Returns true when the set ended in the intended state (incl.
- * no-op), false only when retries were exhausted.
- */
-export function addStaleReduceStrippedIds(
-    db: Database,
-    sessionId: string,
-    ids: Iterable<string>,
-): boolean {
-    const add = [...ids];
-    if (add.length === 0) return true;
-    ensureSessionMetaRow(db, sessionId);
-
-    for (let attempt = 0; attempt < CAS_RETRY_LIMIT; attempt += 1) {
-        const row = db
-            .prepare("SELECT stale_reduce_stripped_ids FROM session_meta WHERE session_id = ?")
-            .get(sessionId) as { stale_reduce_stripped_ids?: string | null } | undefined;
-        const rawStored = row ? (row.stale_reduce_stripped_ids ?? null) : null;
-        const current = new Set<string>(parseStrippedBlob(rawStored));
-        let changed = false;
-        for (const id of add) {
-            if (!current.has(id)) {
-                current.add(id);
-                changed = true;
-            }
-        }
-        if (!changed) return true;
-        const nextBlob = JSON.stringify([...current]);
-        const result = db
-            .prepare(
-                "UPDATE session_meta SET stale_reduce_stripped_ids = ? WHERE session_id = ? AND stale_reduce_stripped_ids IS ?",
-            )
-            .run(nextBlob, sessionId, rawStored);
-        if (result.changes > 0) return true;
-    }
-    sessionLog(sessionId, `stale_reduce_stripped_ids CAS: ${CAS_RETRY_LIMIT} retries exhausted`);
-    return false;
-}
-
 /**
  * Message ids whose processed-image file parts have been sentinel-stripped.
- * Frozen replay watermark for `stripProcessedImages`, identical in purpose to
- * `stale_reduce_stripped_ids`: it advances ONLY on cache-busting passes and is
+ * This frozen replay watermark advances only on cache-busting passes and is
  * replayed verbatim every pass, so an aged image message can never have its
  * images first-removed on a defer pass (which busts the Anthropic prompt cache,
  * because the empty sentinel is filtered off the Anthropic wire).

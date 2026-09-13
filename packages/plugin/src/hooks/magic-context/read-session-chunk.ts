@@ -1,11 +1,6 @@
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker";
 import { removeSystemReminders } from "../../shared/system-directive";
 import {
-    getRawSessionMessageCountFromDb,
-    openCodeDbExists,
-    withReadOnlySessionDb,
-} from "./read-session-db";
-import {
     type ChunkBlock,
     compactRole,
     compactTextForSummary,
@@ -18,21 +13,11 @@ import {
     normalizeText,
     type SessionChunkLine,
 } from "./read-session-formatting";
-import {
-    countRawSessionMessageOrdinalsFromDb,
-    countStoredRawSessionMessagesFromDb,
-    type RawMessage,
-    type RawMessageOrdinalAnchor,
-    type RawMessageOrdinalEntry,
-    type RawMessageParts,
-    readRawSessionMessageByIdFromDb,
-    readRawSessionMessageIdOrdinalsFromDb,
-    readRawSessionMessageOrdinalByIdFromDb,
-    readRawSessionMessageOrdinalPageFromDb,
-    readRawSessionMessagePageFromDb,
-    readRawSessionMessagePartsByIdFromDb,
-    readRawSessionMessagesFromDb,
-    readRawSessionTailFromDb,
+import type {
+    RawMessage,
+    RawMessageOrdinalAnchor,
+    RawMessageOrdinalEntry,
+    RawMessageParts,
 } from "./read-session-raw";
 import { isFilePart, isTextPart } from "./tag-part-guards";
 import { extractToolCallObservation } from "./tool-drop-target";
@@ -88,17 +73,12 @@ let activeAbsoluteCountCache: Map<string, number> | null = null;
 /**
  * Per-session source override for raw message reading.
  *
- * The default implementation of `readRawSessionMessages(sessionId)` reads
- * from OpenCode's session DB via `withReadOnlySessionDb`. Other harnesses
- * (e.g. Pi) provide their session data through a different surface
- * (`pi.sessionManager.getBranch()`), so they register a per-session
- * provider here BEFORE invoking any code path that calls the shared
+ * Pi provides session data through `pi.sessionManager.getBranch()`, so callers
+ * register a per-session provider before invoking any code path that calls the
  * `readRawSessionMessages` / `getRawSessionMessageCount` /
  * `getProtectedTailStartOrdinal` / `readSessionChunk` helpers.
  *
- * The registry is lookup-by-sessionId: a registered provider takes
- * precedence over the OpenCode-DB default. Sessions never registered
- * here continue to read from OpenCode's DB (existing behavior).
+ * Missing providers produce an empty result; no alternate host storage is read.
  *
  * Lifecycle: providers should be registered for the duration of one
  * historian/trigger evaluation and unregistered afterward to avoid
@@ -254,10 +234,7 @@ export function readRawSessionMessagePage(
             )
             .slice(0, limit);
     }
-    if (!openCodeDbExists()) return [];
-    return withReadOnlySessionDb((db) =>
-        readRawSessionMessagePageFromDb(db, sessionId, afterOrdinal, limit, finalWatermark),
-    );
+    return [];
 }
 
 export function getRawSessionMessageOrdinalCount(sessionId: string): number {
@@ -266,8 +243,7 @@ export function getRawSessionMessageOrdinalCount(sessionId: string): number {
         if (provider.getMessageCount) return provider.getMessageCount();
         return provider.readMessages().length;
     }
-    if (!openCodeDbExists()) return 0;
-    return withReadOnlySessionDb((db) => countRawSessionMessageOrdinalsFromDb(db, sessionId));
+    return 0;
 }
 
 readRawSessionMessages.readPage = readRawSessionMessagePage;
@@ -301,24 +277,8 @@ export function primeTailRawMessageCache(args: {
     lastCompartmentEnd: number;
     anchorMessageId: string | null;
 }): boolean {
-    const { sessionId, lastCompartmentEnd, anchorMessageId } = args;
-    if (!activeRawMessageCache) return false;
-    if (activeRawMessageCache.has(sessionId)) return false;
-    // A registered provider (Pi) is the authoritative in-memory source and is
-    // already cheap; never shadow it with a DB read.
-    if (sessionProviders.has(sessionId)) return false;
-    if (!openCodeDbExists()) return false;
-    // Need a real boundary + anchor to read the tail; otherwise fall through to
-    // the full read (correct for the no-compartment / #132 case).
-    if (lastCompartmentEnd < 1 || !anchorMessageId) return false;
-
-    const result = withReadOnlySessionDb((db) =>
-        readRawSessionTailFromDb(db, sessionId, lastCompartmentEnd, anchorMessageId),
-    );
-    if (!result) return false; // anchor not found → caller uses full read
-    activeRawMessageCache.set(sessionId, result.messages);
-    activeAbsoluteCountCache?.set(sessionId, result.absoluteMessageCount);
-    return true;
+    void args;
+    return false;
 }
 
 /**
@@ -387,18 +347,14 @@ export function readRawSessionMessageOrdinalPage(
             );
         return rows.slice(0, Math.max(1, Math.floor(limit)));
     }
-    if (!openCodeDbExists()) return [];
-    return withReadOnlySessionDb((db) =>
-        readRawSessionMessageOrdinalPageFromDb(db, sessionId, after, limit),
-    );
+    return [];
 }
 
 export function getRawSessionStoredMessageCount(sessionId: string): number {
     const provider = sessionProviders.get(sessionId);
     if (provider?.getStoredMessageCount) return provider.getStoredMessageCount();
     if (provider) return provider.readMessages().length;
-    if (!openCodeDbExists()) return 0;
-    return withReadOnlySessionDb((db) => countStoredRawSessionMessagesFromDb(db, sessionId));
+    return 0;
 }
 
 export function readRawSessionMessageIdOrdinals(sessionId: string): Map<string, number> {
@@ -407,8 +363,7 @@ export function readRawSessionMessageIdOrdinals(sessionId: string): Map<string, 
     if (provider) {
         return new Map(provider.readMessages().map((message) => [message.id, message.ordinal]));
     }
-    if (!openCodeDbExists()) return new Map();
-    return withReadOnlySessionDb((db) => readRawSessionMessageIdOrdinalsFromDb(db, sessionId));
+    return new Map();
 }
 
 export function readRawSessionMessagePartsById(
@@ -421,10 +376,7 @@ export function readRawSessionMessagePartsById(
     if (provider) {
         return provider.readMessages().find((message) => message.id === messageId) ?? null;
     }
-    if (!openCodeDbExists()) return null;
-    return withReadOnlySessionDb((db) =>
-        readRawSessionMessagePartsByIdFromDb(db, sessionId, messageId),
-    );
+    return null;
 }
 
 export function readRawSessionMessageOrdinalById(
@@ -459,10 +411,7 @@ export function readRawSessionMessageOrdinalById(
     if (provider) {
         return provider.readMessages().find((message) => message.id === messageId)?.ordinal ?? null;
     }
-    if (!openCodeDbExists()) return null;
-    return withReadOnlySessionDb((db) =>
-        readRawSessionMessageOrdinalByIdFromDb(db, sessionId, messageId),
-    );
+    return null;
 }
 
 export function readRawSessionMessageById(sessionId: string, messageId: string): RawMessage | null {
@@ -473,20 +422,13 @@ export function readRawSessionMessageById(sessionId: string, messageId: string):
     if (provider) {
         return provider.readMessages().find((message) => message.id === messageId) ?? null;
     }
-    if (!openCodeDbExists()) return null;
-    return withReadOnlySessionDb((db) => readRawSessionMessageByIdFromDb(db, sessionId, messageId));
+    return null;
 }
 
 function readRawSessionMessagesFromSource(sessionId: string): RawMessage[] {
     const provider = sessionProviders.get(sessionId);
     if (provider) return provider.readMessages();
-    // No provider: fall back to OpenCode's session DB — but only if it exists.
-    // A Pi-only install has no opencode.db, and a Pi transform whose provider
-    // was unregistered out-of-band (e.g. session cleared while an async
-    // historian is mid-flight) must not crash the post-commit drop-queue with
-    // `unable to open database file`. No source → no raw messages.
-    if (!openCodeDbExists()) return [];
-    return withReadOnlySessionDb((db) => readRawSessionMessagesFromDb(db, sessionId));
+    return [];
 }
 
 export function getRawSessionMessageCount(sessionId: string): number {
@@ -495,8 +437,7 @@ export function getRawSessionMessageCount(sessionId: string): number {
         if (provider.getMessageCount) return provider.getMessageCount();
         return provider.readMessages().length;
     }
-    if (!openCodeDbExists()) return 0;
-    return withReadOnlySessionDb((db) => getRawSessionMessageCountFromDb(db, sessionId));
+    return 0;
 }
 
 /**

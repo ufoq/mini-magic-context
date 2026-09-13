@@ -6,7 +6,6 @@ import {
     releaseCompartmentLease,
 } from "../../features/magic-context/compartment-lease";
 import { getCompartments } from "../../features/magic-context/compartment-storage";
-import { runMigrations } from "../../features/magic-context/migrations";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { reserveProtectedTailDrainTokens } from "../../features/magic-context/storage-meta-persisted";
 import type { HarnessClient } from "../../shared/harness-client";
@@ -22,7 +21,6 @@ import { readSessionChunk, setRawMessageProvider } from "./read-session-chunk";
 function createDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

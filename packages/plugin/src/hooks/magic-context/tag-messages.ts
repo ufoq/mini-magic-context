@@ -1,18 +1,10 @@
 import type { ContextDatabase } from "../../features/magic-context/storage";
 import { getSourceContents, saveSourceContent } from "../../features/magic-context/storage";
-import {
-    adoptNullOwnerToolTag,
-    getCandidateToolOwners,
-    getNullOwnerToolTag,
-    getToolTagNumberByOwner,
-    pickNearestPriorOwner,
-} from "../../features/magic-context/storage-tags";
+import { getToolTagNumberByOwner } from "../../features/magic-context/storage-tags";
 import { makeToolCompositeKey, type Tagger } from "../../features/magic-context/tagger";
 import { textMentionsRecentCommit } from "../../shared/commit-detection";
 import { isRecord } from "../../shared/record-type-guard";
-import { isReduceToolPart } from "./drop-stale-reduce-calls";
 import { estimateImageTokensFromDataUrl } from "./image-token-estimate";
-import { getMessageTimesFromOpenCodeDb } from "./read-session-db";
 import { estimateTokens } from "./read-session-formatting";
 import { byteSize, isThinkingPart } from "./tag-content-primitives";
 import { createExistingTagResolver } from "./tag-id-fallback";
@@ -33,74 +25,6 @@ import {
 } from "./tool-drop-target";
 import { logTransformTiming } from "./transform-stage-logger";
 
-interface ToolOwnerDerivationCache {
-    candidateOwnersByCallId: Map<string, string[]>;
-    messageTimesById: Map<string, number | null>;
-}
-
-type ToolOwnerFallbackLookup =
-    | { kind: "candidates"; callId: string }
-    | { kind: "messageTimes"; messageIds: readonly string[] };
-
-const TOOL_OWNER_CACHE_KEY_SEP = "\x00";
-
-function makeToolOwnerCacheKey(sessionId: string, callId: string): string {
-    return `${sessionId}${TOOL_OWNER_CACHE_KEY_SEP}${callId}`;
-}
-
-function getCachedCandidateToolOwners(
-    db: ContextDatabase,
-    sessionId: string,
-    callId: string,
-    cache: ToolOwnerDerivationCache,
-    onLookup?: (lookup: ToolOwnerFallbackLookup) => void,
-): string[] {
-    const key = makeToolOwnerCacheKey(sessionId, callId);
-    const cached = cache.candidateOwnersByCallId.get(key);
-    if (cached !== undefined) return cached;
-
-    onLookup?.({ kind: "candidates", callId });
-    const candidates = getCandidateToolOwners(db, sessionId, callId);
-    cache.candidateOwnersByCallId.set(key, candidates);
-    return candidates;
-}
-
-function getCachedMessageTimesFromOpenCodeDb(
-    sessionId: string,
-    messageIds: readonly string[],
-    cache: ToolOwnerDerivationCache,
-    onLookup?: (lookup: ToolOwnerFallbackLookup) => void,
-): Map<string, number> {
-    const uncached = [...new Set(messageIds)].filter((id) => !cache.messageTimesById.has(id));
-    if (uncached.length > 0) {
-        onLookup?.({ kind: "messageTimes", messageIds: uncached });
-        const resolved = getMessageTimesFromOpenCodeDb(sessionId, uncached);
-        for (const id of uncached) {
-            cache.messageTimesById.set(id, resolved.get(id) ?? null);
-        }
-    }
-
-    const times = new Map<string, number>();
-    for (const id of messageIds) {
-        const time = cache.messageTimesById.get(id);
-        if (typeof time === "number") times.set(id, time);
-    }
-    return times;
-}
-
-function invalidateCachedCandidateToolOwnersIfNewOwner(
-    cache: ToolOwnerDerivationCache,
-    sessionId: string,
-    callId: string,
-    ownerMsgId: string,
-): void {
-    const key = makeToolOwnerCacheKey(sessionId, callId);
-    const cached = cache.candidateOwnersByCallId.get(key);
-    if (cached !== undefined && !cached.includes(ownerMsgId)) {
-        cache.candidateOwnersByCallId.delete(key);
-    }
-}
-
 /**
  * v3.3.1 Layer C: derive `tool_owner_message_id` for a tool observation.
  *
@@ -117,13 +41,9 @@ function invalidateCachedCandidateToolOwnersIfNewOwner(
  * the whole point of composite identity.
  */
 function deriveToolOwnerMessageId(
-    sessionId: string,
-    db: ContextDatabase,
     message: MessageLike,
     obs: { callId: string; kind: "invocation" | "result" },
     unpaired: Map<string, string[]>,
-    cache: ToolOwnerDerivationCache,
-    onFallbackLookup?: (lookup: ToolOwnerFallbackLookup) => void,
 ): string {
     const messageId = typeof message.info.id === "string" ? message.info.id : "";
 
@@ -150,44 +70,10 @@ function deriveToolOwnerMessageId(
         if (popped !== undefined) return popped;
     }
 
-    // Result-only window: invocation was compacted away. Look up the
-    // persisted nearest-prior owner whose time_created precedes the
-    // current result's message.
-    //
-    // Two-phase lookup that splits the MC and OC reads:
-    //   1. `getCandidateToolOwners` queries the MC tags table for every
-    //      tag with a non-NULL owner under (sessionId, callId).
-    //   2. `getMessageTimesFromOpenCodeDb` resolves wall-clock times for
-    //      the candidates and the current message via the shared OC
-    //      read-only handle. Returns an empty map when the OC DB can't
-    //      be opened (Pi-only install, missing file).
-    //   3. `pickNearestPriorOwner` selects the most recent candidate
-    //      strictly preceding `messageId` in OC time.
-    //
-    // All three steps are fail-soft: any of them returning empty/null
-    // collapses to the `messageId` fallback below, which keeps the
-    // composite key stable even when the OC DB is unavailable.
-    if (messageId) {
-        const candidates = getCachedCandidateToolOwners(
-            db,
-            sessionId,
-            obs.callId,
-            cache,
-            onFallbackLookup,
-        );
-        if (candidates.length > 0) {
-            const ids = [...candidates, messageId];
-            const times = getCachedMessageTimesFromOpenCodeDb(
-                sessionId,
-                ids,
-                cache,
-                onFallbackLookup,
-            );
-            const persisted = pickNearestPriorOwner(candidates, messageId, times);
-            if (persisted !== null) return persisted;
-        }
-        return messageId;
-    }
+    // If the invocation is outside the visible window, key the completed
+    // result to its own stable message id. Fresh databases never contain the
+    // ownerless rows that older releases attempted to adopt.
+    if (messageId) return messageId;
     return obs.callId;
 }
 
@@ -235,7 +121,6 @@ export interface TagMessagesResult {
     messageTagNumbers: Map<MessageLike, number>;
     toolCallIndex: ToolCallIndex;
     batch: ToolMutationBatch;
-    hasRecentReduceCall: boolean;
     /** Whether recent assistant messages contain git commit hash patterns */
     hasRecentCommit: boolean;
 }
@@ -349,19 +234,12 @@ function extractToolTagMetadata(part: unknown): {
     };
 }
 
-export interface TagMessagesOptions {
-    /** @internal diagnostic hook used by cache-stability/perf tests. */
-    onToolOwnerFallbackLookup?: (lookup: ToolOwnerFallbackLookup) => void;
-}
-
 export function tagMessages(
     sessionId: string,
     messages: MessageLike[],
     tagger: Tagger,
     db: ContextDatabase,
-    options: TagMessagesOptions = {},
 ): TagMessagesResult {
-    const onToolOwnerFallbackLookup = options.onToolOwnerFallbackLookup;
     const targets = new Map<number, TagTarget>();
     const reasoningByMessage = new Map<MessageLike, ThinkingLikePart[]>();
     const messageTagNumbers = new Map<MessageLike, number>();
@@ -375,10 +253,6 @@ export function tagMessages(
     // from this to find their invocation owner. Cleared at the end of
     // each pass (function-scoped).
     const unpairedInvocations = new Map<string, string[]>();
-    const ownerDerivationCache: ToolOwnerDerivationCache = {
-        candidateOwnersByCallId: new Map(),
-        messageTimesById: new Map(),
-    };
     // Memo: for each part observed, what owner did we derive? Used by
     // the second tool-block (isToolPartWithOutput) so it doesn't re-run
     // FIFO logic and double-pop the queue. Parts are object references
@@ -395,8 +269,6 @@ export function tagMessages(
     );
     logTransformTiming(sessionId, "tag.getSourceContents", tGetSourceContents);
     let precedingThinkingParts: ThinkingLikePart[] = [];
-    let lastReduceMessageIndex = -1;
-    const RECENT_REDUCE_LOOKBACK = 10;
     const COMMIT_LOOKBACK = 5;
     let commitDetected = false;
 
@@ -441,10 +313,6 @@ export function tagMessages(
         for (let partIndex = 0; partIndex < message.parts.length; partIndex += 1) {
             const part = message.parts[partIndex];
 
-            if (isReduceToolPart(part)) {
-                lastReduceMessageIndex = msgIndex;
-            }
-
             const toolObservation = extractToolCallObservation(part);
             if (toolObservation) {
                 // v3.3.1 Layer C: derive composite owner via FIFO pairing.
@@ -454,13 +322,9 @@ export function tagMessages(
                 //   ultimate fallback: result's own message id.
                 const _tDerive = performance.now();
                 const ownerMsgId = deriveToolOwnerMessageId(
-                    sessionId,
-                    db,
                     message,
                     toolObservation,
                     unpairedInvocations,
-                    ownerDerivationCache,
-                    onToolOwnerFallbackLookup,
                 );
                 accDerive += performance.now() - _tDerive;
                 const compositeKey = makeToolCompositeKey(ownerMsgId, toolObservation.callId);
@@ -485,47 +349,6 @@ export function tagMessages(
                     ownerMsgId,
                 );
                 accGetToolTag += performance.now() - _tGetTool;
-
-                // v3.3.1 Layer C: legacy NULL-owner adoption for the
-                // invocation-only path. The second tool block
-                // (isToolPartWithOutput) calls assignToolTag which
-                // adopts NULL-owner rows automatically — but invocation
-                // observations don't pass through that block. Without
-                // this lazy adoption, an invocation-only message with a
-                // pre-existing NULL-owner tag would never bind into
-                // `targets`, so a queued drop op against that tag could
-                // not be detected as "incomplete" (no result) and would
-                // fall through to the "absent" branch in
-                // applyPendingOperations, marking the tag dropped
-                // prematurely.
-                if (existingTagId === undefined) {
-                    const orphan = getNullOwnerToolTag(db, sessionId, toolObservation.callId);
-                    if (orphan !== null) {
-                        const claimed = adoptNullOwnerToolTag(db, orphan.id, ownerMsgId);
-                        if (claimed) {
-                            invalidateCachedCandidateToolOwnersIfNewOwner(
-                                ownerDerivationCache,
-                                sessionId,
-                                toolObservation.callId,
-                                ownerMsgId,
-                            );
-                            tagger.bindToolTag(
-                                sessionId,
-                                toolObservation.callId,
-                                ownerMsgId,
-                                orphan.tagNumber,
-                            );
-                            existingTagId = orphan.tagNumber;
-                        } else {
-                            // Race lost — re-check composite path.
-                            existingTagId = tagger.getToolTag(
-                                sessionId,
-                                toolObservation.callId,
-                                ownerMsgId,
-                            );
-                        }
-                    }
-                }
 
                 // Scoped-load self-heal for the invocation-only path: a tool tag
                 // can exist in the DB under its exact composite (owner, callId)
@@ -692,12 +515,6 @@ export function tagMessages(
                         reasoningTokenCount: reasoningTokens,
                     }),
                 );
-                invalidateCachedCandidateToolOwnersIfNewOwner(
-                    ownerDerivationCache,
-                    sessionId,
-                    toolPart.callID,
-                    ownerMsgId,
-                );
                 accAssignToolTag += performance.now() - _tAssignTool;
                 messageTagNumbers.set(
                     message,
@@ -801,17 +618,12 @@ export function tagMessages(
         );
     }
 
-    const hasRecentReduceCall =
-        lastReduceMessageIndex >= 0 &&
-        messages.length - lastReduceMessageIndex <= RECENT_REDUCE_LOOKBACK;
-
     return {
         targets,
         reasoningByMessage,
         messageTagNumbers,
         toolCallIndex,
         batch,
-        hasRecentReduceCall,
         hasRecentCommit: commitDetected,
     };
 }

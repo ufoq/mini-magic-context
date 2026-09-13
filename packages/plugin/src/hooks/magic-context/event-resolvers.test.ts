@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 
-import { runMigrations } from "../../features/magic-context/migrations";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { updateSessionMeta } from "../../features/magic-context/storage-meta";
 import { Database } from "../../shared/sqlite";
@@ -78,7 +77,6 @@ describe("event-resolvers", () => {
         it("uses a matching persisted usage limit for token thresholds on an unknown model", () => {
             const db = new Database(":memory:");
             initializeDatabase(db);
-            runMigrations(db);
             const sessionId = "ses-usage-limit-threshold";
             const modelKey = "custom-proxy/gemini-agent";
             try {
@@ -110,7 +108,6 @@ describe("event-resolvers", () => {
         it("does not trust a persisted usage limit after the model key changes", () => {
             const db = new Database(":memory:");
             initializeDatabase(db);
-            runMigrations(db);
             const sessionId = "ses-usage-limit-model-switch";
             try {
                 updateSessionMeta(db, sessionId, {

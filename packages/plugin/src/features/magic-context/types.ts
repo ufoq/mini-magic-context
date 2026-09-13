@@ -31,18 +31,8 @@ export interface TagEntry {
     /**
      * For `type: "tool"` tags: the assistant message id where the
      * underlying tool call was invoked. Identity for a tool tag is the
-     * triple `(sessionId, messageId/callID, toolOwnerMessageId)` —
-     * including this field disambiguates collisions when OpenCode's
-     * per-turn callID counter produces the same id across turns.
-     *
-     * NULL on:
-     *   - all `type: "message"` and `type: "file"` tags (not applicable)
-     *   - legacy tool tags written before plugin v0.16.x (the
-     *     tag-owner-fix migration v10). The runtime lazily adopts these
-     *     orphan rows on first observation; backfill populates them at
-     *     plugin startup against the OpenCode DB.
-     *
-     * See plan v3.3.1 in `.alfonso/plans/tag-owner-fix-plan.md`.
+     * triple `(sessionId, messageId/callID, toolOwnerMessageId)` so call-id
+     * collisions across turns remain distinct. NULL for message and file tags.
      */
     toolOwnerMessageId: string | null;
 }
@@ -60,8 +50,6 @@ export interface SessionMeta {
     lastResponseTime: number;
     cacheTtl: string;
     counter: number;
-    lastNudgeTokens: number;
-    lastNudgeBand: "far" | "near" | "urgent" | "critical" | null;
     lastTransformError: string | null;
     isSubagent: boolean;
     lastContextPercentage: number;
@@ -76,33 +64,22 @@ export interface SessionMeta {
     toolCallTokens: number;
     clearedReasoningThroughTag: number;
     toolReclaimWatermark: number;
-    lastTodoState: string;
     cachedM0Bytes: Buffer | null;
     /** Frozen image payload paired atomically with cachedM0Bytes. */
-    cachedM0MuralDataUrl: string | null;
-    cachedM0MuralHash: string | null;
     cachedM1Bytes: Buffer | null;
     cachedM0ProjectMemoryEpoch: number | null;
     cachedM0WorkspaceFingerprint: string | null;
     cachedM0ProjectUserProfileVersion: number | null;
     cachedM0MaxCompartmentSeq: number | null;
     cachedM0MaxMemoryId: number | null;
-    /**
-     * Pi message stable-id scheme version (Pi-only; OpenCode ignores it).
-     * NULL/0 = legacy index-based `pi-msg-*` ids; >=1 = real-SessionEntry-id
-     * scheme. Drives the one-time forced execute+materialize cutover when a
-     * session's stored scheme is below PI_STABLE_ID_SCHEME.
-     */
-    piStableIdScheme: number | null;
     cachedM0MaxMutationId: number | null;
     cachedM0MaxMemoryMutationId: number | null;
     cachedM0ProjectDocsHash: string | null;
     cachedM0MaterializedAt: number | null;
     cachedM0SessionFactsVersion: number | null;
-    cachedM0UpgradeState: string | null;
+    cachedM0CompartmentRenderEpoch: string | null;
     /** HARD-bust markers: provider-side cache-eviction signals (system/tools/model). */
     cachedM0SystemHash: string | null;
-    cachedM0ToolSetHash: string | null;
     cachedM0ModelKey: string | null;
     /** Pi-only HARD marker: project identity captured in the cached m[0] baseline. */
     cachedM0ProjectIdentity: string | null;
@@ -116,11 +93,8 @@ export interface SessionMeta {
     forceEmergencyBypassWindowStart: number;
     forceEmergencyBypassUsed: number;
     /** Set only after an explicit OpenCode dialog choice; keeps the fresh dialog dismissed. */
-    upgradeRemindedAt: number | null;
     /** Most recent push reminder delivery, used for the bounded re-notification cooldown. */
-    upgradeReminderLastSentAt: number | null;
     /** Total delivered upgrade reminders; the hard cap prevents an endless nag loop. */
-    upgradeReminderCount: number;
 }
 
 export type SchedulerDecision = "execute" | "defer";

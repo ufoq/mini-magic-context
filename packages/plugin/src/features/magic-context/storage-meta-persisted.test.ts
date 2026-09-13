@@ -34,7 +34,6 @@ function createTestDb(): Database {
             conversation_tokens INTEGER NOT NULL DEFAULT 0,
             tool_call_tokens INTEGER NOT NULL DEFAULT 0,
             cleared_reasoning_through_tag INTEGER NOT NULL DEFAULT 0,
-            last_todo_state TEXT NOT NULL DEFAULT '',
             deferred_execute_state TEXT
         )
     `);

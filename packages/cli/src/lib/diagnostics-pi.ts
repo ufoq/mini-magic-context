@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
-import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/migrate-config-location";
+import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/paths";
 import { parseCompartmentOutput } from "@magic-context/core/hooks/magic-context/compartment-parser";
 import {
     getMagicContextStorageDir,
@@ -13,7 +13,6 @@ import {
 import { loadPiConfig } from "@magic-context/pi-core/config";
 import { parse as parseJsonc } from "comment-json";
 import {
-    getMagicContextHistorianDir,
     getMagicContextLogPath,
     getPiAgentConfigDir,
     getPiSessionsRoot,
@@ -82,7 +81,7 @@ export interface PiDiagnosticReport {
      * directory path with `/` replaced by `-` and bookended by `--`.
      */
     recentSessions: PiRecentSessionSummary[];
-    /** Historian dumps grouped by project directory + legacy tmp-dir fallback. */
+    /** Historian dumps grouped by project directory. */
     historianDumps: PiHistorianDumpsReport;
 }
 
@@ -125,11 +124,6 @@ export interface PiProjectHistorianBucket {
 
 export interface PiHistorianDumpsReport {
     byProject: PiProjectHistorianBucket[];
-    legacyDumps: {
-        dir: string;
-        count: number;
-        recent: PiHistorianDumpSummary[];
-    };
 }
 
 function getSelfVersion(): string {
@@ -430,17 +424,7 @@ function collectPiHistorianDumps(recentSessions: PiRecentSessionSummary[]): PiHi
         });
     }
 
-    const legacyDir = getMagicContextHistorianDir("pi");
-    const legacyListing = listDumpsInDir(legacyDir, 5);
-
-    return {
-        byProject: [...buckets.values()],
-        legacyDumps: {
-            dir: legacyDir,
-            count: legacyListing.count,
-            recent: legacyListing.recent,
-        },
-    };
+    return { byProject: [...buckets.values()] };
 }
 
 export async function collectDiagnostics(cwd = process.cwd()): Promise<PiDiagnosticReport> {
@@ -453,7 +437,7 @@ export async function collectDiagnostics(cwd = process.cwd()): Promise<PiDiagnos
     const loaded = loadPiConfig({ cwd });
     const storageDirPath = getMagicContextStorageDir();
     const dbPath = join(storageDirPath, "context.db");
-    const logPath = getMagicContextLogPath("pi");
+    const logPath = getMagicContextLogPath();
     const logFileSize = existsSync(logPath) ? statSync(logPath).size : 0;
     const otherPiExtensions = packages
         .filter((entry) => !isPiMagicContextPackageEntry(entry))

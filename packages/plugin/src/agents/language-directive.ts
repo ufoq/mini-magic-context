@@ -96,23 +96,6 @@ export function withContentLanguageDirective(
     return directive ? `${systemPrompt}\n\n${directive}` : systemPrompt;
 }
 
-/** Build migration-specific guidance. Returns "" when unset. */
-export function buildMigrationLanguageDirective(language?: string): string {
-    const target = resolveLanguageName(language);
-    if (!target) return "";
-    return [
-        "## Output language",
-        "",
-        "Preserve each migrated memory's existing language — do NOT translate a memory just because an output language is set. When merging memories written in different languages, use the language of the clearest / source-majority memory; otherwise keep the source phrasing. Only the category re-mapping changes.",
-    ].join("\n");
-}
-
-/** Append migration-specific language guidance to a system prompt. */
-export function withMigrationLanguageDirective(systemPrompt: string, language?: string): string {
-    const directive = buildMigrationLanguageDirective(language);
-    return directive ? `${systemPrompt}\n\n${directive}` : systemPrompt;
-}
-
 /** Build the primary-agent reply directive. Returns "" when unset. */
 export function buildPrimaryLanguageDirective(language?: string): string {
     const target = resolveLanguageName(language);

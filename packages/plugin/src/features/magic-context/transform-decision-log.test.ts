@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import { __test, TRANSFORM_DECISIONS_RETENTION } from "./transform-decision-log";
 
@@ -17,7 +16,6 @@ beforeEach(() => {
     dbPath = join(dir, "context.db");
     db = new Database(dbPath);
     initializeDatabase(db);
-    runMigrations(db);
     __test.reset();
 });
 

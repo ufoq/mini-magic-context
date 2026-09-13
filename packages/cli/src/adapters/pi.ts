@@ -136,7 +136,7 @@ export class PiAdapter implements HarnessAdapter {
     }
 
     getLogPath(): string {
-        return getMagicContextLogPath("pi");
+        return getMagicContextLogPath();
     }
 
     getInstalledPluginVersion(): string | null {

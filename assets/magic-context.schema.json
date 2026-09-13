@@ -413,26 +413,6 @@
       "description": "When Magic Context cannot operate (schema fence mismatch, storage open/migration failure), block the primary-session prompt with a loud recovery error instead of silently degrading to native compaction. Default true. Set false only to restore the old degrade-silently behavior (not recommended). USER-LEVEL ONLY — ignored in project config for security. Requires a restart.",
       "type": "boolean"
     },
-    "todowrite": {
-      "default": {
-        "enabled": true,
-        "overlay": true
-      },
-      "description": "Pi-only todowrite tool and overlay controls. Pi registers tools and widgets at extension boot, so changing this after /cd requires /reload or restart.",
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "default": true,
-          "description": "Register Magic Context's todowrite task-list tool. Disable it if you use another todo extension.",
-          "type": "boolean"
-        },
-        "overlay": {
-          "default": true,
-          "description": "Pi only: show the persistent todo overlay above the editor while tasks are active.",
-          "type": "boolean"
-        }
-      }
-    },
     "pi": {
       "description": "Pi-only child-process extension controls. This setting is user-level only; project configuration cannot choose which extensions a user's subagent children load.",
       "type": "object",
@@ -449,7 +429,7 @@
     },
     "smart_drops": {
       "default": false,
-      "description": "Content-aware reclaim of provably-superseded tool output, layered on the existing execute-pass auto-drop. When on: superseded todowrite (keep newest 1), spent reduction calls (keep newest 5), and zero-value meta (bash_status, bash_kill) outputs are dropped; older edits to a file are compressed to a filePath-preserving marker while the newest edit per file stays full. Only acts on passes already busting the cache, so it never originates a cache bust. Honors the protected-tag reserve. Experimental: opt-in, default off until cache stability is proven; when off the wire is byte-identical to the positional-only reclaim. Requires a restart.",
+      "description": "Content-aware reclaim of provably-superseded tool output, layered on the existing execute-pass auto-drop. When on: zero-value meta (bash_status, bash_kill) outputs are dropped; older edits to a file are compressed to a filePath-preserving marker while the newest edit per file stays full. Only acts on passes already busting the cache, so it never originates a cache bust. Honors the protected-tag reserve. Experimental: opt-in, default off until cache stability is proven; when off the wire is byte-identical to the positional-only reclaim. Requires a restart.",
       "type": "boolean"
     },
     "caveman_text_compression": {

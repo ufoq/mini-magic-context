@@ -16,7 +16,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import type { Database as DatabaseType } from "../../shared/sqlite";
 import { Database } from "../../shared/sqlite";
-import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import {
     deriveTagLoadFloor,
@@ -30,7 +29,6 @@ import { createTagger } from "./tagger";
 function openTestDb(): DatabaseType {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

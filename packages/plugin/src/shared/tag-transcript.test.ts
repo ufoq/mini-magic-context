@@ -1,7 +1,6 @@
 /// <reference types="bun-types" />
 
 import { describe, expect, it } from "bun:test";
-import { runMigrations } from "../features/magic-context/migrations";
 import type { ContextDatabase } from "../features/magic-context/storage";
 import { initializeDatabase } from "../features/magic-context/storage-db";
 import type { Tagger, ToolTagAccounting } from "../features/magic-context/tagger";
@@ -458,7 +457,6 @@ describe("tagTranscript tool aggregation", () => {
         const runScenario = (reuse: boolean): { before: AccountingRow; after: AccountingRow } => {
             const db = new Database(":memory:");
             initializeDatabase(db);
-            runMigrations(db);
             const sessionId = reuse ? "session-grown-reuse" : "session-grown-derive";
             const tagger = createTagger();
             tagger.initFromDb(sessionId, db);

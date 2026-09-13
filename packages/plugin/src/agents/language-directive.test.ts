@@ -2,12 +2,10 @@ import { describe, expect, it } from "bun:test";
 
 import {
     buildContentLanguageDirective,
-    buildMigrationLanguageDirective,
     buildPrimaryLanguageDirective,
     isValidLanguageCode,
     resolveLanguageName,
     withContentLanguageDirective,
-    withMigrationLanguageDirective,
 } from "./language-directive";
 
 const EXHAUSTIVE_STRUCTURAL_TOKENS = [
@@ -100,15 +98,6 @@ describe("language directives", () => {
         expect(directive).not.toContain("directly quoted user text");
     });
 
-    it("emits the migration preserve-language variant", () => {
-        const directive = buildMigrationLanguageDirective("pt");
-        expect(directive).toContain("Preserve each migrated memory's existing language");
-        expect(directive).toContain(
-            "do NOT translate a memory just because an output language is set",
-        );
-        expect(directive).not.toContain("Write human-readable prose you author");
-    });
-
     it("emits the primary one-liner with the resolved name", () => {
         expect(buildPrimaryLanguageDirective("zh")).toBe(
             "Use Chinese (中文) for your natural-language replies to the user unless the user explicitly asks for another language. Keep code, identifiers, file paths, commands, logs, and quoted text verbatim.",
@@ -119,10 +108,8 @@ describe("language directives", () => {
         expect(buildContentLanguageDirective()).toBe("");
         expect(buildContentLanguageDirective("   ")).toBe("");
         expect(buildContentLanguageDirective("Turkish")).toBe(""); // full name not a code
-        expect(buildMigrationLanguageDirective()).toBe("");
         expect(buildPrimaryLanguageDirective()).toBe("");
         expect(withContentLanguageDirective("base", "")).toBe("base");
-        expect(withMigrationLanguageDirective("base", " ")).toBe("base");
         expect(withContentLanguageDirective("base", "zz")).toBe("base"); // unknown code
     });
 

@@ -1,23 +1,8 @@
 /**
- * Shared deterministic decay renderer (v2). Used by BOTH OpenCode
- * (inject-compartments.ts) and Pi (inject-compartments-pi.ts) so the two
- * harnesses render compartment history byte-identically from the same validated
- * decay curve. This is the single render-side implementation of the curve in
- * `decay-curve.ts`; neither harness may keep a private/approximate copy.
+ * Deterministic Pi compartment decay renderer.
  *
- * Responsibilities:
- *  - Pick a tier per compartment from age + importance + budget pressure
- *    (decay-curve.ts), with budget pressure computed ONCE per pass.
- *  - Render the chosen paraphrase tier (P1..P4); P5 = archived (omitted).
- *  - Legacy (pre-v2, flat-content) compartments: no paraphrase columns, so the
- *    initial tier is P3 when the body has a `U:` line else P4, and the body is
- *    truncated `content`.
- *  - Demote oldest-first under a hard token budget (the curve already fits the
- *    budget, but this guards against estimate drift / very tight budgets).
- *
- * v2 faithful facts: this renderer NEVER emits a <session_facts> block. Facts
- * are promoted to project memory and render via <project-memory>. Callers pass
- * the memory block separately; session facts are not a render input.
+ * It selects a paraphrase tier from age, importance, and budget pressure, then
+ * demotes oldest-first if necessary to satisfy the hard history budget.
  */
 
 import { computeBudgetPressure, renderedTier, TIER_COST, type Tier } from "./decay-curve";
@@ -34,12 +19,11 @@ export interface DecayRenderCompartment {
     content: string;
     startDate?: string | null;
     endDate?: string | null;
-    p1?: string | null;
+    p1: string;
     p2?: string | null;
     p3?: string | null;
     p4?: string | null;
     importance?: number | null;
-    legacy?: number | null;
 }
 
 function escapeXmlContent(s: string): string {
@@ -71,20 +55,6 @@ function guardCompartmentBody(body: string): string {
     return body.replace(/^## /gm, " ## ");
 }
 
-/**
- * A row is v2-tiered ONLY when `p1` is a non-empty string. This matches the
- * compartment parser's contract (compartment-parser.ts: a row is tiered iff
- * `p1.length > 0`) and the NEEDS_UPGRADE predicate (`legacy=1 OR p1 IS NULL OR
- * p1=''`). Rows with empty/null `p1` — legacy rows, or the malformed pseudo-v2
- * state left by an interrupted upgrade (`legacy=0` but tiers never populated) —
- * must render via flat `content`, never as an empty tier body. Note a VALID v2
- * row can still have an empty `p4` (a legitimate title-only heading); that's
- * handled by the tier-body path, not here, because such a row has a non-empty `p1`.
- */
-function isTieredRow(c: DecayRenderCompartment): boolean {
-    return typeof c.p1 === "string" && c.p1.length > 0;
-}
-
 /** v2 paraphrase tier body with denser-tier and content fallbacks. */
 function tierBody(c: DecayRenderCompartment, tier: number): string {
     const tiers = [c.p1, c.p2, c.p3, c.p4];
@@ -95,19 +65,6 @@ function tierBody(c: DecayRenderCompartment, tier: number): string {
         if (typeof t === "string" && t.length > 0) return t.trim();
     }
     return (c.content ?? "").trim();
-}
-
-/** Legacy flat-content tier rendering (no paraphrase columns). */
-function legacyBodyForTier(content: string, tier: number): string {
-    if (tier <= 1) return content;
-    if (tier === 2)
-        return content.length > 1_200 ? `${content.slice(0, 1_200).trimEnd()}…` : content;
-    return content.length > 420 ? `${content.slice(0, 420).trimEnd()}…` : content;
-}
-
-/** Legacy compartments start at P3 (has a `U:` line) or P4 (otherwise). */
-function legacyTier(c: DecayRenderCompartment): Tier {
-    return /^U:/m.test(c.content) ? 3 : 4;
 }
 
 /**
@@ -123,17 +80,6 @@ function renderOneCompartment(c: DecayRenderCompartment, tier: number): string {
     if (tier >= 5) return ""; // archived
     const heading = compartmentHeading(c);
 
-    // Legacy rows AND malformed pseudo-v2 rows (legacy=0 but no usable p1, e.g.
-    // an interrupted upgrade) render via flat `content` — never as an empty
-    // title-only heading. Without this, a `legacy=0, p1=''` row silently drops
-    // the compartment body from m[0]/m[1].
-    if (c.legacy === 1 || !isTieredRow(c)) {
-        const flat = (c.content ?? "").trim();
-        if (tier >= 4 || flat.length === 0) return heading;
-        const body = guardCompartmentBody(escapeXmlContent(legacyBodyForTier(flat, tier)));
-        return `${heading}\n${body}`;
-    }
-
     const body = tierBody(c, tier);
     if (body.length === 0) return heading;
     return `${heading}\n${guardCompartmentBody(escapeXmlContent(body))}`;
@@ -148,35 +94,17 @@ function computeTiers(
     compartments: DecayRenderCompartment[],
     historyBudgetTokens: number,
 ): number[] {
-    const v2Compartments = compartments
-        .map((c, originalIndex) => ({ c, originalIndex }))
-        .filter(({ c }) => c.legacy !== 1);
-    const v2Total = v2Compartments.length;
-    const v2IndexByOriginalIndex = new Map<number, number>();
-
-    // Legacy rows are governed by deterministic truncation, not the decay
-    // curve. Including them would let non-rendered curve cost from unrelated
-    // rows demote v2 paraphrases, breaking budget honesty for mixed sessions.
-    const curveInputs = v2Compartments.map(({ c, originalIndex }, v2Ordinal) => {
-        const curveIndex = v2Total - v2Ordinal; // 1-based from newest v2 row
-        v2IndexByOriginalIndex.set(originalIndex, curveIndex);
-        return {
-            index: curveIndex,
-            importance: Math.max(1, Math.min(100, c.importance ?? 50)),
-        };
-    });
+    const total = compartments.length;
+    const curveInputs = compartments.map((c, index) => ({
+        index: total - index,
+        importance: Math.max(1, Math.min(100, c.importance ?? 50)),
+    }));
     const pressure =
         historyBudgetTokens > 0 ? computeBudgetPressure(curveInputs, historyBudgetTokens) : 1;
 
-    return compartments.map((c, index) => {
-        if (c.legacy === 1) return legacyTier(c);
-        return renderedTier(
-            v2IndexByOriginalIndex.get(index) ?? 1,
-            c.importance ?? 50,
-            pressure,
-            0,
-        );
-    });
+    return compartments.map((c, index) =>
+        renderedTier(total - index, c.importance ?? 50, pressure, 0),
+    );
 }
 
 /**

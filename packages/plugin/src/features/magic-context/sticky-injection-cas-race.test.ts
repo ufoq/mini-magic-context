@@ -5,14 +5,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "../../shared/sqlite";
-import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import { appendAutoSearchHintDecision } from "./storage-meta-persisted";
 
 function createRaceDb(path: string): Database {
     const db = new Database(path);
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

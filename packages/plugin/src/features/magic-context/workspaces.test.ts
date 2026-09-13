@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import {
     bumpEpochsForWorkspaceMembers,
@@ -14,7 +13,6 @@ import {
 function openDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

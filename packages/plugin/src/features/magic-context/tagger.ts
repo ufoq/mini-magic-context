@@ -1,10 +1,8 @@
 import { getHarness } from "../../shared/harness";
 import type { Database, Statement as PreparedStatement } from "../../shared/sqlite";
 import {
-    adoptNullOwnerToolTag,
     backfillTagTokenCounts,
     getMaxTagNumberBySession,
-    getNullOwnerToolTag,
     getTagNumberByMessageId,
     getToolTagNumberByOwner,
     insertTag,
@@ -582,44 +580,6 @@ export function createTagger(): Tagger {
             syncCounterAtLeast(sessionId, db, dbHit);
             backfillToolTokensIfNull(db, sessionId, dbHit, tokenThunk);
             return dbHit;
-        }
-
-        // Lazy adoption: legacy NULL-owner row exists for this callId and
-        // is up for grabs. Try to atomically claim it.
-        //
-        // Loop: backfill (Layer B) may finish writing an owner between
-        // our SELECT and UPDATE. The NULL-guarded UPDATE catches that
-        // race; if the UPDATE matches zero rows we re-check the composite
-        // fast path (which may now hit) and on miss try the next NULL row.
-        // Bounded by MAX_TAG_ALLOC_RETRIES so we never loop unboundedly
-        // even under pathological concurrent-writer interleavings.
-        for (let attempt = 0; attempt < MAX_TAG_ALLOC_RETRIES; attempt += 1) {
-            const orphan = getNullOwnerToolTag(db, sessionId, callId);
-            if (orphan === null) break;
-
-            const claimed = adoptNullOwnerToolTag(db, orphan.id, ownerMsgId);
-            if (claimed) {
-                sessionAssignments.set(compositeKey, orphan.tagNumber);
-                syncCounterAtLeast(sessionId, db, orphan.tagNumber);
-                backfillToolTokensIfNull(db, sessionId, orphan.tagNumber, tokenThunk);
-                return orphan.tagNumber;
-            }
-
-            // Race lost: re-check composite fast path before allocating
-            // fresh — another writer may have just claimed the same row
-            // for the same owner.
-            const recheck = getToolTagNumberByOwner(db, sessionId, callId, ownerMsgId);
-            if (recheck !== null) {
-                sessionAssignments.set(compositeKey, recheck);
-                syncCounterAtLeast(sessionId, db, recheck);
-                backfillToolTokensIfNull(db, sessionId, recheck, tokenThunk);
-                return recheck;
-            }
-            // Otherwise loop: there may be more NULL-owner rows for this
-            // callId (collision deviation: when legacy data has multiple
-            // NULL-owner rows for the same callId, partial UNIQUE forced
-            // only the lowest tag_number row to be adopted by backfill;
-            // remaining rows stay NULL and we get to adopt one here).
         }
 
         // Fresh allocation

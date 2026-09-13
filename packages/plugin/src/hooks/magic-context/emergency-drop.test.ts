@@ -39,7 +39,7 @@ function tag(
 
 describe("resolveToolTier", () => {
     it("classifies T1 navigation/structure tools", () => {
-        for (const name of ["read", "todowrite", "task", "aft_outline", "aft_zoom"]) {
+        for (const name of ["read", "task", "aft_outline", "aft_zoom"]) {
             expect(resolveToolTier(name)).toBe(1);
         }
     });

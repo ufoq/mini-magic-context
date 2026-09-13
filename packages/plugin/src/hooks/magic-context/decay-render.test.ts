@@ -7,16 +7,6 @@ import {
 } from "./decay-render";
 import { estimateTokens } from "./read-session-formatting";
 
-function legacyCompartment(i: number): DecayRenderCompartment {
-    return {
-        startMessage: i,
-        endMessage: i,
-        title: `legacy ${i}`,
-        content: "legacy summary",
-        legacy: 1,
-    };
-}
-
 function productionShapeCompartments(): DecayRenderCompartment[] {
     const filler = "summary code decision result ";
     return Array.from({ length: 52 }, (_, i) => ({
@@ -76,34 +66,6 @@ function tiersFromRenderedBody(body: string, compartmentCount: number): number[]
 }
 
 describe("decay-render", () => {
-    it("excludes legacy rows from v2 pressure and age indexing", () => {
-        const v2: DecayRenderCompartment = {
-            startMessage: 1,
-            endMessage: 1,
-            title: "v2 oldest",
-            content: "content fallback",
-            p1: "P1_KEEP",
-            p2: "P2_LOWER",
-            p3: "P3_LOWER",
-            p4: "P4_LOWER",
-            importance: 50,
-        };
-        const compartments = [
-            v2,
-            ...Array.from({ length: 80 }, (_, i) => legacyCompartment(i + 2)),
-        ];
-
-        const rendered = renderDecayedCompartments({
-            compartments,
-            historyBudgetTokens: 3000,
-        });
-
-        expect(rendered).toContain("P1_KEEP");
-        expect(rendered).not.toContain("P2_LOWER");
-        expect(rendered).not.toContain("P3_LOWER");
-        expect(rendered).not.toContain("P4_LOWER");
-    });
-
     it("renders tiered, legacy, and title-only compartments as markdown headings", () => {
         const base: DecayRenderCompartment = {
             startMessage: 1,
@@ -121,26 +83,6 @@ describe("decay-render", () => {
         expect(renderCompartmentAtTier({ ...base, p1: "tiered body", p4: "", legacy: 0 }, 4)).toBe(
             "## 1-5 · Rendered arc",
         );
-    });
-
-    it("renders a malformed pseudo-v2 row via flat content, not a title-only heading", () => {
-        const pseudoV2: DecayRenderCompartment = {
-            startMessage: 1,
-            endMessage: 5,
-            title: "pseudo v2",
-            content: "PSEUDO_BODY_KEEP",
-            p1: "",
-            p2: "",
-            p3: "",
-            p4: "",
-            legacy: 0,
-            importance: 90,
-        };
-        const rendered = renderDecayedCompartments({
-            compartments: [pseudoV2],
-            historyBudgetTokens: 100_000,
-        });
-        expect(rendered).toBe("## 1-5 · pseudo v2\nPSEUDO_BODY_KEEP");
     });
 
     it("compresses same-day, same-month, and full date ranges", () => {

@@ -53,7 +53,6 @@ describe("mini database lifecycle", () => {
             "compression_depth",
             "embedding_identity_active",
             "embedding_registrations",
-            "git_sweep_coordinator",
             "m0_mutation_log",
             "message_history_fts",
             "message_history_fts_config",
@@ -89,7 +88,10 @@ describe("mini database lifecycle", () => {
         expect(metaColumns.map((column) => column.name)).toEqual(
             expect.arrayContaining(["session_id", "harness", "counter", "compartment_in_progress"]),
         );
-        expect(db.prepare("SELECT version FROM mini_schema").get()).toEqual({ version: 1 });
+        expect(db.prepare("SELECT version, schema_fingerprint FROM mini_schema").get()).toEqual({
+            version: 1,
+            schema_fingerprint: "mini-v1-clean-start",
+        });
     });
 
     test("pending_session_cleanup carries the columns live cleanup SQL writes", () => {
@@ -109,35 +111,26 @@ describe("mini database lifecycle", () => {
         expect(retryPendingSessionCleanups(db).attempted).toBeGreaterThan(0);
     });
 
-    test("repairs a legacy stale pending_session_cleanup table on open", () => {
+    test("refuses a version-only database without modifying it", () => {
         const dbPath = createDatabasePath();
-        const legacy = new Database(dbPath);
-        legacy.exec(`
+        const existing = new Database(dbPath);
+        existing.exec(`
             CREATE TABLE mini_schema (version INTEGER PRIMARY KEY CHECK(version = 1));
             INSERT INTO mini_schema(version) VALUES (1);
-            CREATE TABLE pending_session_cleanup (session_id TEXT PRIMARY KEY, marked_at INTEGER NOT NULL, retry_after INTEGER NOT NULL DEFAULT 0);
-            INSERT INTO pending_session_cleanup (session_id, marked_at) VALUES ('legacy-ses', 4242);
+            CREATE TABLE sentinel (value TEXT NOT NULL);
+            INSERT INTO sentinel(value) VALUES ('unchanged');
         `);
-        legacy.close();
+        existing.close();
 
-        const db = requireDatabase(openDatabase(dbPath));
-        const columns = (
-            db.prepare("PRAGMA table_info(pending_session_cleanup)").all() as Array<{
-                name: string;
-            }>
-        ).map((column) => column.name);
-        expect(columns).toEqual(
-            expect.arrayContaining(["session_id", "harness", "requested_at", "last_attempt_at"]),
-        );
-        expect(columns).not.toContain("marked_at");
-        // The legacy row survives the rebuild with its timestamp preserved.
-        expect(
-            db
-                .prepare(
-                    "SELECT session_id, harness, requested_at FROM pending_session_cleanup WHERE session_id = ?",
-                )
-                .get("legacy-ses"),
-        ).toEqual({ session_id: "legacy-ses", harness: "opencode", requested_at: 4242 });
+        expect(openDatabase(dbPath)).toBeNull();
+        const unchanged = new Database(dbPath);
+        try {
+            expect(unchanged.prepare("SELECT value FROM sentinel").get()).toEqual({
+                value: "unchanged",
+            });
+        } finally {
+            closeQuietly(unchanged);
+        }
     });
 
     test("persists historian and tag state, clears the session, then reopens", async () => {
@@ -183,11 +176,11 @@ describe("mini database lifecycle", () => {
         ).toEqual({ count: 0 });
     });
 
-    test("refuses an unmarked legacy database without changing it", () => {
+    test("refuses an unmarked database without changing it", () => {
         const dbPath = createDatabasePath();
-        const legacy = new Database(dbPath);
-        legacy.exec("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT)");
-        closeQuietly(legacy);
+        const existing = new Database(dbPath);
+        existing.exec("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT)");
+        closeQuietly(existing);
 
         expect(openDatabase(dbPath)).toBeNull();
         const unchanged = new Database(dbPath);

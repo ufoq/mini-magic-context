@@ -23,7 +23,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Database as DatabaseType } from "../../shared/sqlite";
 import { Database } from "../../shared/sqlite";
-import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import { getMaxTagNumberBySession, getTagNumberByMessageId } from "./storage-tags";
 import { createTagger } from "./tagger";
@@ -31,7 +30,6 @@ import { createTagger } from "./tagger";
 function openTestDb(): DatabaseType {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 
@@ -44,7 +42,6 @@ function openFileBackedTestDb(filePath: string): DatabaseType {
     const db = new Database(filePath);
     db.exec("PRAGMA journal_mode = WAL");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 
@@ -256,7 +253,6 @@ describe("migration v6 — counter heal", () => {
         // succeed. Easiest path: run migrations once normally, then
         // delete v6's record so the heal logic is forced to run again on
         // the already-divergent state we'll build below.
-        runMigrations(db);
         // Build a session with counter=2, max(tag_number)=5
         db.prepare(
             "INSERT INTO session_meta (session_id, counter, last_response_time, cache_ttl) VALUES (?, ?, 0, '5m')",
@@ -306,7 +302,6 @@ describe("migration v6 — counter heal", () => {
         const db = openTestDb();
 
         //#when — running migrations again is a no-op.
-        runMigrations(db);
 
         //#then — schema_migrations only has each version once.
         const v6Count = db

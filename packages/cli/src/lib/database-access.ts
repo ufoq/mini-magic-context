@@ -1,11 +1,8 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
-    ensureContextStoreUuid,
-    getContextStoreUuid,
-} from "@magic-context/core/features/magic-context/context-authority";
-import {
     getPersistedSchemaVersion as getCorePersistedSchemaVersion,
+    isCurrentMiniDatabase,
     LATEST_SUPPORTED_VERSION,
 } from "@magic-context/core/features/magic-context/storage-db";
 import type { Database as DatabaseType } from "@magic-context/core/shared/sqlite";
@@ -22,7 +19,7 @@ export class UnsupportedSchemaVersionError extends Error {
 
     constructor(path: string, persistedVersion: number, supportedVersion: number) {
         super(
-            `Refusing to open ${path}: database schema v${persistedVersion} is newer than this CLI supports (max v${supportedVersion}). Update Magic Context before using this database.`,
+            `Refusing to open ${path}: database schema v${persistedVersion} does not match required Mini schema v${supportedVersion}. Start with a fresh database.`,
         );
         this.name = "UnsupportedSchemaVersionError";
         this.path = path;
@@ -30,29 +27,6 @@ export class UnsupportedSchemaVersionError extends Error {
         this.supportedVersion = supportedVersion;
     }
 }
-
-export class OutdatedSchemaVersionError extends Error {
-    readonly path: string;
-    readonly persistedVersion: number;
-    readonly minimumSupportedVersion: number;
-
-    constructor(path: string, persistedVersion: number, minimumSupportedVersion: number) {
-        super(
-            `Refusing to mutate ${path}: database schema v${persistedVersion} is behind this CLI's schema floor v${minimumSupportedVersion}. Run a session so the plugin can upgrade it, then retry.`,
-        );
-        this.name = "OutdatedSchemaVersionError";
-        this.path = path;
-        this.persistedVersion = persistedVersion;
-        this.minimumSupportedVersion = minimumSupportedVersion;
-    }
-}
-
-/**
- * A CLI write must not make a live database newer than a running plugin can
- * read. The current checkout is therefore the mutation floor; read-only
- * diagnostics may still inspect older supported schemas without changing them.
- */
-export const CLI_SCHEMA_FLOOR_VERSION = LATEST_SUPPORTED_VERSION;
 
 /**
  * Opens an existing SQLite file without silently creating an empty replacement.
@@ -90,42 +64,23 @@ export function openExistingDatabase(
 
 /**
  * Applies the shared schema fence immediately after opening context.db. No query
- * or migration write may run until this check accepts the persisted version.
+ * or write may run until this check accepts the current schema identity.
  */
 export function openExistingContextDatabase(
     path: string,
-    options: { readonly: boolean; minimumSupportedVersion?: number },
+    options: { readonly: boolean },
 ): DatabaseType | null {
     const db = openExistingDatabase(path, options);
     if (db === null) return null;
 
     try {
         const persistedVersion = getPersistedSchemaVersion(db);
-        if (persistedVersion > LATEST_SUPPORTED_VERSION) {
+        if (!isCurrentMiniDatabase(db)) {
             throw new UnsupportedSchemaVersionError(
                 path,
                 persistedVersion,
                 LATEST_SUPPORTED_VERSION,
             );
-        }
-        const minimumSupportedVersion =
-            options.minimumSupportedVersion ??
-            (options.readonly ? undefined : CLI_SCHEMA_FLOOR_VERSION);
-        if (minimumSupportedVersion !== undefined && persistedVersion < minimumSupportedVersion) {
-            throw new OutdatedSchemaVersionError(path, persistedVersion, minimumSupportedVersion);
-        }
-        if (!options.readonly) {
-            // The CLI has no module route during database open. It can mint the
-            // local store identity, but REGRESSED detection remains a later
-            // module-reconciliation step when the module becomes reachable.
-            const hasIdentityTable = Boolean(
-                db
-                    .prepare(
-                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'context_store_meta'",
-                    )
-                    .get(),
-            );
-            if (hasIdentityTable && !getContextStoreUuid(db)) ensureContextStoreUuid(db);
         }
         return db;
     } catch (error) {
@@ -135,15 +90,11 @@ export function openExistingContextDatabase(
 }
 
 /**
- * Opens a live context database for a CLI mutation without running schema
- * migrations. The plugin boot path owns schema upgrades; while the plugin is
- * running, it may enforce an older maximum schema version.
+ * Opens a live, exact-current context database for a CLI mutation without
+ * initializing or modifying its schema.
  */
 export function openExistingContextDatabaseForMutation(path: string): DatabaseType | null {
-    return openExistingContextDatabase(path, {
-        readonly: false,
-        minimumSupportedVersion: CLI_SCHEMA_FLOOR_VERSION,
-    });
+    return openExistingContextDatabase(path, { readonly: false });
 }
 
 /** Create a consistent SQLite snapshot, including committed WAL contents. */

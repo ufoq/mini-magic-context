@@ -63,21 +63,6 @@ function ids(ops: ReturnType<typeof buildSupersessionReclaimOps>): number[] {
 }
 
 describe("buildSupersessionReclaimOps", () => {
-    it("keeps newest 1 todowrite, drops older ones", () => {
-        const db = freshDb();
-        insertTag(db, SES, "c1", "tool", 100, 1, 0, "todowrite");
-        insertTag(db, SES, "c2", "tool", 100, 2, 0, "todowrite");
-        insertTag(db, SES, "c3", "tool", 100, 3, 0, "todowrite");
-        const targets = new Map<number, TagTarget>([
-            [1, target()],
-            [2, target()],
-            [3, target()],
-        ]);
-        const ops = buildSupersessionReclaimOps({ db, sessionId: SES, targets });
-        // newest (3) kept; 1 and 2 dropped.
-        expect(ids(ops)).toEqual([1, 2]);
-    });
-
     it("keeps newest 5 ctx_reduce, drops older ones", () => {
         const db = freshDb();
         const targets = new Map<number, TagTarget>();

@@ -8,8 +8,6 @@ export interface SessionMetaRow {
     last_response_time: number;
     cache_ttl: string;
     counter: number;
-    last_nudge_tokens: number;
-    last_nudge_band: string;
     last_transform_error: string;
     is_subagent: number;
     last_context_percentage: number;
@@ -26,10 +24,7 @@ export interface SessionMetaRow {
     tool_call_tokens: number;
     cleared_reasoning_through_tag: number;
     tool_reclaim_watermark: number | null;
-    last_todo_state: string;
     cached_m0_bytes: Buffer | Uint8Array | null;
-    cached_m0_mural_data_url: string | null;
-    cached_m0_mural_hash: string | null;
     cached_m1_bytes: Buffer | Uint8Array | null;
     cached_m0_project_memory_epoch: number | null;
     cached_m0_workspace_fingerprint: string | null;
@@ -41,9 +36,8 @@ export interface SessionMetaRow {
     cached_m0_project_docs_hash: string | null;
     cached_m0_materialized_at: number | null;
     cached_m0_session_facts_version: number | null;
-    cached_m0_upgrade_state: string | null;
+    cached_m0_compartment_render_epoch: string | null;
     cached_m0_system_hash: string | null;
-    cached_m0_tool_set_hash: string | null;
     cached_m0_model_key: string | null;
     cached_m0_project_identity: string | null;
     last_observed_model_key: string | null;
@@ -57,10 +51,6 @@ export interface SessionMetaRow {
     force_emergency_bypass_used: number | null;
     emergency_drain_active: number | null;
     historian_drain_failure_at: number | null;
-    upgrade_reminded_at: number | null;
-    upgrade_reminder_last_sent_at: number | null;
-    upgrade_reminder_count: number | null;
-    pi_stable_id_scheme: number | null;
 }
 
 export const SESSION_META_SELECT_COLUMNS = [
@@ -68,8 +58,6 @@ export const SESSION_META_SELECT_COLUMNS = [
     "last_response_time",
     "cache_ttl",
     "counter",
-    "last_nudge_tokens",
-    "last_nudge_band",
     "last_transform_error",
     "is_subagent",
     "last_context_percentage",
@@ -84,10 +72,7 @@ export const SESSION_META_SELECT_COLUMNS = [
     "tool_call_tokens",
     "cleared_reasoning_through_tag",
     "tool_reclaim_watermark",
-    "last_todo_state",
     "cached_m0_bytes",
-    "cached_m0_mural_data_url",
-    "cached_m0_mural_hash",
     "cached_m1_bytes",
     "cached_m0_project_memory_epoch",
     "cached_m0_workspace_fingerprint",
@@ -99,9 +84,8 @@ export const SESSION_META_SELECT_COLUMNS = [
     "cached_m0_project_docs_hash",
     "cached_m0_materialized_at",
     "cached_m0_session_facts_version",
-    "cached_m0_upgrade_state",
+    "cached_m0_compartment_render_epoch",
     "cached_m0_system_hash",
-    "cached_m0_tool_set_hash",
     "cached_m0_model_key",
     "cached_m0_project_identity",
     "last_observed_model_key",
@@ -115,18 +99,12 @@ export const SESSION_META_SELECT_COLUMNS = [
     "force_emergency_bypass_used",
     "emergency_drain_active",
     "historian_drain_failure_at",
-    "upgrade_reminded_at",
-    "upgrade_reminder_last_sent_at",
-    "upgrade_reminder_count",
-    "pi_stable_id_scheme",
 ] as const;
 
 export const META_COLUMNS: Record<string, string> = {
     lastResponseTime: "last_response_time",
     cacheTtl: "cache_ttl",
     counter: "counter",
-    lastNudgeTokens: "last_nudge_tokens",
-    lastNudgeBand: "last_nudge_band",
     lastTransformError: "last_transform_error",
     isSubagent: "is_subagent",
     lastContextPercentage: "last_context_percentage",
@@ -141,10 +119,7 @@ export const META_COLUMNS: Record<string, string> = {
     toolCallTokens: "tool_call_tokens",
     clearedReasoningThroughTag: "cleared_reasoning_through_tag",
     toolReclaimWatermark: "tool_reclaim_watermark",
-    lastTodoState: "last_todo_state",
     cachedM0Bytes: "cached_m0_bytes",
-    cachedM0MuralDataUrl: "cached_m0_mural_data_url",
-    cachedM0MuralHash: "cached_m0_mural_hash",
     cachedM1Bytes: "cached_m1_bytes",
     cachedM0ProjectMemoryEpoch: "cached_m0_project_memory_epoch",
     cachedM0WorkspaceFingerprint: "cached_m0_workspace_fingerprint",
@@ -156,9 +131,8 @@ export const META_COLUMNS: Record<string, string> = {
     cachedM0ProjectDocsHash: "cached_m0_project_docs_hash",
     cachedM0MaterializedAt: "cached_m0_materialized_at",
     cachedM0SessionFactsVersion: "cached_m0_session_facts_version",
-    cachedM0UpgradeState: "cached_m0_upgrade_state",
+    cachedM0CompartmentRenderEpoch: "cached_m0_compartment_render_epoch",
     cachedM0SystemHash: "cached_m0_system_hash",
-    cachedM0ToolSetHash: "cached_m0_tool_set_hash",
     cachedM0ModelKey: "cached_m0_model_key",
     cachedM0ProjectIdentity: "cached_m0_project_identity",
     lastObservedModelKey: "last_observed_model_key",
@@ -172,16 +146,14 @@ export const META_COLUMNS: Record<string, string> = {
     forceEmergencyBypassUsed: "force_emergency_bypass_used",
     emergencyDrainActive: "emergency_drain_active",
     historianDrainFailureAt: "historian_drain_failure_at",
-    upgradeRemindedAt: "upgrade_reminded_at",
-    upgradeReminderLastSentAt: "upgrade_reminder_last_sent_at",
-    upgradeReminderCount: "upgrade_reminder_count",
-    piStableIdScheme: "pi_stable_id_scheme",
 };
 
 export const BOOLEAN_META_KEYS = new Set(["isSubagent", "compartmentInProgress", "cacheAlertSent"]);
 
 function ensureSessionFactsVersionColumn(db: Database): void {
-    const rows = db.prepare("PRAGMA table_info(session_meta)").all() as Array<{ name?: string }>;
+    const rows = db.prepare("PRAGMA table_info(session_meta)").all() as Array<{
+        name?: string;
+    }>;
     if (!rows.some((row) => row.name === "session_facts_version")) {
         db.exec(
             "ALTER TABLE session_meta ADD COLUMN session_facts_version INTEGER NOT NULL DEFAULT 0",
@@ -191,8 +163,6 @@ function ensureSessionFactsVersionColumn(db: Database): void {
 
 export const NULL_BIND_META_KEYS = new Set([
     "cachedM0Bytes",
-    "cachedM0MuralDataUrl",
-    "cachedM0MuralHash",
     "cachedM1Bytes",
     "cachedM0ProjectMemoryEpoch",
     "cachedM0WorkspaceFingerprint",
@@ -204,16 +174,14 @@ export const NULL_BIND_META_KEYS = new Set([
     "cachedM0ProjectDocsHash",
     "cachedM0MaterializedAt",
     "cachedM0SessionFactsVersion",
-    "cachedM0UpgradeState",
+    "cachedM0CompartmentRenderEpoch",
     "cachedM0ProjectIdentity",
     "lastObservedModelKey",
-    "upgradeRemindedAt",
-    "upgradeReminderLastSentAt",
     "piStableIdScheme",
 ]);
 
 // Defensive typeof checks: columns may be NULL in DB when a row was seeded
-// before a column was added with ensureColumn (SQLite sets existing rows to
+// Nullable persisted values are normalized to
 // NULL, not to the DEFAULT). Treat null as "absent/empty" rather than
 // rejecting the whole row — falling back to defaults silently loses the real
 // lastResponseTime, cacheTtl, lastContextPercentage, etc., causing the
@@ -245,18 +213,13 @@ export function isSessionMetaRow(row: unknown): row is SessionMetaRow {
         typeof r.last_response_time === "number" &&
         isStringOrNull(r.cache_ttl) &&
         typeof r.counter === "number" &&
-        typeof r.last_nudge_tokens === "number" &&
-        isStringOrNull(r.last_nudge_band) &&
         isStringOrNull(r.last_transform_error) &&
         typeof r.is_subagent === "number" &&
         typeof r.last_context_percentage === "number" &&
         typeof r.last_input_tokens === "number" &&
         isNumberOrNull(r.observed_safe_input_tokens) &&
         isNumberOrNull(r.cache_alert_sent) &&
-        // INTEGER columns added via ensureColumn: pre-existing rows get NULL
-        // instead of DEFAULT. Strict typeof "number" would reject those rows
-        // and trigger the scheduler-reset cascade described above. toSessionMeta
-        // falls back to 0 for NULL.
+        // Nullable counters are normalized by toSessionMeta().
         isNumberOrNull(r.times_execute_threshold_reached) &&
         isNumberOrNull(r.compartment_in_progress) &&
         (r.system_prompt_hash === null ||
@@ -266,10 +229,7 @@ export function isSessionMetaRow(row: unknown): row is SessionMetaRow {
         isNumberOrNull(r.conversation_tokens) &&
         isNumberOrNull(r.tool_call_tokens) &&
         isNumberOrNull(r.cleared_reasoning_through_tag) &&
-        isStringOrNull(r.last_todo_state) &&
         isBlobOrNull(r.cached_m0_bytes) &&
-        isStringOrNull(r.cached_m0_mural_data_url) &&
-        isStringOrNull(r.cached_m0_mural_hash) &&
         isBlobOrNull(r.cached_m1_bytes) &&
         isNumberOrNull(r.cached_m0_project_memory_epoch) &&
         isStringOrNull(r.cached_m0_workspace_fingerprint) &&
@@ -281,9 +241,8 @@ export function isSessionMetaRow(row: unknown): row is SessionMetaRow {
         isStringOrNull(r.cached_m0_project_docs_hash) &&
         isNumberOrNull(r.cached_m0_materialized_at) &&
         isNumberOrNull(r.cached_m0_session_facts_version) &&
-        isStringOrNull(r.cached_m0_upgrade_state) &&
+        isStringOrNull(r.cached_m0_compartment_render_epoch) &&
         isStringOrNull(r.cached_m0_system_hash) &&
-        isStringOrNull(r.cached_m0_tool_set_hash) &&
         isStringOrNull(r.cached_m0_model_key) &&
         isStringOrNull(r.cached_m0_project_identity) &&
         isStringOrNull(r.last_observed_model_key) &&
@@ -295,10 +254,6 @@ export function isSessionMetaRow(row: unknown): row is SessionMetaRow {
         isNumberOrNull(r.recovery_no_eligible_head_count) &&
         isNumberOrNull(r.force_emergency_bypass_window_start) &&
         isNumberOrNull(r.force_emergency_bypass_used) &&
-        isNumberOrNull(r.upgrade_reminded_at) &&
-        isNumberOrNull(r.upgrade_reminder_last_sent_at) &&
-        isNumberOrNull(r.upgrade_reminder_count) &&
-        isNumberOrNull(r.pi_stable_id_scheme) &&
         isNumberOrNull(r.tool_reclaim_watermark)
     );
 }
@@ -309,8 +264,6 @@ export function getDefaultSessionMeta(sessionId: string): SessionMeta {
         lastResponseTime: 0,
         cacheTtl: "5m",
         counter: 0,
-        lastNudgeTokens: 0,
-        lastNudgeBand: null,
         lastTransformError: null,
         isSubagent: false,
         lastContextPercentage: 0,
@@ -325,10 +278,7 @@ export function getDefaultSessionMeta(sessionId: string): SessionMeta {
         toolCallTokens: 0,
         clearedReasoningThroughTag: 0,
         toolReclaimWatermark: 0,
-        lastTodoState: "",
         cachedM0Bytes: null,
-        cachedM0MuralDataUrl: null,
-        cachedM0MuralHash: null,
         cachedM1Bytes: null,
         cachedM0ProjectMemoryEpoch: null,
         cachedM0WorkspaceFingerprint: null,
@@ -340,9 +290,8 @@ export function getDefaultSessionMeta(sessionId: string): SessionMeta {
         cachedM0ProjectDocsHash: null,
         cachedM0MaterializedAt: null,
         cachedM0SessionFactsVersion: null,
-        cachedM0UpgradeState: null,
+        cachedM0CompartmentRenderEpoch: null,
         cachedM0SystemHash: null,
-        cachedM0ToolSetHash: null,
         cachedM0ModelKey: null,
         cachedM0ProjectIdentity: null,
         lastObservedModelKey: null,
@@ -354,27 +303,19 @@ export function getDefaultSessionMeta(sessionId: string): SessionMeta {
         recoveryNoEligibleHeadCount: 0,
         forceEmergencyBypassWindowStart: 0,
         forceEmergencyBypassUsed: 0,
-        upgradeRemindedAt: null,
-        upgradeReminderLastSentAt: null,
-        upgradeReminderCount: 0,
-        piStableIdScheme: null,
     };
 }
 
 export function ensureSessionMetaRow(db: Database, sessionId: string): void {
     const defaults = getDefaultSessionMeta(sessionId);
-    // Note-nudge persistence columns rely on session_meta defaults and are updated
-    // through storage-meta-persisted helpers, not SessionMeta writes.
     db.prepare(
-        "INSERT OR IGNORE INTO session_meta (session_id, harness, last_response_time, cache_ttl, counter, last_nudge_tokens, last_nudge_band, last_transform_error, is_subagent, last_context_percentage, last_input_tokens, observed_safe_input_tokens, cache_alert_sent, times_execute_threshold_reached, compartment_in_progress, system_prompt_hash, cleared_reasoning_through_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO session_meta (session_id, harness, last_response_time, cache_ttl, counter, last_transform_error, is_subagent, last_context_percentage, last_input_tokens, observed_safe_input_tokens, cache_alert_sent, times_execute_threshold_reached, compartment_in_progress, system_prompt_hash, cleared_reasoning_through_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
         sessionId,
         getHarness(),
         defaults.lastResponseTime,
         defaults.cacheTtl,
         defaults.counter,
-        defaults.lastNudgeTokens,
-        defaults.lastNudgeBand ?? "",
         defaults.lastTransformError ?? "",
         defaults.isSubagent ? 1 : 0,
         defaults.lastContextPercentage,
@@ -405,18 +346,16 @@ export function bumpSessionFactsVersion(db: Database, sessionId: string): void {
 }
 
 export function toSessionMeta(row: SessionMetaRow): SessionMeta {
-    // Defensive: NULL text columns (e.g. seeded rows pre-ensureColumn) must not
+    // NULL text values must not
     // crash with `.length on null`. Treat null/empty as absent and map to the
     // SessionMeta representation.
-    const nudgeBandRaw = typeof row.last_nudge_band === "string" ? row.last_nudge_band : "";
     const transformErrorRaw =
         typeof row.last_transform_error === "string" ? row.last_transform_error : "";
     const cacheTtlRaw =
         typeof row.cache_ttl === "string" && row.cache_ttl.length > 0 ? row.cache_ttl : "5m";
     const systemPromptHashRaw = row.system_prompt_hash == null ? "" : row.system_prompt_hash;
-    const lastTodoStateRaw = typeof row.last_todo_state === "string" ? row.last_todo_state : "";
     // Defensive numeric fallbacks: when isSessionMetaRow accepts NULL for
-    // INTEGER columns added via ensureColumn, the raw row may have `null`
+    // Nullable integer values may be `null`
     // here. Coerce to 0 so callers see a usable SessionMeta without having
     // to null-check every scalar field.
     const numOrZero = (value: unknown): number => (typeof value === "number" ? value : 0);
@@ -428,9 +367,6 @@ export function toSessionMeta(row: SessionMetaRow): SessionMeta {
         lastResponseTime: row.last_response_time,
         cacheTtl: cacheTtlRaw,
         counter: row.counter,
-        lastNudgeTokens: row.last_nudge_tokens,
-        lastNudgeBand:
-            nudgeBandRaw.length > 0 ? (nudgeBandRaw as SessionMeta["lastNudgeBand"]) : null,
         lastTransformError: transformErrorRaw.length > 0 ? transformErrorRaw : null,
         isSubagent: row.is_subagent === 1,
         lastContextPercentage: row.last_context_percentage,
@@ -445,10 +381,7 @@ export function toSessionMeta(row: SessionMetaRow): SessionMeta {
         toolCallTokens: numOrZero(row.tool_call_tokens),
         clearedReasoningThroughTag: numOrZero(row.cleared_reasoning_through_tag),
         toolReclaimWatermark: numOrZero(row.tool_reclaim_watermark),
-        lastTodoState: lastTodoStateRaw,
         cachedM0Bytes: toBufferOrNull(row.cached_m0_bytes),
-        cachedM0MuralDataUrl: stringOrNull(row.cached_m0_mural_data_url),
-        cachedM0MuralHash: stringOrNull(row.cached_m0_mural_hash),
         cachedM1Bytes: toBufferOrNull(row.cached_m1_bytes),
         cachedM0ProjectMemoryEpoch: numOrNull(row.cached_m0_project_memory_epoch),
         cachedM0WorkspaceFingerprint: stringOrNull(row.cached_m0_workspace_fingerprint),
@@ -460,9 +393,8 @@ export function toSessionMeta(row: SessionMetaRow): SessionMeta {
         cachedM0ProjectDocsHash: stringOrNull(row.cached_m0_project_docs_hash),
         cachedM0MaterializedAt: numOrNull(row.cached_m0_materialized_at),
         cachedM0SessionFactsVersion: numOrNull(row.cached_m0_session_facts_version),
-        cachedM0UpgradeState: stringOrNull(row.cached_m0_upgrade_state),
+        cachedM0CompartmentRenderEpoch: stringOrNull(row.cached_m0_compartment_render_epoch),
         cachedM0SystemHash: stringOrNull(row.cached_m0_system_hash),
-        cachedM0ToolSetHash: stringOrNull(row.cached_m0_tool_set_hash),
         cachedM0ModelKey: stringOrNull(row.cached_m0_model_key),
         cachedM0ProjectIdentity: stringOrNull(row.cached_m0_project_identity),
         lastObservedModelKey: stringOrNull(row.last_observed_model_key),
@@ -474,17 +406,11 @@ export function toSessionMeta(row: SessionMetaRow): SessionMeta {
         recoveryNoEligibleHeadCount: numOrZero(row.recovery_no_eligible_head_count),
         forceEmergencyBypassWindowStart: numOrZero(row.force_emergency_bypass_window_start),
         forceEmergencyBypassUsed: numOrZero(row.force_emergency_bypass_used),
-        upgradeRemindedAt: numOrNull(row.upgrade_reminded_at),
-        upgradeReminderLastSentAt: numOrNull(row.upgrade_reminder_last_sent_at),
-        upgradeReminderCount: numOrZero(row.upgrade_reminder_count),
-        piStableIdScheme: numOrNull(row.pi_stable_id_scheme),
     };
 }
 
 export interface PersistCachedM0Payload {
     m0Bytes: Buffer;
-    muralDataUrl?: string | null;
-    muralHash?: string | null;
     projectMemoryEpoch: number | null;
     workspaceFingerprint?: string | null;
     projectUserProfileVersion: number | null;
@@ -496,7 +422,7 @@ export interface PersistCachedM0Payload {
     projectDocsHash: string | null;
     materializedAt: number;
     sessionFactsVersion: number;
-    upgradeState: string | null;
+    compartmentRenderEpoch: string | null;
     systemHash?: string | null;
     modelKey?: string | null;
     projectIdentity?: string | null;
@@ -511,8 +437,6 @@ export function persistCachedM0(
     db.prepare(
         `UPDATE session_meta SET
             cached_m0_bytes = ?,
-            cached_m0_mural_data_url = ?,
-            cached_m0_mural_hash = ?,
             cached_m0_project_memory_epoch = ?,
             cached_m0_workspace_fingerprint = ?,
             cached_m0_project_user_profile_version = ?,
@@ -524,15 +448,13 @@ export function persistCachedM0(
             cached_m0_project_docs_hash = ?,
             cached_m0_materialized_at = ?,
             cached_m0_session_facts_version = ?,
-            cached_m0_upgrade_state = ?,
+            cached_m0_compartment_render_epoch = ?,
             cached_m0_system_hash = ?,
             cached_m0_model_key = ?,
             cached_m0_project_identity = ?
          WHERE session_id = ?`,
     ).run(
         Buffer.from(payload.m0Bytes),
-        payload.muralDataUrl ?? null,
-        payload.muralHash ?? null,
         payload.projectMemoryEpoch,
         payload.workspaceFingerprint ?? null,
         payload.projectUserProfileVersion,
@@ -544,7 +466,7 @@ export function persistCachedM0(
         payload.projectDocsHash,
         payload.materializedAt,
         payload.sessionFactsVersion,
-        payload.upgradeState,
+        payload.compartmentRenderEpoch,
         payload.systemHash ?? "",
         payload.modelKey ?? "",
         payload.projectIdentity ?? null,
@@ -555,14 +477,14 @@ export function persistCachedM0(
 export function clearCachedM0M1(db: Database, sessionId: string): void {
     ensureSessionMetaRow(db, sessionId);
     const existingColumns = new Set(
-        (db.prepare("PRAGMA table_info(session_meta)").all() as Array<{ name?: string }>).map(
-            (column) => column.name,
-        ),
+        (
+            db.prepare("PRAGMA table_info(session_meta)").all() as Array<{
+                name?: string;
+            }>
+        ).map((column) => column.name),
     );
     const clears: Array<[string, string | number | null]> = [
         ["cached_m0_bytes", null],
-        ["cached_m0_mural_data_url", null],
-        ["cached_m0_mural_hash", null],
         ["cached_m1_bytes", null],
         ["cached_m0_project_memory_epoch", null],
         ["cached_m0_workspace_fingerprint", null],
@@ -574,9 +496,8 @@ export function clearCachedM0M1(db: Database, sessionId: string): void {
         ["cached_m0_project_docs_hash", null],
         ["cached_m0_materialized_at", null],
         ["cached_m0_session_facts_version", null],
-        ["cached_m0_upgrade_state", null],
+        ["cached_m0_compartment_render_epoch", null],
         ["cached_m0_system_hash", null],
-        ["cached_m0_tool_set_hash", null],
         ["cached_m0_model_key", null],
         ["cached_m0_project_identity", null],
         ["cached_m0_last_baseline_end_message_id", null],

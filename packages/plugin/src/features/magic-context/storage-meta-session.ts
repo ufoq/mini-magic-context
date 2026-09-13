@@ -15,74 +15,20 @@ import {
 } from "./storage-meta-shared";
 import type { SessionMeta } from "./types";
 
-const SESSION_META_FALLBACK_SELECTS: Partial<
-    Record<(typeof SESSION_META_SELECT_COLUMNS)[number], string>
-> = {
-    cache_ttl: "'5m' AS cache_ttl",
-    last_nudge_band: "'' AS last_nudge_band",
-    last_transform_error: "'' AS last_transform_error",
-    system_prompt_hash: "'' AS system_prompt_hash",
-    last_todo_state: "'' AS last_todo_state",
-    tool_reclaim_watermark: "0 AS tool_reclaim_watermark",
-    cached_m0_bytes: "NULL AS cached_m0_bytes",
-    cached_m0_mural_data_url: "NULL AS cached_m0_mural_data_url",
-    cached_m0_mural_hash: "NULL AS cached_m0_mural_hash",
-    cached_m1_bytes: "NULL AS cached_m1_bytes",
-    cached_m0_project_memory_epoch: "NULL AS cached_m0_project_memory_epoch",
-    cached_m0_project_user_profile_version: "NULL AS cached_m0_project_user_profile_version",
-    cached_m0_max_compartment_seq: "NULL AS cached_m0_max_compartment_seq",
-    cached_m0_max_memory_id: "NULL AS cached_m0_max_memory_id",
-    cached_m0_max_mutation_id: "NULL AS cached_m0_max_mutation_id",
-    cached_m0_max_memory_mutation_id: "NULL AS cached_m0_max_memory_mutation_id",
-    cached_m0_project_docs_hash: "NULL AS cached_m0_project_docs_hash",
-    cached_m0_materialized_at: "NULL AS cached_m0_materialized_at",
-    cached_m0_session_facts_version: "NULL AS cached_m0_session_facts_version",
-    cached_m0_upgrade_state: "NULL AS cached_m0_upgrade_state",
-    cached_m0_system_hash: "NULL AS cached_m0_system_hash",
-    cached_m0_tool_set_hash: "NULL AS cached_m0_tool_set_hash",
-    cached_m0_model_key: "NULL AS cached_m0_model_key",
-    cached_m0_project_identity: "NULL AS cached_m0_project_identity",
-    last_observed_model_key: "NULL AS last_observed_model_key",
-    upgrade_reminded_at: "NULL AS upgrade_reminded_at",
-    upgrade_reminder_last_sent_at: "NULL AS upgrade_reminder_last_sent_at",
-    upgrade_reminder_count: "0 AS upgrade_reminder_count",
-};
-
-// Per-connection memo of the resolved projection SQL. getOrCreateSessionMeta is
-// on the hot transform path (many calls per pass), and the old code ran
-// `PRAGMA table_info(session_meta)` + rebuilt the ~50-column list on EVERY
-// call. The schema shape is fixed for a connection's lifetime — ensureColumn
-// and migrations run only inside initializeDatabase/runMigrations at startup,
-// before any getOrCreateSessionMeta call — so the projection never changes
-// after init and is safe to cache per Database (same pattern as the prepared-
-// statement WeakMaps in compartment-storage.ts).
-const sessionMetaSelectColumnsCache = new WeakMap<Database, string>();
-
-function getSessionMetaSelectColumns(db: Database): string {
-    const cached = sessionMetaSelectColumnsCache.get(db);
-    if (cached !== undefined) return cached;
-    const existingColumns = new Set(
-        (db.prepare("PRAGMA table_info(session_meta)").all() as Array<{ name?: string }>).map(
-            (column) => column.name,
-        ),
-    );
-    const projection = SESSION_META_SELECT_COLUMNS.map((column) => {
-        if (existingColumns.has(column)) return column;
-        return SESSION_META_FALLBACK_SELECTS[column] ?? `0 AS ${column}`;
-    }).join(", ");
-    sessionMetaSelectColumnsCache.set(db, projection);
-    return projection;
-}
+const SESSION_META_SELECT_SQL = SESSION_META_SELECT_COLUMNS.join(", ");
 
 export function getOrCreateSessionMeta(db: Database, sessionId: string): SessionMeta {
     const result = db
-        .prepare(`SELECT ${getSessionMetaSelectColumns(db)} FROM session_meta WHERE session_id = ?`)
+        .prepare(`SELECT ${SESSION_META_SELECT_SQL} FROM session_meta WHERE session_id = ?`)
         .get(sessionId);
 
     if (isSessionMetaRow(result)) {
         return toSessionMeta(result);
     }
 
+    if (result !== undefined && result !== null) {
+        throw new Error(`invalid session_meta row for ${sessionId}`);
+    }
     const defaults = getDefaultSessionMeta(sessionId);
     ensureSessionMetaRow(db, sessionId);
     return defaults;

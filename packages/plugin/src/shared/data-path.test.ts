@@ -4,13 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
     ensureCortexKitArtifactGitignore,
-    getCacheDir,
     getDataDir,
-    getLegacyOpenCodeMagicContextStorageDir,
     getMagicContextLogPath,
     getMagicContextStorageDir,
-    getOpenCodeCacheDir,
-    getOpenCodeStorageDir,
     getProjectMagicContextDir,
     getProjectMagicContextHistorianDir,
 } from "./data-path";
@@ -46,43 +42,8 @@ describe("data-path", () => {
         else delete process.env.MAGIC_CONTEXT_LOG_PATH;
     });
 
-    test("getCacheDir falls back to <homedir>/.cache when XDG_CACHE_HOME is unset (all platforms)", () => {
-        // Matches OpenCode's xdg-basedir behavior on every platform, including
-        // Windows. A previous bug mapped Windows to %LOCALAPPDATA% and caused
-        // doctor --force to target a non-existent cache directory.
-        expect(getCacheDir()).toBe(path.join(os.homedir(), ".cache"));
-    });
-
-    test("getCacheDir honors XDG_CACHE_HOME when set", () => {
-        process.env.XDG_CACHE_HOME = "/tmp/custom-cache";
-        expect(getCacheDir()).toBe("/tmp/custom-cache");
-    });
-
-    test("getCacheDir ignores LOCALAPPDATA on Windows (must match OpenCode's xdg-basedir)", () => {
-        // Even with LOCALAPPDATA set, cache must go to ~/.cache to match
-        // OpenCode's own resolution. Otherwise doctor --force clears the
-        // wrong directory on Windows.
-        process.env.LOCALAPPDATA = "C:\\Users\\Test\\AppData\\Local";
-        expect(getCacheDir()).toBe(path.join(os.homedir(), ".cache"));
-    });
-
-    test("getOpenCodeCacheDir appends 'opencode' to the cache base", () => {
-        expect(getOpenCodeCacheDir()).toBe(path.join(os.homedir(), ".cache", "opencode"));
-    });
-
-    test("getOpenCodeCacheDir with XDG_CACHE_HOME set", () => {
-        process.env.XDG_CACHE_HOME = "/tmp/custom-cache";
-        expect(getOpenCodeCacheDir()).toBe(path.join("/tmp/custom-cache", "opencode"));
-    });
-
     test("getDataDir falls back to <homedir>/.local/share when XDG_DATA_HOME is unset", () => {
         expect(getDataDir()).toBe(path.join(os.homedir(), ".local", "share"));
-    });
-
-    test("getOpenCodeStorageDir composes correctly", () => {
-        expect(getOpenCodeStorageDir()).toBe(
-            path.join(os.homedir(), ".local", "share", "opencode", "storage"),
-        );
     });
 
     test("getMagicContextStorageDir uses cortexkit/mini-magic-context layout", () => {
@@ -96,35 +57,6 @@ describe("data-path", () => {
         expect(getMagicContextStorageDir()).toBe(
             path.join("/tmp/custom-data", "cortexkit", "mini-magic-context"),
         );
-    });
-
-    test("getLegacyOpenCodeMagicContextStorageDir points at the pre-cortexkit OpenCode path", () => {
-        // Used only for one-time migration of pre-shared-storage data into the new
-        // location. Must remain stable so users with legacy installs can still
-        // have their data migrated forward across multiple plugin upgrades.
-        expect(getLegacyOpenCodeMagicContextStorageDir()).toBe(
-            path.join(
-                os.homedir(),
-                ".local",
-                "share",
-                "opencode",
-                "storage",
-                "plugin",
-                "magic-context",
-            ),
-        );
-    });
-
-    test("legacy storage dir distinct from new shared dir even with same XDG override", () => {
-        // Sanity check: even when XDG_DATA_HOME points the same place, the two
-        // resolvers must return different paths so the migration copy doesn't
-        // self-overwrite.
-        process.env.XDG_DATA_HOME = "/tmp/test-xdg";
-        const legacy = getLegacyOpenCodeMagicContextStorageDir();
-        const shared = getMagicContextStorageDir();
-        expect(legacy).not.toBe(shared);
-        expect(legacy).toContain("opencode");
-        expect(shared).toContain("cortexkit");
     });
 
     test("getProjectMagicContextDir composes <project>/.cortexkit/mini-magic-context", () => {
@@ -163,11 +95,8 @@ describe("data-path", () => {
         );
     });
 
-    test("getMagicContextLogPath falls back to the harness temp dir when the env override is unset", () => {
-        expect(getMagicContextLogPath("opencode")).toBe(
-            path.join(os.tmpdir(), "opencode", "magic-context", "magic-context.log"),
-        );
-        expect(getMagicContextLogPath("pi")).toBe(
+    test("getMagicContextLogPath falls back to the Pi temp dir when the env override is unset", () => {
+        expect(getMagicContextLogPath()).toBe(
             path.join(os.tmpdir(), "pi", "magic-context", "magic-context.log"),
         );
     });

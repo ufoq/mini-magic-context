@@ -2,7 +2,6 @@
 
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "../../shared/sqlite";
-import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import {
     applyStrippedPlaceholderDelta,
@@ -14,7 +13,6 @@ import {
 function createTestDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

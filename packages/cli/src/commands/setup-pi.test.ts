@@ -176,39 +176,6 @@ describe("runSetup", () => {
         ]);
     });
 
-    it("migrates legacy Pi user config before writing setup choices", async () => {
-        const root = makeTempRoot();
-        const agentDir = join(root, ".pi", "agent");
-        setConfigEnv(root, agentDir);
-        mkdirSync(agentDir, { recursive: true });
-        const legacyPath = join(agentDir, "mini-magic-context.jsonc");
-        writeFileSync(legacyPath, JSON.stringify({ protected_tags: 7 }));
-
-        const env: SetupEnvironment = {
-            detectPiBinary: () => ({ path: join(root, "bin", "pi"), source: "path" }),
-            getPiVersion: () => "0.74.0",
-            getAvailableModels: () => ["anthropic/claude-haiku-4-5"],
-            paths: {
-                getPiAgentConfigDir: () => agentDir,
-                getPiUserConfigPath: () =>
-                    join(root, ".config", "cortexkit", "magic-context.jsonc"),
-                getPiUserExtensionsPath: () => join(agentDir, "settings.json"),
-            },
-        };
-        const prompts = new MockPrompts({ confirms: [true, true, true, false] });
-
-        const code = await runSetup({ prompts, env });
-
-        expect(code).toBe(0);
-        const targetPath = join(root, ".config", "cortexkit", "mini-magic-context.jsonc");
-        const config = parseJsonc(readFileSync(targetPath, "utf-8")) as {
-            protected_tags?: number;
-        };
-        expect(config.protected_tags).toBe(7);
-        expect(existsSync(legacyPath)).toBe(false);
-        expect(existsSync(`${legacyPath}.MOVED_READPLEASE`)).toBe(true);
-    });
-
     it("writes Pi settings and magic-context config with mocked prompts", async () => {
         const root = makeTempRoot();
         const agentDir = join(root, ".pi", "agent");

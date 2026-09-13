@@ -43,7 +43,7 @@ export type Tier = 1 | 2 | 3;
 // tool name. Verified against the production tag corpus: stored `tool_name`
 // values are bare (`read`, `edit`, `bash`, …) with no `mcp_` prefix; the strip
 // is defensive insurance for environments that surface MCP-prefixed names.
-const T1_TOOLS = new Set(["read", "todowrite", "task", "aft_outline", "aft_zoom"]);
+const T1_TOOLS = new Set(["read", "task", "aft_outline", "aft_zoom"]);
 const T2_TOOLS = new Set(["edit", "write", "apply_patch", "grep", "glob", "aft_search"]);
 
 /** Normalize a stored tool name for tier matching. */

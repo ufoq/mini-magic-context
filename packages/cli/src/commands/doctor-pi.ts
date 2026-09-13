@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/migrate-config-location";
+import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/paths";
 import {
     dropInheritedEmbeddingKeyOnRedirect,
     stripUnsafeProjectConfigFields,
@@ -20,10 +20,6 @@ import { loadPiConfig } from "@magic-context/pi-core/config";
 import { parse as parseJsonc, stringify as stringifyJsonc } from "comment-json";
 
 import { writeFileAtomic } from "../lib/atomic-write";
-import {
-    hasUserConfigLocationMigrationRefusal,
-    migrateConfigLocationsForCli,
-} from "../lib/config-location-migration";
 import { openExistingContextDatabase } from "../lib/database-access";
 import { collectDiagnostics } from "../lib/diagnostics-pi";
 import {
@@ -413,13 +409,9 @@ async function runHealthChecks(options: {
     prompts: PromptIO;
     deps: DoctorDeps;
     quiet?: boolean;
-    configMigrationWarnings?: readonly string[];
     force?: boolean;
 }): Promise<HealthReport> {
     const results: CheckResult[] = [];
-    const userConfigMigrationRefused = hasUserConfigLocationMigrationRefusal(
-        options.configMigrationWarnings ?? [],
-    );
     const repairPlan: RepairPlan = {
         addPackageEntry: false,
         writeUserConfig: false,
@@ -499,15 +491,7 @@ async function runHealthChecks(options: {
         if (!existsSync(path)) {
             if (required) {
                 add(results, "warn", `No ${label} magic-context.jsonc found at ${path}`);
-                if (userConfigMigrationRefused) {
-                    add(
-                        results,
-                        "warn",
-                        "Default config repair skipped because legacy Magic Context user config needs manual consolidation first",
-                    );
-                } else {
-                    repairPlan.writeUserConfig = true;
-                }
+                repairPlan.writeUserConfig = true;
             } else {
                 add(results, "info", `No project Magic Context config found at ${path}`);
             }
@@ -755,7 +739,7 @@ async function runHealthChecks(options: {
         add(results, "pass", "Pi extension cache clean (no stale cached package found)");
     }
 
-    const logPath = getMagicContextLogPath("pi");
+    const logPath = getMagicContextLogPath();
     if (existsSync(logPath)) {
         const stat = statSync(logPath);
         const sizeKb = (stat.size / 1024).toFixed(0);
@@ -776,10 +760,8 @@ async function runHealthChecks(options: {
         add(results, "info", `No plugin log file yet at ${logPath}`);
     }
 
-    // Historian dumps now live per-project under `<dir>/.cortexkit/mini-magic-context/historian/`
-    // and are surfaced grouped by project. The legacy harness-scoped tmp-dir
-    // layout is still listed when no project-local dumps exist (older plugin
-    // versions or fresh installs).
+    // Historian dumps live per-project under
+    // `<dir>/.cortexkit/mini-magic-context/historian/`.
     const diagnosticsForDumps = await collectDiagnostics(options.cwd);
     const dumpBuckets = diagnosticsForDumps.historianDumps.byProject;
     if (dumpBuckets.length > 0) {
@@ -801,15 +783,6 @@ async function runHealthChecks(options: {
             }
         }
     }
-    const legacyDumps = diagnosticsForDumps.historianDumps.legacyDumps;
-    if (legacyDumps.count > 0) {
-        add(
-            results,
-            "info",
-            `Legacy historian dumps (pre-v0.18.x): ${legacyDumps.count} file(s) in ${legacyDumps.dir}`,
-        );
-    }
-
     if (!options.quiet) {
         for (const result of results) printResult(options.prompts, result);
     }
@@ -994,8 +967,6 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<number>
         return 0;
     }
 
-    const configMigrationWarnings = migrateConfigLocationsForCli(cwd, prompts.log);
-
     if (options.issue) {
         return runIssueFlow({ cwd, prompts, deps });
     }
@@ -1005,7 +976,6 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<number>
         cwd,
         prompts,
         deps,
-        configMigrationWarnings,
         force: options.force,
     });
     console.log("");
@@ -1021,7 +991,6 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<number>
             cwd,
             prompts,
             deps,
-            configMigrationWarnings,
             force: false,
         });
         console.log("");

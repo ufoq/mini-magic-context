@@ -3,10 +3,6 @@ import { dirname } from "node:path";
 import { piModelRefToCanonical } from "@magic-context/core/shared/harness-provider-map";
 import { stringify as stringifyJsonc } from "comment-json";
 import { writeFileAtomic } from "../lib/atomic-write";
-import {
-    hasUserConfigLocationMigrationRefusal,
-    migrateConfigLocationsForCli,
-} from "../lib/config-location-migration";
 import { assertJsoncConfigsParseable, readJsoncConfigForUpdate } from "../lib/jsonc-config";
 import { pickModel } from "../lib/model-picker";
 import { getPiAgentConfigDir, getPiUserConfigPath, getPiUserExtensionsPath } from "../lib/paths";
@@ -191,17 +187,6 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
     prompts.intro("Magic Context for Pi — Setup");
     if (dryRun) {
         prompts.log.warn("Dry run — no files will be written and no package will be registered.");
-        prompts.log.message(
-            "[dry-run] would migrate legacy Magic Context config before setup reads or writes the shared CortexKit config.",
-        );
-    } else {
-        const migrationWarnings = migrateConfigLocationsForCli(process.cwd(), prompts.log);
-        if (hasUserConfigLocationMigrationRefusal(migrationWarnings)) {
-            prompts.outro(
-                "Setup stopped — resolve the legacy Magic Context user config migration conflict, then rerun setup.",
-            );
-            return 1;
-        }
     }
 
     const spinner = prompts.spinner();

@@ -23,8 +23,6 @@ const REMOVED_DOCTOR_ARGUMENTS = new Set([
     "--rekey-v22-dir-identity",
     "drain-authority",
     "merge-identity",
-    "migrate-session",
-    "migrate",
 ]);
 
 function getVersion(): string {

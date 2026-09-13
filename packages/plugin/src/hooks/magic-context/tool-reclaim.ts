@@ -20,13 +20,6 @@ export function buildSyntheticToolReclaimOps(input: {
 
     const realPendingTagIds = new Set((input.pendingOps ?? []).map((op) => op.tagId));
     const tags = getActiveToolTagsForAgeReclaim(input.db, input.sessionId);
-    const newestTodowriteTag = tags.reduce<number | null>(
-        (newest, tag) =>
-            tag.toolName === "todowrite" && (newest === null || tag.tagNumber > newest)
-                ? tag.tagNumber
-                : newest,
-        null,
-    );
     const synthetic: PendingOp[] = [];
 
     for (const tag of tags) {
@@ -34,7 +27,6 @@ export function buildSyntheticToolReclaimOps(input: {
         if (tag.reclaimableTokens !== null && tag.reclaimableTokens < AGE_RECLAIM_MIN_TOKENS) {
             continue;
         }
-        if (tag.tagNumber === newestTodowriteTag) continue;
         if (realPendingTagIds.has(tag.tagNumber)) continue;
         if (input.targets.get(tag.tagNumber)?.canDrop?.() !== true) continue;
         synthetic.push({

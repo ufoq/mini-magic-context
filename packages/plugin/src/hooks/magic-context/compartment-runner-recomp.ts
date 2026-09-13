@@ -52,14 +52,11 @@ function insertRecompCompartmentRows(
     compartments: CandidateCompartment[],
     now: number,
 ): void {
-    // v2: carry paraphrase tiers + importance/episode_type through the recomp
-    // promote path. Must match compartment-storage.ts insertCompartmentRows column
-    // order. legacy=0 when P1 present, else 1 (flat).
+    // Carry paraphrase tiers and metadata through the recomp promote path.
     const stmt = db.prepare(
-        "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, legacy, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     for (const c of compartments) {
-        const hasTiers = typeof c.p1 === "string" && c.p1.length > 0;
         stmt.run(
             sessionId,
             c.sequence,
@@ -69,13 +66,12 @@ function insertRecompCompartmentRows(
             c.endMessageId,
             c.title,
             c.content,
-            c.p1 ?? null,
+            c.p1?.trim() ? c.p1 : c.content,
             c.p2 ?? null,
             c.p3 ?? null,
             c.p4 ?? null,
             typeof c.importance === "number" ? c.importance : 50,
             c.episodeType ?? null,
-            hasTiers ? 0 : 1,
             now,
             getHarness(),
         );

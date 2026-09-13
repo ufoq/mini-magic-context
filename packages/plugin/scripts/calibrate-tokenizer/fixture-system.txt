@@ -560,7 +560,6 @@ Briefly announce "Consulting Oracle for [reason]" before invocation.
 
 ### Workflow (NON-NEGOTIABLE)
 
-1. **IMMEDIATELY on receiving request**: `todowrite` to plan atomic steps.
    - ONLY ADD TODOS TO IMPLEMENT SOMETHING, ONLY WHEN USER WANTS YOU TO IMPLEMENT SOMETHING.
 2. **Before starting each step**: Mark `in_progress` (only ONE at a time)
 3. **After completing each step**: Mark `completed` IMMEDIATELY (NEVER batch)
@@ -835,7 +834,6 @@ Prefer many small targeted operations over one large blanket operation. Compress
 - Track the reasoning-clearing watermark (`cleared_reasoning_through_tag` column in `session_meta`) as a persisted integer so clearing survives across OpenCode message rebuilds.
 
 **Note nudge trigger gating:**
-- The todowrite note-nudge fires in `src/hooks/magic-context/hook-handlers.ts` only when ALL todo items have a terminal status (`completed` or `cancelled`). Intermediate todowrite calls during active work do not trigger the nudge.
 
 **Memory and search flow:**
 1. Create, update, merge, archive, list, or search memories through `src/tools/ctx-memory/tools.ts`.

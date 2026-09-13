@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "../../../shared/sqlite";
-import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
 import {
     getUserMemoryCandidates,
@@ -12,7 +11,6 @@ import {
 function freshDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

@@ -8,7 +8,6 @@ A TypeScript extension for [Pi](https://pi.coding) that keeps long coding sessio
 - **Journal search** (`ctx_search`) queries compressed session history.
 - **Raw-history expansion** (`ctx_expand`) recovers the original transcript from any compressed compartment range.
 - **Optional embeddings** (local `all-MiniLM-L6-v2` or any OpenAI-compatible endpoint) for semantic compartment search.
-- **Legacy import** (`/mc-import-context`) imports compartments from a previous full Magic Context installation, per session.
 
 ## What's not included
 
@@ -72,16 +71,6 @@ When a compressed compartment summary isn't enough, `ctx_expand` decompresses a 
 
 Optional semantic search over compartments. The default `local` provider runs `Xenova/all-MiniLM-L6-v2` in-process, no external service required. Set the provider to `"openai-compatible"` for any OpenAI-compatible embeddings API. Set `"off"` to disable embeddings and fall back to keyword-only search.
 
-### Legacy import
-
-If you are migrating from a full Magic Context installation, `/mc-import-context` imports that session's existing compartments into mini-magic-context. The import is per session; run it once for each session you want to carry forward.
-
-Optionally pass a path to the legacy database:
-
-```
-/mc-import-context /path/to/legacy/context.db
-```
-
 ## Configuration
 
 Settings live in `mini-magic-context.jsonc`. Project config merges on top of user-wide defaults.
@@ -97,7 +86,6 @@ Full configuration schema: [magic-context.schema.json](./assets/magic-context.sc
 
 | Command | Description |
 |---|---|
-| `/mc-import-context` | Import legacy Magic Context compartments into this session |
 | `/ctx-status` | Current context usage, pending queue, cache TTL, historian progress |
 | `/ctx-recomp` | Rebuild compartments from raw history (full or `<start>-<end>` range) |
 | `/ctx-wrapup` | Compact older live history, keeping newest N messages raw |

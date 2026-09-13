@@ -198,28 +198,6 @@ afterEach(() => {
 });
 
 describe("Pi doctor", () => {
-    it("returns nonzero for retired doctor inputs through the unified CLI", () => {
-        const entrypoint = join(import.meta.dir, "..", "index.ts");
-        const removedInputs = [
-            "--check-v22-backfill",
-            "--retry-v22-backfill",
-            "--rekey-v22-dir-identity",
-            "drain-authority",
-            "merge-identity",
-            "migrate-session",
-            "migrate",
-        ];
-
-        for (const input of removedInputs) {
-            const result = spawnSync(process.execPath, [entrypoint, "doctor", input], {
-                cwd: join(import.meta.dir, "..", ".."),
-                encoding: "utf-8",
-            });
-            expect(result.status).toBe(1);
-            expect(result.stderr).toContain("Unknown doctor command");
-        }
-    });
-
     it("passes Phase 1 with a healthy mocked environment", async () => {
         const root = makeTempRoot();
         const cwd = makeTempRoot("mc-pi-doctor-cwd-");
@@ -236,51 +214,6 @@ describe("Pi doctor", () => {
         expect(output).toContain("PASS SQLite integrity_check: ok");
         expect(output).toContain("Shared DB row counts: tags=1, compartments=0, session_meta=0");
         expect(output).toContain("Summary: PASS 13 / WARN 1 / FAIL 0");
-    });
-
-    it("leaves an older supported shared DB schema unchanged", async () => {
-        const root = makeTempRoot();
-        const cwd = makeTempRoot("mc-pi-doctor-cwd-");
-        const agentDir = setEnv(root, cwd);
-        writeHealthyFiles(agentDir, cwd);
-        const prompts = new MockPrompts();
-        const options = baseOptions(root, cwd, prompts);
-        const dbPath = join(
-            root,
-            ".local",
-            "share",
-            "cortexkit",
-            "mini-magic-context",
-            "context.db",
-        );
-        rmSync(dbPath);
-        const fixture = new Database(dbPath);
-        fixture.exec(`
-            CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);
-            INSERT INTO schema_migrations(version) VALUES (50);
-            CREATE TABLE tags (id INTEGER);
-            CREATE TABLE compartments (id INTEGER);
-            CREATE TABLE notes (id INTEGER);
-            CREATE TABLE dream_runs (id INTEGER);
-        `);
-        fixture.close();
-        if (!options.deps) throw new Error("expected doctor dependencies");
-        options.deps.openExistingContextDatabase = openExistingContextDatabase;
-
-        const code = await runDoctor(options);
-
-        expect(code).toBe(0);
-        const reopened = new Database(dbPath);
-        const version = reopened
-            .prepare("SELECT MAX(version) AS version FROM schema_migrations")
-            .get() as {
-            version: number;
-        };
-        reopened.close();
-        expect(version.version).toBe(50);
-        expect(prompts.messages.join("\n")).toContain(
-            "PASS Opened the shared DB read-only with a supported schema",
-        );
     });
 
     it("warns when the local onnxruntime native binding is absent", async () => {
@@ -346,77 +279,6 @@ describe("Pi doctor", () => {
         expect(output).toContain("Added npm:@ufoq/pi-mini-magic-context");
         expect(output).toContain("Wrote default Magic Context config");
         expect(output).toContain("Repair attempted; 2 item(s) changed");
-    });
-
-    it("migrates legacy Pi user config before --force writes a default", async () => {
-        const root = makeTempRoot();
-        const cwd = makeTempRoot("mc-pi-doctor-cwd-");
-        const agentDir = setEnv(root, cwd);
-        const settingsPath = join(agentDir, "settings.json");
-        const legacyPath = join(agentDir, "mini-magic-context.jsonc");
-        writeFileSync(settingsPath, JSON.stringify({ packages: [] }));
-        writeFileSync(legacyPath, JSON.stringify({ protected_tags: 13 }));
-        writeFileSync(
-            join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
-            JSON.stringify({ enabled: true }),
-        );
-        const prompts = new MockPrompts();
-
-        const code = await runDoctor({
-            ...baseOptions(root, cwd, prompts),
-            force: true,
-        });
-
-        expect(code).toBe(0);
-        const targetPath = join(root, ".config", "cortexkit", "mini-magic-context.jsonc");
-        const config = parseJsonc(readFileSync(targetPath, "utf-8")) as {
-            protected_tags?: number;
-        };
-        expect(config.protected_tags).toBe(13);
-        expect(existsSync(legacyPath)).toBe(false);
-        expect(existsSync(`${legacyPath}.MOVED_READPLEASE`)).toBe(true);
-        const output = prompts.messages.join("\n");
-        expect(output).toContain("Migrated Magic Context user config");
-        expect(output).not.toContain("Wrote default Magic Context config");
-    });
-
-    it("does not write a default when legacy user configs conflict", async () => {
-        const root = makeTempRoot();
-        const cwd = makeTempRoot("mc-pi-doctor-cwd-");
-        const agentDir = setEnv(root, cwd);
-        writeFileSync(
-            join(agentDir, "settings.json"),
-            JSON.stringify({ packages: ["npm:@ufoq/pi-mini-magic-context"] }),
-        );
-        writeFileSync(
-            join(cwd, ".cortexkit", "mini-magic-context.jsonc"),
-            JSON.stringify({ enabled: true }),
-        );
-        const opencodeDir = join(root, ".config", "opencode");
-        mkdirSync(opencodeDir, { recursive: true });
-        writeFileSync(
-            join(opencodeDir, "mini-magic-context.jsonc"),
-            JSON.stringify({ protected_tags: 7 }),
-        );
-        writeFileSync(
-            join(agentDir, "mini-magic-context.jsonc"),
-            JSON.stringify({ protected_tags: 13 }),
-        );
-        const prompts = new MockPrompts();
-
-        const code = await runDoctor({
-            ...baseOptions(root, cwd, prompts),
-            force: true,
-        });
-
-        expect(code).toBe(0);
-        expect(existsSync(join(root, ".config", "cortexkit", "mini-magic-context.jsonc"))).toBe(
-            false,
-        );
-        const output = prompts.messages.join("\n");
-        expect(output).toContain("Magic Context user config migration refused");
-        expect(output).toContain("Default config repair skipped");
-        expect(output).not.toContain("Wrote default Magic Context config");
     });
 
     it("recognizes object-form Magic Context package and preserves object entries during repair", async () => {

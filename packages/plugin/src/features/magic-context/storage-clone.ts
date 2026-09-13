@@ -52,7 +52,6 @@ type RawCompartmentRow = {
     p4: string | null;
     importance: number;
     episode_type: string | null;
-    legacy: number;
     created_at: number;
     harness: string;
 };
@@ -80,15 +79,9 @@ type RawTagRow = {
 type RawSessionMetaRow = {
     cleared_reasoning_through_tag: number | null;
     tool_reclaim_watermark: number | null;
-    pi_stable_id_scheme: number | null;
     stripped_placeholder_ids: string | null;
-    stale_reduce_stripped_ids: string | null;
     processed_image_stripped_ids: string | null;
     pending_pi_compaction_marker_state: string | null;
-    last_todo_state: string | null;
-    todo_synthetic_call_id: string | null;
-    todo_synthetic_anchor_message_id: string | null;
-    todo_synthetic_state_json: string | null;
 };
 
 function runImmediate<T>(db: Database, body: () => T): T {
@@ -169,7 +162,7 @@ export function copySessionStateForClone(
         const sourceCompartments = db
             .prepare(
                 `SELECT sequence, start_message, end_message, start_message_id, end_message_id,
-                        title, content, p1, p2, p3, p4, importance, episode_type, legacy,
+                        title, content, p1, p2, p3, p4, importance, episode_type,
                         created_at, harness
                    FROM compartments WHERE session_id = ? ORDER BY sequence ASC`,
             )
@@ -178,8 +171,8 @@ export function copySessionStateForClone(
             `INSERT INTO compartments
                 (session_id, sequence, start_message, end_message, start_message_id,
                  end_message_id, title, content, p1, p2, p3, p4, importance,
-                 episode_type, legacy, created_at, harness)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 episode_type, created_at, harness)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const copiedCompartments: CloneCompartmentRow[] = [];
         for (const row of sourceCompartments) {
@@ -201,7 +194,6 @@ export function copySessionStateForClone(
                 row.p4,
                 row.importance,
                 row.episode_type,
-                row.legacy,
                 row.created_at,
                 row.harness,
             );
@@ -336,11 +328,8 @@ export function copySessionStateForClone(
         const meta = db
             .prepare(
                 `SELECT cleared_reasoning_through_tag, tool_reclaim_watermark,
-                        pi_stable_id_scheme, stripped_placeholder_ids,
-                        stale_reduce_stripped_ids, processed_image_stripped_ids,
-                        pending_pi_compaction_marker_state, last_todo_state,
-                        todo_synthetic_call_id, todo_synthetic_anchor_message_id,
-                        todo_synthetic_state_json
+                        stripped_placeholder_ids, processed_image_stripped_ids,
+                        pending_pi_compaction_marker_state
                    FROM session_meta WHERE session_id = ?`,
             )
             .get(sourceSessionId) as RawSessionMetaRow | undefined;
@@ -349,32 +338,20 @@ export function copySessionStateForClone(
             meta?.pending_pi_compaction_marker_state ?? null,
             copiedCompartments,
         );
-        const todoAnchor = meta?.todo_synthetic_anchor_message_id ?? "";
-        const migrateTodo = todoAnchor.length > 0 && filter.includeMessageId(todoAnchor);
-
         db.prepare(
             `INSERT INTO session_meta
                 (session_id, harness, counter, cleared_reasoning_through_tag,
-                 tool_reclaim_watermark, pi_stable_id_scheme, stripped_placeholder_ids,
-                 stale_reduce_stripped_ids, processed_image_stripped_ids,
-                 pending_pi_compaction_marker_state, last_todo_state,
-                 todo_synthetic_call_id, todo_synthetic_anchor_message_id,
-                 todo_synthetic_state_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 tool_reclaim_watermark, stripped_placeholder_ids,
+                 processed_image_stripped_ids, pending_pi_compaction_marker_state)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_id) DO UPDATE SET
                 harness = excluded.harness,
                 counter = excluded.counter,
                 cleared_reasoning_through_tag = excluded.cleared_reasoning_through_tag,
                 tool_reclaim_watermark = excluded.tool_reclaim_watermark,
-                pi_stable_id_scheme = excluded.pi_stable_id_scheme,
                 stripped_placeholder_ids = excluded.stripped_placeholder_ids,
-                stale_reduce_stripped_ids = excluded.stale_reduce_stripped_ids,
                 processed_image_stripped_ids = excluded.processed_image_stripped_ids,
                 pending_pi_compaction_marker_state = excluded.pending_pi_compaction_marker_state,
-                last_todo_state = excluded.last_todo_state,
-                todo_synthetic_call_id = excluded.todo_synthetic_call_id,
-                todo_synthetic_anchor_message_id = excluded.todo_synthetic_anchor_message_id,
-                todo_synthetic_state_json = excluded.todo_synthetic_state_json,
                 cached_m0_bytes = NULL,
                 cached_m1_bytes = NULL`,
         ).run(
@@ -383,18 +360,9 @@ export function copySessionStateForClone(
             maxCopiedTag,
             clampWatermark(meta?.cleared_reasoning_through_tag ?? null, maxCopiedTag),
             clampWatermark(meta?.tool_reclaim_watermark ?? null, maxCopiedTag),
-            typeof meta?.pi_stable_id_scheme === "number" &&
-                Number.isFinite(meta.pi_stable_id_scheme)
-                ? meta.pi_stable_id_scheme
-                : null,
             filterIdBlob(meta?.stripped_placeholder_ids ?? null, filter),
-            filterIdBlob(meta?.stale_reduce_stripped_ids ?? null, filter),
             filterIdBlob(meta?.processed_image_stripped_ids ?? null, filter),
             pendingMarker,
-            migrateTodo ? (meta?.last_todo_state ?? "") : "",
-            migrateTodo ? (meta?.todo_synthetic_call_id ?? "") : "",
-            migrateTodo ? (mapMessageId(filter, todoAnchor) ?? "") : "",
-            migrateTodo ? (meta?.todo_synthetic_state_json ?? "") : "",
         );
 
         const pendingOpsRow = db

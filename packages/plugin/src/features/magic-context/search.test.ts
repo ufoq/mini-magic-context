@@ -18,7 +18,6 @@ import {
 } from "./compartment-chunk-embedding";
 import { appendCompartments, getCompartments } from "./compartment-storage";
 import { ensureMessagesIndexed } from "./message-index";
-import { runMigrations } from "./migrations";
 import {
     _resetProjectEmbeddingRegistryForTests,
     registerProjectEmbedding,
@@ -94,8 +93,6 @@ function registerEmbeddingProject(db: Database, projectPath: string) {
 function createTestDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    // runMigrations is retained so the schema matches production openDatabase().
-    runMigrations(db);
     return db;
 }
 

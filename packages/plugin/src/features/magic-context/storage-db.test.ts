@@ -96,7 +96,6 @@ describe("storage-db", () => {
                 "compression_depth",
                 "embedding_identity_active",
                 "embedding_registrations",
-                "git_sweep_coordinator",
                 "m0_mutation_log",
                 "message_history_fts",
                 "message_history_fts_config",

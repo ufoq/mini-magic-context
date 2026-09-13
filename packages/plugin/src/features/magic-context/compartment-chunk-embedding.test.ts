@@ -15,7 +15,6 @@ import {
 import { embedAndStoreCompartmentChunks } from "./compartment-embedding";
 import { appendCompartments, getCompartments } from "./compartment-storage";
 import type { EmbeddingProvider, EmbeddingPurpose } from "./memory/embedding-provider";
-import { runMigrations } from "./migrations";
 import {
     _resetProjectEmbeddingRegistryForTests,
     _setTestProviderFactoryForProject,
@@ -67,7 +66,6 @@ class CapturingEmbeddingProvider implements EmbeddingProvider {
 function createDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
-    runMigrations(db);
     return db;
 }
 

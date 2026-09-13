@@ -10,7 +10,7 @@ function getInsertCompartmentStatement(db: Database): PreparedStatement {
     let stmt = insertCompartmentStatements.get(db);
     if (!stmt) {
         stmt = db.prepare(
-            "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, legacy, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         );
         insertCompartmentStatements.set(db, stmt);
     }
@@ -26,19 +26,17 @@ export interface Compartment {
     startMessageId: string;
     endMessageId: string;
     title: string;
-    /** v2: P1 tier text (fullest). Legacy rows: flat v1 content. Always present (NOT NULL). */
+    /** Full compartment content. */
     content: string;
-    /** v2 paraphrase tiers (model B). NULL for legacy=1 rows. */
-    p1: string | null;
+    /** Paraphrase tiers used for age-based decay. */
+    p1: string;
     p2: string | null;
     p3: string | null;
     p4: string | null;
     /** Decay-rate signal (1-100). Defaults to 50. */
     importance: number;
-    /** Comma-separated activity types (e.g. "design,feature"). NULL for legacy rows. */
+    /** Comma-separated activity types (e.g. "design,feature"). */
     episodeType: string | null;
-    /** 1 = pre-v2 flat compartment (no tiers); 0 = v2 tiered. */
-    legacy: number;
     createdAt: number;
 }
 
@@ -61,13 +59,12 @@ interface CompartmentRow {
     end_message_id: string;
     title: string;
     content: string;
-    p1: string | null;
+    p1: string;
     p2: string | null;
     p3: string | null;
     p4: string | null;
     importance: number | null;
     episode_type: string | null;
-    legacy: number | null;
     created_at: number;
 }
 
@@ -101,15 +98,12 @@ function isCompartmentRow(row: unknown): row is CompartmentRow {
         typeof candidate.end_message_id === "string" &&
         typeof candidate.title === "string" &&
         typeof candidate.content === "string" &&
-        // v2 tier columns are nullable (legacy rows store NULL). Tolerate absence
-        // so a row is never rejected just for missing/null tier metadata.
-        isStringOrNullish(candidate.p1) &&
+        typeof candidate.p1 === "string" &&
         isStringOrNullish(candidate.p2) &&
         isStringOrNullish(candidate.p3) &&
         isStringOrNullish(candidate.p4) &&
         isNumberOrNullish(candidate.importance) &&
         isStringOrNullish(candidate.episode_type) &&
-        isNumberOrNullish(candidate.legacy) &&
         typeof candidate.created_at === "number"
     );
 }
@@ -134,9 +128,9 @@ export interface CompartmentInput {
     startMessageId: string;
     endMessageId: string;
     title: string;
-    /** v2: P1 tier text. Legacy/compressor inserts: flat content. */
+    /** Full compartment content. */
     content: string;
-    /** v2 paraphrase tiers (model B). Omitted/null for legacy or compressor inserts → stored NULL. */
+    /** Paraphrase tiers. P1 defaults to full content for non-tiered producers. */
     p1?: string | null;
     p2?: string | null;
     p3?: string | null;
@@ -155,9 +149,6 @@ function insertCompartmentRows(
 ): void {
     const stmt = getInsertCompartmentStatement(db);
     for (const compartment of compartments) {
-        // A compartment is v2 (legacy=0) iff it carries at least the P1 tier.
-        // Compressor/legacy inserts pass no tiers → stored NULL + legacy=1.
-        const hasTiers = typeof compartment.p1 === "string" && compartment.p1.length > 0;
         stmt.run(
             sessionId,
             compartment.sequence,
@@ -167,13 +158,12 @@ function insertCompartmentRows(
             compartment.endMessageId,
             compartment.title,
             compartment.content,
-            compartment.p1 ?? null,
+            compartment.p1?.trim() ? compartment.p1 : compartment.content,
             compartment.p2 ?? null,
             compartment.p3 ?? null,
             compartment.p4 ?? null,
             typeof compartment.importance === "number" ? compartment.importance : 50,
             compartment.episodeType ?? null,
-            hasTiers ? 0 : 1,
             now,
             getHarness(),
         );
@@ -191,13 +181,12 @@ function toCompartment(row: CompartmentRow): Compartment {
         endMessageId: row.end_message_id,
         title: row.title,
         content: row.content,
-        p1: row.p1 ?? null,
+        p1: row.p1,
         p2: row.p2 ?? null,
         p3: row.p3 ?? null,
         p4: row.p4 ?? null,
         importance: typeof row.importance === "number" ? row.importance : 50,
         episodeType: row.episode_type ?? null,
-        legacy: typeof row.legacy === "number" ? row.legacy : 0,
         createdAt: row.created_at,
     };
 }
@@ -581,15 +570,10 @@ export function clearRecompStaging(db: Database, sessionId: string): void {
     db.transaction(() => {
         db.prepare("DELETE FROM recomp_compartments WHERE session_id = ?").run(sessionId);
         // Clear the partial-range marker so a future full recomp doesn't
-        // resume under a partial range. Best-effort — column may not exist
-        // in very old test DBs.
-        try {
-            db.prepare(
-                "UPDATE session_meta SET recomp_partial_range_start = 0, recomp_partial_range_end = 0 WHERE session_id = ?",
-            ).run(sessionId);
-        } catch {
-            // column missing in very old schemas — ignore
-        }
+        // resume under a partial range.
+        db.prepare(
+            "UPDATE session_meta SET recomp_partial_range_start = 0, recomp_partial_range_end = 0 WHERE session_id = ?",
+        ).run(sessionId);
     })();
 }
 
