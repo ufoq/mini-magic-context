@@ -10,12 +10,7 @@ import {
 import * as searchModule from "@magic-context/core/features/magic-context/search";
 import {
 	acquireWrapupInProgress,
-	addNote,
-	appendNoteNudgeAnchor,
 	getHistorianFailureState,
-	getLastNudgeLevel,
-	getLastNudgeUndropped,
-	getNoteNudgeAnchors,
 	getOrCreateSessionMeta,
 	getPendingOps,
 	getPendingPiCompactionMarkerState,
@@ -24,8 +19,6 @@ import {
 	incrementHistorianFailure,
 	insertTag,
 	queuePendingOp,
-	setLastNudgeLevel,
-	setLastNudgeUndropped,
 	setPendingPiCompactionMarkerState,
 	updateCavemanDepth,
 	updateSessionMeta,
@@ -39,7 +32,6 @@ import { createTagger } from "@magic-context/core/features/magic-context/tagger"
 import { checkCompartmentTrigger } from "@magic-context/core/hooks/magic-context/compartment-trigger";
 import { deriveTriggerBudget } from "@magic-context/core/hooks/magic-context/derive-budgets";
 import { resolveExecuteThreshold } from "@magic-context/core/hooks/magic-context/event-resolvers";
-import { onNoteTrigger } from "@magic-context/core/hooks/magic-context/note-nudger";
 import { withRawMessageProvider } from "@magic-context/core/hooks/magic-context/read-session-chunk";
 import { setBootQuietPeriodForTests } from "@magic-context/core/plugin/boot-quiet";
 import { clearModelsDevCache } from "@magic-context/core/shared/models-dev-cache";
@@ -67,10 +59,6 @@ import {
 	signalPiPendingMaterialization,
 	trackSessionForProject,
 } from "./context-handler";
-import {
-	getPiChannel1Baseline,
-	setPiChannel1Baseline,
-} from "./ctx-reduce-nudge-pi";
 import {
 	assistantMessage,
 	assistantToolCall,
@@ -1055,28 +1043,18 @@ describe("registerPiContextHandler", () => {
 		// Register a victim session with observable per-session state, then track
 		// >100 newer sessions so the victim is evicted via clearContextHandlerSession.
 		const victim = "ses-evict-victim";
-		setPiChannel1Baseline(victim, {
-			tailToolTokens: 1,
-			historyBudgetTokens: 0,
-			contextLimit: 0,
-			executeThresholdPercentage: 65,
-			lastInputTokens: 0,
-			turnToolTokens: 0,
-			usableTokens: 0,
-			reducedSinceRefresh: false,
-			oldestReclaimableToolTags: [],
-		});
+		signalPiPendingMaterialization(victim);
 		trackSessionForProject("proj-evict", victim);
-		expect(getPiChannel1Baseline(victim)).toBeDefined();
+		expect(hasPendingMaterialization(victim)).toBe(true);
 
 		// 100 newer sessions push the victim past the cap (it was tracked first).
 		for (let i = 0; i < 100; i++) {
 			trackSessionForProject("proj-evict", `ses-evict-${i}`);
 		}
 
-		// Victim's per-session Channel 1 baseline was cleared by eviction
-		// (clearContextHandlerSession → clearPiChannel1State).
-		expect(getPiChannel1Baseline(victim)).toBeUndefined();
+		// Victim's per-session cache was cleared by eviction
+		// (clearContextHandlerSession deletes the pending-materialization signal).
+		expect(hasPendingMaterialization(victim)).toBe(false);
 
 		// Cleanup the survivors.
 		clearContextHandlerSession(victim);
@@ -1146,34 +1124,6 @@ describe("registerPiContextHandler", () => {
 
 			// The resolver was consulted with the pass's cwd.
 			expect(seenDirs).toContain(switchedDir);
-		} finally {
-			closeQuietly(db);
-		}
-	});
-
-	it("resets the persisted Channel 1 band when baseline refresh sees a smaller tail", async () => {
-		const db = createTestDb();
-		try {
-			const sessionId = "ses-pi-band-reset";
-			setLastNudgeUndropped(db, sessionId, 80_000);
-			setLastNudgeLevel(db, sessionId, "urgent");
-
-			const fake = createFakePi();
-			registerPiContextHandler(fake.pi as never, {
-				db,
-			});
-			const handler = fake.handlers.get("context") as (
-				event: { messages: never[] },
-				ctx: never,
-			) => Promise<{ messages: never[] } | undefined>;
-
-			await handler(
-				{ messages: [userMessage("hello", 1)] as never[] },
-				fakeContext(sessionId) as never,
-			);
-
-			expect(getLastNudgeUndropped(db, sessionId)).toBe(0);
-			expect(getLastNudgeLevel(db, sessionId)).toBe("");
 		} finally {
 			closeQuietly(db);
 		}
@@ -1423,111 +1373,6 @@ describe("registerPiContextHandler", () => {
 		}
 	});
 
-	it("injects deferred-note text into the latest new user message", async () => {
-		const db = createTestDb();
-		try {
-			const fake = createFakePi();
-			registerPiContextHandler(fake.pi as never, {
-				db,
-			});
-			const handler = fake.handlers.get("context") as (
-				event: { messages: never[] },
-				ctx: never,
-			) => Promise<{ messages: never[] }>;
-			addNote(db, "session", {
-				sessionId: "ses-context",
-				content: "Remember to update docs.",
-			});
-			onNoteTrigger(db, "ses-context", "historian_complete");
-
-			const triggerMsg = userMessage("trigger turn", 1);
-			const newMsg = userMessage("new turn", 2);
-			await handler(
-				{ messages: [triggerMsg] as never[] },
-				fakeContext(
-					"ses-context",
-					process.cwd(),
-					["entry-trigger"],
-					[triggerMsg],
-				) as never,
-			);
-			const result = await handler(
-				{ messages: [newMsg] as never[] },
-				fakeContext(
-					"ses-context",
-					process.cwd(),
-					["entry-new"],
-					[newMsg],
-				) as never,
-			);
-
-			expect(textOf(result.messages[0] as never)).toContain(
-				'<instruction name="deferred_notes">',
-			);
-			expect(textOf(result.messages[0] as never)).toContain("1 deferred note");
-		} finally {
-			closeQuietly(db);
-		}
-	});
-
-	it("replays sticky note nudges idempotently across passes", async () => {
-		const db = createTestDb();
-		try {
-			const sessionId = "ses-sticky-context";
-			const fake = createFakePi();
-			registerPiContextHandler(fake.pi as never, {
-				db,
-			});
-			const handler = fake.handlers.get("context") as (
-				event: { messages: never[] },
-				ctx: never,
-			) => Promise<{ messages: never[] }>;
-			addNote(db, "session", {
-				sessionId,
-				content: "Sticky reminder.",
-			});
-			onNoteTrigger(db, sessionId, "historian_complete");
-			const triggerMsg = userMessage("trigger turn", 1);
-			const newMsg = userMessage("new turn", 2);
-			await handler(
-				{ messages: [triggerMsg] as never[] },
-				fakeContext(
-					sessionId,
-					process.cwd(),
-					["entry-trigger"],
-					[triggerMsg],
-				) as never,
-			);
-			await handler(
-				{ messages: [newMsg] as never[] },
-				fakeContext(sessionId, process.cwd(), ["entry-new"], [newMsg]) as never,
-			);
-
-			const result = await handler(
-				{ messages: [newMsg] as never[] },
-				fakeContext(sessionId, process.cwd(), ["entry-new"], [newMsg]) as never,
-			);
-			const onceMore = await handler(
-				{ messages: result.messages },
-				fakeContext(
-					sessionId,
-					process.cwd(),
-					["entry-new"],
-					[result.messages[0] as never],
-				) as never,
-			);
-
-			expect(
-				textOf(result.messages[0] as never).match(/deferred_notes/g),
-			).toHaveLength(1);
-			expect(
-				textOf(onceMore.messages[0] as never).match(/deferred_notes/g),
-			).toHaveLength(1);
-		} finally {
-			closeQuietly(db);
-		}
-	});
-
 	it("appends an auto-search hint to the latest user message when the threshold is met", async () => {
 		const db = createTestDb();
 		const spy = spyOn(searchModule, "unifiedSearch").mockImplementation(
@@ -1618,41 +1463,6 @@ describe("registerPiContextHandler", () => {
 			expect(spy).toHaveBeenCalledTimes(1);
 		} finally {
 			spy.mockRestore();
-			closeQuietly(db);
-		}
-	});
-
-	it("replays note anchors by message id but skips new note persistence on ref failure", async () => {
-		const db = createTestDb();
-		try {
-			const sessionId = "ses-note-ref-fail";
-			clearContextHandlerSession(sessionId);
-			appendNoteNudgeAnchor(
-				db,
-				sessionId,
-				"entry-existing",
-				'\n\n<instruction name="deferred_notes">existing</instruction>',
-			);
-			addNote(db, "session", { sessionId, content: "Fresh note should wait." });
-			onNoteTrigger(db, sessionId, "historian_complete");
-			const fake = createFakePi();
-			registerPiContextHandler(fake.pi as never, {
-				db,
-			});
-			const handler = fake.handlers.get("context") as (
-				event: { messages: never[] },
-				ctx: never,
-			) => Promise<{ messages: never[] }>;
-			const msg = { ...userMessage("new turn", 1), id: "entry-existing" };
-			const result = await handler({ messages: [msg] as never[] }, {
-				...fakeContext(sessionId),
-				sessionManager: { getSessionId: () => sessionId },
-			} as never);
-
-			expect(textOf(result.messages[0] as never)).toContain("existing");
-			expect(getNoteNudgeAnchors(db, sessionId)).toHaveLength(1);
-		} finally {
-			clearContextHandlerSession("ses-note-ref-fail");
 			closeQuietly(db);
 		}
 	});

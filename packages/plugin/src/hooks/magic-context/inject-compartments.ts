@@ -1308,20 +1308,7 @@ export function mustMaterialize(args: {
 }
 
 // Mini: project-memory / user-profile / workspace / mural rendering is removed
-// from the live injection path. The legacy memory renderers live in
-// ./memory-render (imported only by production-dead modules and tests); we
-// re-export them here so those callers keep compiling.
-export {
-    createMemoryBlockAccounting,
-    memoryRenderOrder,
-    memorySelectionOrder,
-    renderMemoryBlockV2,
-    renderMemoryLineV2,
-    type TrimMemoriesResultV2,
-    trimMemoriesToBudgetV2,
-    trimUserMemoriesToBudget,
-    trimWorkspaceMemoriesToBudgetV2,
-} from "./memory-render";
+// from the live injection path entirely (the legacy renderers are gone).
 
 const MEMORY_MURAL_BLOCK =
     "<memory-mural>\nThe project memory mural image follows.\n</memory-mural>";

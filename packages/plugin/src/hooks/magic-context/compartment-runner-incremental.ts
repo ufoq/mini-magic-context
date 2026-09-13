@@ -41,6 +41,7 @@ import { updateSessionMeta } from "../../features/magic-context/storage-meta";
 import { getLatestHistorianInvocationId } from "../../features/magic-context/storage-subagent-invocations";
 import { normalizeSDKResponse } from "../../shared";
 import { describeError } from "../../shared/error-message";
+import { getHarness } from "../../shared/harness";
 import { sessionLog } from "../../shared/logger";
 import { updateCompactionMarkerAfterPublication } from "./compaction-marker-manager";
 import { buildCompartmentAgentPrompt } from "./compartment-prompt";
@@ -119,7 +120,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 : null;
         recordHistorianRun(db, {
             sessionId,
-            harness: "opencode",
+            harness: getHarness(),
             subagentInvocationId: invocationId,
             runKind: telemetry.runKind ?? "incremental",
             status: telemetry.status ?? "failed",

@@ -26,8 +26,8 @@ import {
     updateSessionMeta,
 } from "../../features/magic-context/storage";
 import { createTagger } from "../../features/magic-context/tagger";
-import type { HarnessClient } from "../../shared/harness-client";
 import * as shared from "../../shared";
+import type { HarnessClient } from "../../shared/harness-client";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import {

@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "a0375921efa36a62833dcd1eaf82fef193c3230475df59da4089709c0538e8a8";
-const NON_MINI_TESTS = new Set(["src/dreamer/pi-session-api.test.ts"] as const);
+const KNOWN_TEST_INVENTORY_DIGEST = "0a3b447c6a3555608d6ace63975fd2e2c170f92e1296610895669dbd9238888d";
+const NON_MINI_TESTS = new Set([] as const);
 const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
 const digest = createHash("sha256").update(`${allTests.join("\n")}\n`).digest("hex");
 const staleManifestEntries = [...NON_MINI_TESTS].filter((path) => !allTests.includes(path));

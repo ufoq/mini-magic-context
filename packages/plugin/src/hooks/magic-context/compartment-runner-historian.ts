@@ -12,6 +12,7 @@ import {
     getProjectMagicContextHistorianDir,
 } from "../../shared/data-path";
 import { describeError, getErrorMessage } from "../../shared/error-message";
+import { getHarness } from "../../shared/harness";
 import type { HarnessClient } from "../../shared/harness-client";
 import { shouldKeepSubagents } from "../../shared/keep-subagents";
 import { buildHistorianEditorPrompt } from "./compartment-prompt";
@@ -288,7 +289,7 @@ async function runHistorianPrompt(args: {
         return recordChildInvocation({
             db: openDatabase(),
             parentSessionId,
-            harness: "opencode",
+            harness: getHarness(),
             subagent:
                 agentId === HISTORIAN_EDITOR_AGENT
                     ? "historian_editor"

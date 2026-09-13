@@ -1,22 +1,11 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "7ed1e2dabda85f2e749bcfedb4d6b971da013059c354e425f2822b0c8de55fad";
+const KNOWN_TEST_INVENTORY_DIGEST = "67db987bfdf20c58ad916b0ed9020b2ba6ba2bf301e72f7c29807c29f91f6258";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([
-    "src/features/magic-context/compartment-events.test.ts",
     "src/features/magic-context/compression-depth-storage.test.ts",
-    "src/features/magic-context/context-authority.test.ts",
-    "src/features/magic-context/git-commits/git-log-reader.test.ts",
-    "src/features/magic-context/git-commits/search-git-commits.test.ts",
-    "src/features/magic-context/git-commits/storage-git-commits.test.ts",
-    "src/features/magic-context/git-commits/sweep-coordinator.test.ts",
     "src/features/magic-context/harness-migration.test.ts",
-    "src/features/magic-context/memory/embedding-backfill.test.ts",
-    "src/features/magic-context/memory/embedding-cache.test.ts",
-    "src/features/magic-context/memory/memory-migration.test.ts",
-    "src/features/magic-context/memory/storage-memory-verifications.test.ts",
-    "src/features/magic-context/memory/storage-memory.test.ts",
     "src/features/magic-context/migrations-race.test.ts",
     "src/features/magic-context/migrations-v10.test.ts",
     "src/features/magic-context/migrations-v11.test.ts",
@@ -59,35 +48,20 @@ const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/migrations-v69.test.ts",
     "src/features/magic-context/migrations-v70.test.ts",
     "src/features/magic-context/migrations-v71.test.ts",
-    "src/features/magic-context/primer-clustering.test.ts",
-    "src/features/magic-context/project-embedding-registry.test.ts",
     "src/features/magic-context/search.test.ts",
-    "src/features/magic-context/shadow-backfill.test.ts",
     "src/features/magic-context/storage-db-migration.test.ts",
-    "src/features/magic-context/storage-embedding-measurements.test.ts",
     "src/features/magic-context/storage-historian-runs.test.ts",
-    "src/features/magic-context/storage-identity-merge.test.ts",
-    "src/features/magic-context/storage-identity-rekey-map.test.ts",
     "src/features/magic-context/storage-memory-mutation-log.test.ts",
-    "src/features/magic-context/storage-primers.test.ts",
     "src/features/magic-context/storage-project-state.test.ts",
     "src/features/magic-context/storage-subagent-invocations.test.ts",
-    "src/features/magic-context/storage-v22-backfill-failures.test.ts",
     "src/features/magic-context/sticky-injection-cas-race.test.ts",
     "src/features/magic-context/storage.test.ts",
     "src/features/magic-context/tagger-recovery.test.ts",
-    "src/features/magic-context/tool-owner-backfill.test.ts",
     "src/features/magic-context/transform-decision-log.test.ts",
-    "src/features/magic-context/user-memory/review-user-memories.test.ts",
     "src/features/magic-context/user-memory/storage-user-memory.test.ts",
-    "src/features/magic-context/v22-deferred-backfill.test.ts",
     "src/features/magic-context/workspaces.test.ts",
     "src/hooks/magic-context/channel2-subagent.test.ts",
     "src/hooks/magic-context/ctx-reduce-nudge.test.ts",
-    "src/hooks/magic-context/inject-compartments.test.ts",
-    "src/hooks/magic-context/note-nudger.test.ts",
-    "src/hooks/magic-context/note-visibility.test.ts",
-    "src/hooks/magic-context/upgrade-reminder.test.ts",
 ] as const);
 
 const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
