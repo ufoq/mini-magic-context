@@ -32,13 +32,6 @@ interface PersistedReasoningWatermarkRow {
     cleared_reasoning_through_tag: number;
 }
 
-interface PersistedNoteNudgeRow {
-    note_nudge_trigger_pending: number;
-    note_nudge_trigger_message_id: string;
-    note_nudge_sticky_text: string;
-    note_nudge_sticky_message_id: string;
-}
-
 interface PersistedTodoSyntheticAnchorRow {
     todo_synthetic_call_id: string;
     todo_synthetic_anchor_message_id: string;
@@ -49,18 +42,6 @@ interface PersistedHistorianFailureRow {
     historian_failure_count: number;
     historian_last_error: string | null;
     historian_last_failure_at: number | null;
-}
-
-export interface PersistedNoteNudge {
-    triggerPending: boolean;
-    triggerMessageId: string | null;
-    stickyText: string | null;
-    stickyMessageId: string | null;
-}
-
-export interface NoteNudgeAnchor {
-    messageId: string;
-    text: string;
 }
 
 export type AutoSearchHintNoHintReason =
@@ -74,12 +55,6 @@ export type AutoSearchHintNoHintReason =
 export type AutoSearchHintDecision =
     | { messageId: string; decision: "hint"; text: string }
     | { messageId: string; decision: "no-hint"; reason: AutoSearchHintNoHintReason };
-
-export type NoteNudgeDeliveryOutcome =
-    | { ok: true; kind: "appended" }
-    | { ok: true; kind: "already-present" }
-    | { ok: false; kind: "conflict" }
-    | { ok: false; kind: "cas-exhausted" };
 
 export type AppendAutoSearchHintOutcome =
     | { ok: true; kind: "appended"; decision: AutoSearchHintDecision }
@@ -192,28 +167,6 @@ function isPersistedReasoningWatermarkRow(row: unknown): row is PersistedReasoni
     return typeof r.cleared_reasoning_through_tag === "number";
 }
 
-function isPersistedNoteNudgeRow(row: unknown): row is PersistedNoteNudgeRow {
-    if (row === null || typeof row !== "object") return false;
-    const r = row as Record<string, unknown>;
-    return (
-        typeof r.note_nudge_trigger_pending === "number" &&
-        typeof r.note_nudge_trigger_message_id === "string" &&
-        typeof r.note_nudge_sticky_text === "string" &&
-        typeof r.note_nudge_sticky_message_id === "string"
-    );
-}
-
-function isValidNoteNudgeAnchor(value: unknown): value is NoteNudgeAnchor {
-    if (value === null || typeof value !== "object") return false;
-    const row = value as Record<string, unknown>;
-    return (
-        typeof row.messageId === "string" &&
-        row.messageId.length > 0 &&
-        typeof row.text === "string" &&
-        row.text.length > 0
-    );
-}
-
 function isValidAutoSearchHintDecision(value: unknown): value is AutoSearchHintDecision {
     if (value === null || typeof value !== "object") return false;
     const row = value as Record<string, unknown>;
@@ -259,15 +212,6 @@ function isPersistedHistorianFailureRow(row: unknown): row is PersistedHistorian
         (typeof r.historian_last_error === "string" || r.historian_last_error === null) &&
         (typeof r.historian_last_failure_at === "number" || r.historian_last_failure_at === null)
     );
-}
-
-function getDefaultPersistedNoteNudge(): PersistedNoteNudge {
-    return {
-        triggerPending: false,
-        triggerMessageId: null,
-        stickyText: null,
-        stickyMessageId: null,
-    };
 }
 
 function getDefaultHistorianFailureState(): PersistedHistorianFailureState {
@@ -862,342 +806,6 @@ export function clearEmergencyDropSample(db: Database, sessionId: string): void 
     })();
 }
 
-// ---- Channel 1 (in-turn tool-output ctx_reduce nudge) cadence + band state ----
-// `last_nudge_undropped` records the `undropped` estimate when Channel 1 last
-// fired; `last_nudge_level` records the highest band already surfaced in the
-// current cycle. Both reset after ctx_reduce so the next accumulation can start
-// a fresh gentle→firm→urgent sequence without repeating the same band.
-export type PersistedChannel1NudgeLevel = "" | "gentle" | "firm" | "urgent";
-
-interface PersistedLastNudgeUndroppedRow {
-    last_nudge_undropped: number;
-}
-
-interface PersistedLastNudgeLevelRow {
-    last_nudge_level: string;
-}
-
-function isLastNudgeUndroppedRow(row: unknown): row is PersistedLastNudgeUndroppedRow {
-    return (
-        typeof row === "object" &&
-        row !== null &&
-        typeof (row as PersistedLastNudgeUndroppedRow).last_nudge_undropped === "number"
-    );
-}
-
-function isLastNudgeLevelRow(row: unknown): row is PersistedLastNudgeLevelRow {
-    return (
-        typeof row === "object" &&
-        row !== null &&
-        typeof (row as PersistedLastNudgeLevelRow).last_nudge_level === "string"
-    );
-}
-
-function normalizeLastNudgeLevel(value: string): PersistedChannel1NudgeLevel {
-    return value === "gentle" || value === "firm" || value === "urgent" ? value : "";
-}
-
-export function getLastNudgeUndropped(db: Database, sessionId: string): number {
-    const result = db
-        .prepare("SELECT last_nudge_undropped FROM session_meta WHERE session_id = ?")
-        .get(sessionId);
-    return isLastNudgeUndroppedRow(result) ? result.last_nudge_undropped : 0;
-}
-
-export function setLastNudgeUndropped(db: Database, sessionId: string, value: number): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare("UPDATE session_meta SET last_nudge_undropped = ? WHERE session_id = ?").run(
-            Math.max(0, Math.round(value)),
-            sessionId,
-        );
-    })();
-}
-
-export function getLastNudgeLevel(db: Database, sessionId: string): PersistedChannel1NudgeLevel {
-    const result = db
-        .prepare("SELECT last_nudge_level FROM session_meta WHERE session_id = ?")
-        .get(sessionId);
-    return isLastNudgeLevelRow(result) ? normalizeLastNudgeLevel(result.last_nudge_level) : "";
-}
-
-export function setLastNudgeLevel(
-    db: Database,
-    sessionId: string,
-    value: PersistedChannel1NudgeLevel,
-): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare("UPDATE session_meta SET last_nudge_level = ? WHERE session_id = ?").run(
-            normalizeLastNudgeLevel(value),
-            sessionId,
-        );
-    })();
-}
-
-export function resetLastNudgeCycle(db: Database, sessionId: string): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare(
-            "UPDATE session_meta SET last_nudge_undropped = 0, last_nudge_level = '' WHERE session_id = ?",
-        ).run(sessionId);
-    })();
-}
-
-/**
- * Clear the persisted Channel-1 cadence/band state when a fresh baseline sees
- * that the reclaimable tail already shrank below the old watermark.
- *
- * Why this exists: historian publication, emergency eviction, or pending-op
- * replay can shrink the tail WITHOUT a `ctx_reduce` tool call. The old nudge then
- * referred to a pile that no longer exists, so a regrowth must start a new
- * gentle→firm→urgent cycle instead of inheriting a stale persisted band.
- */
-export function resetLastNudgeCycleIfTailShrank(
-    db: Database,
-    sessionId: string,
-    measuredUndropped: number,
-): boolean {
-    let changed = false;
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        const result = db
-            .prepare(
-                "UPDATE session_meta SET last_nudge_undropped = 0, last_nudge_level = '' WHERE session_id = ? AND last_nudge_undropped > ?",
-            )
-            .run(sessionId, Math.max(0, Math.round(measuredUndropped)));
-        changed = (result.changes ?? 0) > 0;
-    })();
-    return changed;
-}
-
-// ---- Channel 2 (synthetic-user-message ceiling) one-shot lease/outbox ----
-// State machine stored as a single string in `channel2_nudge_state`:
-//   ''         — no intent (initial)
-//   'pending'  — transform recorded the ceiling condition; deliver on next event
-//   'claimed'  — a delivery attempt is in flight (CAS-claimed before send);
-//                `channel2_nudge_claimed_at` stores the lease timestamp so boot
-//                recovery only rewinds stale claims, never a live sibling send.
-//                OpenCode also writes `channel2_nudge_claim_token` so a slow
-//                sender cannot confirm a lease after another process heals and
-//                re-delivers it.
-//   'delivered'— confirmed sent; the one ceiling nudge is consumed (terminal)
-// On send failure the caller reverts 'claimed' -> 'pending' so a transient error
-// does not permanently burn the single ceiling nudge. After send succeeds, a
-// confirm failure must NOT re-arm; callers leave the lease non-pending.
-export type Channel2NudgeState = "" | "pending" | "claimed" | "delivered";
-
-interface PersistedChannel2StateRow {
-    channel2_nudge_state: string;
-}
-
-interface PersistedChannel2ClaimRow {
-    channel2_nudge_state?: string;
-    channel2_nudge_claimed_at: number;
-    channel2_nudge_claim_token?: string | null;
-}
-
-function isChannel2StateRow(row: unknown): row is PersistedChannel2StateRow {
-    return (
-        typeof row === "object" &&
-        row !== null &&
-        typeof (row as PersistedChannel2StateRow).channel2_nudge_state === "string"
-    );
-}
-
-export function getChannel2NudgeState(db: Database, sessionId: string): Channel2NudgeState {
-    const result = db
-        .prepare("SELECT channel2_nudge_state FROM session_meta WHERE session_id = ?")
-        .get(sessionId);
-    if (!isChannel2StateRow(result)) return "";
-    const raw = result.channel2_nudge_state;
-    return raw === "pending" || raw === "claimed" || raw === "delivered" ? raw : "";
-}
-
-export function getChannel2NudgeClaimedAt(db: Database, sessionId: string): number {
-    const result = db
-        .prepare("SELECT channel2_nudge_claimed_at FROM session_meta WHERE session_id = ?")
-        .get(sessionId);
-    return typeof result === "object" &&
-        result !== null &&
-        typeof (result as PersistedChannel2ClaimRow).channel2_nudge_claimed_at === "number"
-        ? (result as PersistedChannel2ClaimRow).channel2_nudge_claimed_at
-        : 0;
-}
-
-export interface Channel2NudgeClaim {
-    state: Channel2NudgeState;
-    claimedAt: number;
-    claimToken: string;
-}
-
-export function getChannel2NudgeClaim(db: Database, sessionId: string): Channel2NudgeClaim {
-    const result = db
-        .prepare(
-            "SELECT channel2_nudge_state, channel2_nudge_claimed_at, channel2_nudge_claim_token FROM session_meta WHERE session_id = ?",
-        )
-        .get(sessionId) as PersistedChannel2ClaimRow | null;
-    const rawState =
-        typeof result?.channel2_nudge_state === "string" ? result.channel2_nudge_state : "";
-    const state: Channel2NudgeState =
-        rawState === "pending" || rawState === "claimed" || rawState === "delivered"
-            ? rawState
-            : "";
-    return {
-        state,
-        claimedAt:
-            typeof result?.channel2_nudge_claimed_at === "number"
-                ? result.channel2_nudge_claimed_at
-                : 0,
-        claimToken:
-            typeof result?.channel2_nudge_claim_token === "string"
-                ? result.channel2_nudge_claim_token
-                : "",
-    };
-}
-
-export function setChannel2NudgeState(
-    db: Database,
-    sessionId: string,
-    state: Channel2NudgeState,
-): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        const claimedAt = state === "claimed" ? Date.now() : 0;
-        db.prepare(
-            "UPDATE session_meta SET channel2_nudge_state = ?, channel2_nudge_claimed_at = ?, channel2_nudge_claim_token = '' WHERE session_id = ?",
-        ).run(state, claimedAt, sessionId);
-    })();
-}
-
-/**
- * Atomically move the Channel-2 lease from one state to another. Returns true
- * only if the row was in `from` and is now `to` — a cross-process CAS so two
- * concurrent processes can't both claim+deliver the single ceiling nudge.
- */
-export function casChannel2NudgeState(
-    db: Database,
-    sessionId: string,
-    from: Channel2NudgeState,
-    to: Channel2NudgeState,
-): boolean {
-    let changed = false;
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        const claimedAt = to === "claimed" ? Date.now() : 0;
-        const result = db
-            .prepare(
-                "UPDATE session_meta SET channel2_nudge_state = ?, channel2_nudge_claimed_at = ?, channel2_nudge_claim_token = '' WHERE session_id = ? AND channel2_nudge_state = ?",
-            )
-            .run(to, claimedAt, sessionId, from);
-        changed = (result.changes ?? 0) > 0;
-    })();
-    return changed;
-}
-
-export function claimChannel2NudgeState(
-    db: Database,
-    sessionId: string,
-    claimToken: string,
-): boolean {
-    let changed = false;
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        const result = db
-            .prepare(
-                "UPDATE session_meta SET channel2_nudge_state = 'claimed', channel2_nudge_claimed_at = ?, channel2_nudge_claim_token = ? WHERE session_id = ? AND channel2_nudge_state = 'pending'",
-            )
-            .run(Date.now(), claimToken, sessionId);
-        changed = (result.changes ?? 0) > 0;
-    })();
-    return changed;
-}
-
-export function casChannel2NudgeClaim(
-    db: Database,
-    sessionId: string,
-    to: Channel2NudgeState,
-    claimToken: string,
-): boolean {
-    let changed = false;
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        const claimedAt = to === "claimed" ? Date.now() : 0;
-        const nextClaimToken = to === "claimed" ? claimToken : "";
-        const result = db
-            .prepare(
-                "UPDATE session_meta SET channel2_nudge_state = ?, channel2_nudge_claimed_at = ?, channel2_nudge_claim_token = ? WHERE session_id = ? AND channel2_nudge_state = 'claimed' AND channel2_nudge_claim_token = ?",
-            )
-            .run(to, claimedAt, nextClaimToken, sessionId, claimToken);
-        changed = (result.changes ?? 0) > 0;
-    })();
-    return changed;
-}
-
-export function getPersistedNoteNudge(db: Database, sessionId: string): PersistedNoteNudge {
-    const result = db
-        .prepare(
-            "SELECT note_nudge_trigger_pending, note_nudge_trigger_message_id, note_nudge_sticky_text, note_nudge_sticky_message_id FROM session_meta WHERE session_id = ?",
-        )
-        .get(sessionId);
-
-    if (!isPersistedNoteNudgeRow(result)) {
-        return getDefaultPersistedNoteNudge();
-    }
-
-    return {
-        triggerPending: result.note_nudge_trigger_pending === 1,
-        triggerMessageId:
-            result.note_nudge_trigger_message_id.length > 0
-                ? result.note_nudge_trigger_message_id
-                : null,
-        stickyText: result.note_nudge_sticky_text.length > 0 ? result.note_nudge_sticky_text : null,
-        stickyMessageId:
-            result.note_nudge_sticky_message_id.length > 0
-                ? result.note_nudge_sticky_message_id
-                : null,
-    };
-}
-
-export function setPersistedNoteNudgeTrigger(
-    db: Database,
-    sessionId: string,
-    triggerMessageId = "",
-): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare(
-            "UPDATE session_meta SET note_nudge_trigger_pending = 1, note_nudge_trigger_message_id = ? WHERE session_id = ?",
-        ).run(triggerMessageId, sessionId);
-    })();
-}
-
-export function setPersistedNoteNudgeTriggerMessageId(
-    db: Database,
-    sessionId: string,
-    triggerMessageId: string,
-): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare(
-            "UPDATE session_meta SET note_nudge_trigger_message_id = ? WHERE session_id = ?",
-        ).run(triggerMessageId, sessionId);
-    })();
-}
-
-export function clearPersistedNoteNudge(db: Database, sessionId: string): void {
-    db.prepare(
-        "UPDATE session_meta SET note_nudge_trigger_pending = 0, note_nudge_trigger_message_id = '', note_nudge_sticky_text = '', note_nudge_sticky_message_id = '' WHERE session_id = ?",
-    ).run(sessionId);
-}
-
-export function getNoteNudgeAnchors(db: Database, sessionId: string): NoteNudgeAnchor[] {
-    const row = db
-        .prepare("SELECT note_nudge_anchors FROM session_meta WHERE session_id = ?")
-        .get(sessionId) as { note_nudge_anchors?: string | null } | undefined;
-    return parseJsonArray(row?.note_nudge_anchors, isValidNoteNudgeAnchor);
-}
-
 export function getAutoSearchHintDecisions(
     db: Database,
     sessionId: string,
@@ -1211,7 +819,7 @@ export function getAutoSearchHintDecisions(
 function casUpdateJsonArrayColumn<T>(
     db: Database,
     sessionId: string,
-    column: "note_nudge_anchors" | "auto_search_hint_decisions",
+    column: "auto_search_hint_decisions",
     validator: (value: unknown) => value is T,
     mutate: (current: T[]) => T[] | null,
     options?: { ensureRow?: boolean },
@@ -1220,7 +828,7 @@ function casUpdateJsonArrayColumn<T>(
     // UPDATE SQL below; the TS union is the only compile-time guard, so a
     // future JS-interop or untyped caller could otherwise inject SQL. Throw on
     // any column outside the known set so interpolation is always safe.
-    if (column !== "note_nudge_anchors" && column !== "auto_search_hint_decisions") {
+    if (column !== "auto_search_hint_decisions") {
         throw new Error(`casUpdateJsonArrayColumn: refusing unknown column "${column}"`);
     }
     if (options?.ensureRow === false) {
@@ -1254,80 +862,6 @@ function casUpdateJsonArrayColumn<T>(
     }
     sessionLog(sessionId, `${column} CAS: ${CAS_RETRY_LIMIT} retries exhausted`);
     return false;
-}
-
-export function appendNoteNudgeAnchor(
-    db: Database,
-    sessionId: string,
-    messageId: string,
-    text: string,
-): boolean {
-    if (!messageId || !text) return false;
-    return casUpdateJsonArrayColumn(
-        db,
-        sessionId,
-        "note_nudge_anchors",
-        isValidNoteNudgeAnchor,
-        (current) => {
-            if (current.some((anchor) => anchor.messageId === messageId && anchor.text === text)) {
-                return null;
-            }
-            if (current.some((anchor) => anchor.messageId === messageId)) {
-                sessionLog(sessionId, "note-nudge: messageId conflict, refusing append");
-                return null;
-            }
-            return [...current, { messageId, text }];
-        },
-    );
-}
-
-type NoteNudgeDeliveryPlan = { kind: "appended" | "already-present" | "conflict" };
-
-export function deliverNoteNudgeAtomic(
-    db: Database,
-    sessionId: string,
-    messageId: string,
-    text: string,
-): NoteNudgeDeliveryOutcome {
-    let plan: NoteNudgeDeliveryPlan | null = null;
-    const casOk = casUpdateJsonArrayColumn(
-        db,
-        sessionId,
-        "note_nudge_anchors",
-        isValidNoteNudgeAnchor,
-        (current) => {
-            if (current.some((anchor) => anchor.messageId === messageId && anchor.text === text)) {
-                plan = { kind: "already-present" };
-                return null;
-            }
-            if (current.some((anchor) => anchor.messageId === messageId)) {
-                plan = { kind: "conflict" };
-                sessionLog(sessionId, "note-nudge: messageId conflict, refusing append");
-                return null;
-            }
-            plan = { kind: "appended" };
-            return [...current, { messageId, text }];
-        },
-    );
-    if (!casOk) {
-        sessionLog(sessionId, `note-nudge: CAS exhausted for ${messageId}; skipping wire append`);
-        return { ok: false, kind: "cas-exhausted" };
-    }
-    const committedPlan = plan as NoteNudgeDeliveryPlan | null;
-    if (!committedPlan) {
-        sessionLog(
-            sessionId,
-            "note-nudge: CAS reported success with no plan staged; treating as failure",
-        );
-        return { ok: false, kind: "cas-exhausted" };
-    }
-    if (committedPlan.kind === "conflict") {
-        return { ok: false, kind: "conflict" };
-    }
-    db.prepare(
-        "UPDATE session_meta SET note_nudge_trigger_pending = 0, note_nudge_trigger_message_id = '' WHERE session_id = ?",
-    ).run(sessionId);
-    return { ok: true, kind: committedPlan.kind };
 }
 
 export function appendAutoSearchHintDecision(
@@ -1365,26 +899,6 @@ export function appendAutoSearchHintDecision(
     return { ok: true, kind: committed.kind, decision: committed.decision };
 }
 
-export function pruneNoteNudgeAnchors(
-    db: Database,
-    sessionId: string,
-    visibleMessageIds: Set<string>,
-): number {
-    let pruned = 0;
-    casUpdateJsonArrayColumn(
-        db,
-        sessionId,
-        "note_nudge_anchors",
-        isValidNoteNudgeAnchor,
-        (current) => {
-            const next = current.filter((anchor) => visibleMessageIds.has(anchor.messageId));
-            pruned = current.length - next.length;
-            return pruned > 0 ? next : null;
-        },
-    );
-    return pruned;
-}
-
 export function pruneAutoSearchHintDecisions(
     db: Database,
     sessionId: string,
@@ -1403,27 +917,6 @@ export function pruneAutoSearchHintDecisions(
         },
     );
     return pruned;
-}
-
-export function removeNoteNudgeAnchorByMessageId(
-    db: Database,
-    sessionId: string,
-    messageId: string,
-): boolean {
-    let removed = false;
-    const ok = casUpdateJsonArrayColumn(
-        db,
-        sessionId,
-        "note_nudge_anchors",
-        isValidNoteNudgeAnchor,
-        (current) => {
-            const next = current.filter((anchor) => anchor.messageId !== messageId);
-            removed = next.length !== current.length;
-            return removed ? next : null;
-        },
-        { ensureRow: false },
-    );
-    return ok && removed;
 }
 
 export function removeAutoSearchHintDecisionByMessageId(
@@ -1504,37 +997,10 @@ export function clearPersistedTodoSyntheticAnchor(db: Database, sessionId: strin
  * or 0 when the session has never called it. Used by note-nudger to suppress
  * reminders when the agent has already seen notes in recent context.
  */
-export function getNoteLastReadAt(db: Database, sessionId: string): number {
-    try {
-        const result = db
-            .prepare("SELECT note_last_read_at FROM session_meta WHERE session_id = ?")
-            .get(sessionId);
-        if (!result || typeof result !== "object") return 0;
-        const value = (result as { note_last_read_at?: unknown }).note_last_read_at;
-        return typeof value === "number" && Number.isFinite(value) ? value : 0;
-    } catch {
-        // Column may not exist yet on a DB that hasn't gone through
-        // ensureColumn (e.g. minimal test schemas). The watermark is a
-        // suppression hint, not required for correctness — return 0 so
-        // the nudge flow proceeds as if ctx_note(read) has never been called.
-        return 0;
-    }
-}
-
 /**
  * Record that ctx_note(read) was just called for this session. The watermark is
  * compared against note updated_at / created_at on each nudge decision.
  */
-export function setNoteLastReadAt(db: Database, sessionId: string, at = Date.now()): void {
-    db.transaction(() => {
-        ensureSessionMetaRow(db, sessionId);
-        db.prepare("UPDATE session_meta SET note_last_read_at = ? WHERE session_id = ?").run(
-            at,
-            sessionId,
-        );
-    })();
-}
-
 export function getHistorianFailureState(
     db: Database,
     sessionId: string,

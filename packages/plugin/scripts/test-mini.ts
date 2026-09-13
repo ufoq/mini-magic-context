@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "67db987bfdf20c58ad916b0ed9020b2ba6ba2bf301e72f7c29807c29f91f6258";
+const KNOWN_TEST_INVENTORY_DIGEST = "2119d00b51f8079ab8df6769815e5238887e1fcc892ae0c924c7a422fce55c03";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/compression-depth-storage.test.ts",
@@ -60,8 +60,6 @@ const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/transform-decision-log.test.ts",
     "src/features/magic-context/user-memory/storage-user-memory.test.ts",
     "src/features/magic-context/workspaces.test.ts",
-    "src/hooks/magic-context/channel2-subagent.test.ts",
-    "src/hooks/magic-context/ctx-reduce-nudge.test.ts",
 ] as const);
 
 const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();

@@ -14,10 +14,15 @@
 //     `tagNumber > priorWatermark` AND `status==="active"`, and the watermark
 //     advances past every dropped tag. So the number of drop-induced cache
 //     busts over a session is bounded by the tool-tag count — no oscillation.
-//   - All accounting is in TOKENS. Tags store BYTES, so we convert with the one
-//     canonical estimator (`TOKENS_PER_BYTE`, shared with the Phase 1 nudge).
+//   - All accounting is in TOKENS. Tags store BYTES, so we convert with a
+//     canonical byte→token estimator.
 
-import { TOKENS_PER_BYTE } from "./ctx-reduce-nudge";
+/**
+ * Approximate tokens-per-byte. Bytes are cheap to measure in the hot drop path;
+ * the selection only needs an order-of-magnitude estimate, not an exact
+ * tokenizer count.
+ */
+export const TOKENS_PER_BYTE = 0.25;
 
 /** Reclaim target = fixedFloor + TARGET_FRACTION × (ceiling − fixedFloor). */
 export const TARGET_FRACTION = 0.3;

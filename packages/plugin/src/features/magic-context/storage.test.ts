@@ -15,14 +15,12 @@ import { runMigrations } from "./migrations";
 import {
     addNote,
     appendAutoSearchHintDecision,
-    appendNoteNudgeAnchor,
     buildCompartmentBlock,
     clearPendingOps,
     clearSession,
     closeDatabase,
     dismissNote,
     getAutoSearchHintDecisions,
-    getNoteNudgeAnchors,
     getOrCreateSessionMeta,
     getPendingOps,
     getPendingSmartNotes,
@@ -35,10 +33,8 @@ import {
     markNoteReady,
     openDatabase,
     pruneAutoSearchHintDecisions,
-    pruneNoteNudgeAnchors,
     queuePendingOp,
     removeAutoSearchHintDecisionByMessageId,
-    removeNoteNudgeAnchorByMessageId,
     removePendingOp,
     replaceAllSessionNotes,
     updateNote,
@@ -274,29 +270,6 @@ describe("magic-context storage", () => {
         closeQuietly(db);
     });
 
-    it("stores note-nudge anchors append-only and prunes by visible message ids", () => {
-        //#given
-        const db = makeMemoryDatabase();
-        const sessionId = "ses-anchor";
-
-        //#when
-        expect(appendNoteNudgeAnchor(db, sessionId, "m1", "text-1")).toBe(true);
-        expect(appendNoteNudgeAnchor(db, sessionId, "m1", "text-1")).toBe(true);
-        expect(appendNoteNudgeAnchor(db, sessionId, "m1", "different")).toBe(true);
-        expect(appendNoteNudgeAnchor(db, sessionId, "m2", "text-2")).toBe(true);
-
-        //#then
-        expect(getNoteNudgeAnchors(db, sessionId)).toEqual([
-            { messageId: "m1", text: "text-1" },
-            { messageId: "m2", text: "text-2" },
-        ]);
-        expect(pruneNoteNudgeAnchors(db, sessionId, new Set(["m2"]))).toBe(1);
-        expect(getNoteNudgeAnchors(db, sessionId)).toEqual([{ messageId: "m2", text: "text-2" }]);
-        expect(removeNoteNudgeAnchorByMessageId(db, sessionId, "m2")).toBe(true);
-        expect(getNoteNudgeAnchors(db, sessionId)).toEqual([]);
-        closeQuietly(db);
-    });
-
     it("stores auto-search decisions with stored-entry already-present semantics", () => {
         //#given
         const db = makeMemoryDatabase();
@@ -338,11 +311,10 @@ describe("magic-context storage", () => {
         //#given
         const db = makeMemoryDatabase();
         db.prepare(
-            "INSERT INTO session_meta (session_id, note_nudge_anchors, auto_search_hint_decisions) VALUES (?, ?, ?)",
-        ).run("ses-bad-json", "not-json", "{}");
+            "INSERT INTO session_meta (session_id, auto_search_hint_decisions) VALUES (?, ?)",
+        ).run("ses-bad-json", "{}");
 
         //#then
-        expect(getNoteNudgeAnchors(db, "ses-bad-json")).toEqual([]);
         expect(getAutoSearchHintDecisions(db, "ses-bad-json")).toEqual([]);
         closeQuietly(db);
     });
