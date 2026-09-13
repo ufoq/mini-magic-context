@@ -1,6 +1,6 @@
 # Mini Magic Context — Pi extension
 
-Historian-backed context management and journal search for [Pi coding agent](https://github.com/earendil-works/pi-mono). Compartments, embeddings, and indexed journal history are shared with the [OpenCode plugin](https://www.npmjs.com/package/@ufoq/opencode-mini-magic-context) via a single SQLite database.
+Historian-backed context management and journal search for [Pi coding agent](https://github.com/earendil-works/pi-mono). It stores compartmented session history and optional embeddings in a local SQLite database.
 
 Requires `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `>= 0.80.2`.
 
@@ -16,7 +16,6 @@ Requires `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `>= 0.80
 | **History expansion (`ctx_expand`)** | Recovers the original transcript from any compressed compartment range |
 | **Optional embeddings** | Semantic search over compartments using local `all-MiniLM-L6-v2` or any OpenAI-compatible endpoint |
 | **Legacy import** | Imports compartments from a previous full Magic Context installation, per session |
-| **Cross-harness sharing** | The same database is shared with the OpenCode plugin for the same project |
 
 ---
 
@@ -93,21 +92,15 @@ Everything lives in a single SQLite database:
 ~/.local/share/cortexkit/mini-magic-context/context.db
 ```
 
-This is the same database the OpenCode plugin uses. Session-scoped data is keyed by `harness` (`'pi'` or `'opencode'`), so per-session tagging stays correctly attributed while compartments and embeddings are shared across harnesses.
+Session-scoped data is keyed by the Pi harness so separate sessions remain isolated while compartments and embeddings remain available to their owning session.
 
 Storage failures are fatal. The plugin refuses to register hooks rather than run with ephemeral state, since that would let context grow unbounded across restarts.
 
 ---
 
-## Cross-harness coherence
-
-Both plugins must use the same embedding model for semantic search to work across harnesses. A mismatch is detected on startup and warned.
-
----
-
 ## Architecture
 
-This package is part of the [mini-magic-context monorepo](https://github.com/ufoq/mini-magic-context). The Pi extension shares core storage and tool implementations with the OpenCode plugin, exposing a Pi-specific adapter layer for session management, subprocess subagents, and config loading.
+This package is part of the [mini-magic-context monorepo](https://github.com/ufoq/mini-magic-context). The Pi extension uses the shared core for storage and context operations, with a Pi-specific adapter layer for session management, subprocess subagents, and config loading.
 
 ---
 

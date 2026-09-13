@@ -3,7 +3,7 @@
 # Build + run the interactive Magic Context setup/doctor sandbox.
 #
 # Installs the PUBLISHED @ufoq/mini-magic-context (latest by default) in a clean
-# container with OpenCode + Pi present, then drops you into a shell to drive the
+# container with Pi installed, then drops you into a shell to drive the
 # setup/doctor wizards by hand and inspect where config lands (the CortexKit
 # location). Rebuild after a release to pick up the newest published version.
 #

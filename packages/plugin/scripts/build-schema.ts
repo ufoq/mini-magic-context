@@ -52,7 +52,7 @@ export function buildSchema(): Record<string, unknown> {
         $id: SCHEMA_ID,
         title: "Mini Magic Context Configuration",
         description:
-            "Configuration schema for the @ufoq/opencode-mini-magic-context plugin. Place as mini-magic-context.jsonc in <project>/.cortexkit/ or ~/.config/cortexkit/.",
+            "Configuration schema for the Pi Mini Magic Context extension. Place as mini-magic-context.jsonc in <project>/.cortexkit/ or ~/.config/cortexkit/.",
         ...generated,
         properties,
         // The Zod schema strips unknown keys at runtime rather than rejecting,

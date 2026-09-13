@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
   "title": "Mini Magic Context Configuration",
-  "description": "Configuration schema for the @ufoq/opencode-mini-magic-context plugin. Place as mini-magic-context.jsonc in <project>/.cortexkit/ or ~/.config/cortexkit/.",
+  "description": "Configuration schema for the Pi Mini Magic Context extension. Place as mini-magic-context.jsonc in <project>/.cortexkit/ or ~/.config/cortexkit/.",
   "type": "object",
   "properties": {
     "enabled": {
@@ -11,7 +11,7 @@
       "type": "boolean"
     },
     "auto_update": {
-      "description": "Enable automatic npm self-update checks for the OpenCode plugin. Security: USER-only in config loader, so hostile project configs cannot suppress updates.",
+      "description": "Enable automatic npm self-update checks for Mini Magic Context. Security: USER-only in config loader, so hostile project configs cannot suppress updates.",
       "type": "boolean"
     },
     "language": {
@@ -19,7 +19,7 @@
       "type": "string"
     },
     "historian": {
-      "description": "Historian agent configuration (model, fallback_models, variant, temperature, maxTokens, permission, two_pass, etc.)",
+      "description": "Historian agent configuration (model, fallback_models, temperature, maxTokens, two_pass, and thinking_level).",
       "type": "object",
       "properties": {
         "model": {
@@ -146,10 +146,6 @@
           "description": "Maximum output tokens",
           "type": "number"
         },
-        "variant": {
-          "description": "OpenCode reasoning variant (e.g. for extended thinking)",
-          "type": "string"
-        },
         "fallback_models": {
           "description": "Fallback model IDs if primary is unavailable",
           "anyOf": [
@@ -170,7 +166,7 @@
           "type": "boolean"
         },
         "thinking_level": {
-          "description": "Pi only: explicit thinking level passed as --thinking <level> to Pi historian subagent invocations. Required when using reasoning models (e.g. github-copilot/gpt-5.4) because Pi's default thinking-level resolution can pick a value the provider rejects. OpenCode users set variant instead. Valid: off | minimal | low | medium | high | xhigh | max",
+          "description": "Explicit thinking level passed as --thinking <level> to Pi historian subagent invocations. Required when using reasoning models (e.g. github-copilot/gpt-5.4) because Pi's default thinking-level resolution can pick a value the provider rejects. Valid: off | minimal | low | medium | high | xhigh | max",
           "type": "string",
           "enum": [
             "off",
@@ -181,21 +177,6 @@
             "xhigh",
             "max"
           ]
-        },
-        "disallowed_tools": {
-          "default": [],
-          "description": "OpenCode only. Tools to REMOVE from the historian's default allow-list [read, aft_outline, aft_zoom, aft_search]. Applies to both historian and historian-editor agents. Use [\"*\"] to strip all tool definitions from the model request — this prevents weak instruction-following models (e.g. mistral-small-latest) from entering tool-calling loops. Individual tool names remove just that tool. Note: a user-supplied historian.permission override can re-allow a tool that disallowed_tools removed — disallowed_tools sets the baseline, permission overrides take precedence. (default: [])",
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "*",
-              "read",
-              "aft_outline",
-              "aft_zoom",
-              "aft_search"
-            ]
-          }
         }
       }
     },
@@ -327,7 +308,7 @@
           "<!-- magic-context: skip -->"
         ]
       },
-      "description": "Controls whether and where Magic Context augments the system prompt. Lets users opt specific agents out of the Magic Context guidance and the surrounding project-docs / user-profile blocks. OpenCode's internal hidden agents — title, summary, and compaction — are always skipped automatically.",
+      "description": "Controls whether and where Magic Context augments the system prompt. Lets users opt specific agents out of the Magic Context guidance. Magic Context's own historian child runs are always skipped automatically.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -442,7 +423,7 @@
       "properties": {
         "enabled": {
           "default": true,
-          "description": "Pi only: register Magic Context's todowrite task-list tool. Disable if you use your own todo extension. OpenCode ships its own built-in todowrite; this setting has no effect there.",
+          "description": "Register Magic Context's todowrite task-list tool. Disable it if you use another todo extension.",
           "type": "boolean"
         },
         "overlay": {

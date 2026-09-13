@@ -1,10 +1,8 @@
 {
   "name": "@ufoq/mini-magic-context",
   "version": "0.1.0",
-  "description": "Unified CLI for Mini Magic Context setup and diagnostics across OpenCode and Pi",
+  "description": "CLI for Pi Mini Magic Context setup and diagnostics",
   "keywords": [
-    "opencode",
-    "opencode-plugin",
     "pi",
     "pi-extension",
     "magic-context",

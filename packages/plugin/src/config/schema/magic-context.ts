@@ -7,11 +7,11 @@ export const DEFAULT_EXECUTE_THRESHOLD_PERCENTAGE = 65;
 // Explains WHY execute_threshold is hard-capped at 80% (not just "too big").
 // A single agent step can be large enough to overflow the context window before
 // Magic Context can compact between turns; staying at/below 80% leaves headroom
-// to absorb that and compact safely instead of falling back to OpenCode's native
+// to absorb that and compact safely instead of falling back to the host's native
 // compaction (far harder to recover from). 80% also sits below the 85% emergency
 // and 95% block-and-recover bands, which are tuned around it.
 export const EXECUTE_THRESHOLD_CAP_MESSAGE =
-    "execute_threshold is capped at 80% for cache safety: a single large agent step can overflow the context window before Magic Context can compact between turns, forcing OpenCode's native compaction (hard to recover from). 80% also leaves headroom below the 85%/95% emergency bands. Use a value between 20 and 80.";
+    "execute_threshold is capped at 80% for cache safety: a single large agent step can overflow the context window before Magic Context can compact between turns, forcing native host compaction (hard to recover from). 80% also leaves headroom below the 85%/95% emergency bands. Use a value between 20 and 80.";
 export const DEFAULT_HISTORIAN_TIMEOUT_MS = 300_000;
 export const DEFAULT_HISTORY_BUDGET_PERCENTAGE = 0.15;
 
@@ -19,8 +19,7 @@ export const DEFAULT_LOCAL_EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 /** Valid thinking levels for Pi subagents. Maps to Pi's --thinking CLI flag.
  *  Off: disable reasoning. Minimal/low/medium/high/xhigh/max: increasing reasoning depth.
- *  `max` was added in Pi 0.83.0.
- *  Pi-only — OpenCode uses `variant` in agent config instead. */
+ *  `max` was added in Pi 0.83.0. */
 export const PiThinkingLevelSchema = z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional();
@@ -43,8 +42,8 @@ export type PiConfig = NonNullable<z.infer<typeof PiConfigSchema>>;
 /** Historian agent configuration — includes all agent overrides plus two_pass mode.
  *  Two-pass mode runs a second editor pass after the initial historian pass to clean
  *  up low-signal U: lines and cross-compartment duplicates. Recommended for models
- *  without extended thinking; not needed for Claude Sonnet/Opus when reasoning is
- *  enabled via OpenCode variant config. */
+ *  without extended thinking; generally unnecessary for models with strong
+ *  built-in reasoning. */
 export const HistorianConfigSchema = AgentOverrideConfigSchema.extend({
     two_pass: z
         .boolean()
@@ -53,14 +52,8 @@ export const HistorianConfigSchema = AgentOverrideConfigSchema.extend({
             "Run a second editor pass over historian output to clean low-signal U: lines and cross-compartment duplicates. Adds ~1 extra API call and ~1.3x cost per historian run. Useful for models without extended thinking support. (default: false)",
         ),
     thinking_level: PiThinkingLevelSchema.describe(
-        "Pi only: explicit thinking level passed as --thinking <level> to Pi historian subagent invocations. Required when using reasoning models (e.g. github-copilot/gpt-5.4) because Pi's default thinking-level resolution can pick a value the provider rejects. OpenCode users set variant instead. Valid: off | minimal | low | medium | high | xhigh | max",
+        "Explicit thinking level passed as --thinking <level> to Pi historian subagent invocations. Required when using reasoning models (e.g. github-copilot/gpt-5.4) because Pi's default thinking-level resolution can pick a value the provider rejects. Valid: off | minimal | low | medium | high | xhigh | max",
     ),
-    disallowed_tools: z
-        .array(z.enum(["*", "read", "aft_outline", "aft_zoom", "aft_search"]))
-        .default([])
-        .describe(
-            'OpenCode only. Tools to REMOVE from the historian\'s default allow-list [read, aft_outline, aft_zoom, aft_search]. Applies to both historian and historian-editor agents. Use ["*"] to strip all tool definitions from the model request — this prevents weak instruction-following models (e.g. mistral-small-latest) from entering tool-calling loops. Individual tool names remove just that tool. Note: a user-supplied historian.permission override can re-allow a tool that disallowed_tools removed — disallowed_tools sets the baseline, permission overrides take precedence. (default: [])',
-        ),
 }).optional();
 export type HistorianConfig = NonNullable<z.infer<typeof HistorianConfigSchema>>;
 
@@ -159,7 +152,7 @@ export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 
 export interface MagicContextConfig {
     enabled: boolean;
-    /** Auto-update the cached OpenCode plugin wrapper when a newer npm version is available.
+    /** Auto-update the installed Mini Magic Context package when a newer npm version is available.
      *  USER config only; project configs cannot disable it. Default: true. */
     auto_update?: boolean;
     /** Output language for generated Magic Context prose. USER config only. */
@@ -190,8 +183,8 @@ export interface MagicContextConfig {
      * Controls whether and where Magic Context augments the system prompt
      * (`## Magic Context` guidance and the sticky date).
      *
-     * Internal OpenCode hidden agents (title, summary, compaction) are
-     * always skipped automatically — that's a separate code path.
+     * Magic Context's own historian child runs are always skipped automatically
+     * — they use a separate code path.
      */
     system_prompt_injection: {
         /** When false, NO injection happens for ANY agent — global escape hatch. */
@@ -218,7 +211,7 @@ export interface MagicContextConfig {
      * USER config only — project tier cannot set this. Not recommended to disable.
      */
     fail_closed_blocking: boolean;
-    /** Pi-only controls for Magic Context's OpenCode-parity todowrite surface. */
+    /** Pi-only controls for Magic Context's todowrite surface. */
     todowrite: {
         enabled: boolean;
         overlay: boolean;
@@ -271,7 +264,7 @@ export const MagicContextConfigSchema = z
             .boolean()
             .optional()
             .describe(
-                "Enable automatic npm self-update checks for the OpenCode plugin. Security: USER-only in config loader, so hostile project configs cannot suppress updates.",
+                "Enable automatic npm self-update checks for Mini Magic Context. Security: USER-only in config loader, so hostile project configs cannot suppress updates.",
             ),
         language: z
             .string()
@@ -294,7 +287,7 @@ export const MagicContextConfigSchema = z
                     "original language until naturally rewritten.",
             ),
         historian: HistorianConfigSchema.describe(
-            "Historian agent configuration (model, fallback_models, variant, temperature, maxTokens, permission, two_pass, etc.)",
+            "Historian agent configuration (model, fallback_models, temperature, maxTokens, two_pass, and thinking_level).",
         ),
         cache_ttl: z
             .union([z.string(), z.object({ default: z.string() }).catchall(z.string())])
@@ -394,7 +387,7 @@ export const MagicContextConfigSchema = z
                 skip_signatures: ["<!-- magic-context: skip -->"],
             })
             .describe(
-                "Controls whether and where Magic Context augments the system prompt. Lets users opt specific agents out of the Magic Context guidance and the surrounding project-docs / user-profile blocks. OpenCode's internal hidden agents — title, summary, and compaction — are always skipped automatically.",
+                "Controls whether and where Magic Context augments the system prompt. Lets users opt specific agents out of the Magic Context guidance. Magic Context's own historian child runs are always skipped automatically.",
             ),
         // v2: the LLM compressor was removed — deterministic decay-tier rendering
         // (decay-render.ts) replaces it, so there are no compressor knobs. A
@@ -451,7 +444,7 @@ export const MagicContextConfigSchema = z
                     .boolean()
                     .default(true)
                     .describe(
-                        "Pi only: register Magic Context's todowrite task-list tool. Disable if you use your own todo extension. OpenCode ships its own built-in todowrite; this setting has no effect there.",
+                        "Register Magic Context's todowrite task-list tool. Disable it if you use another todo extension.",
                     ),
                 overlay: z
                     .boolean()

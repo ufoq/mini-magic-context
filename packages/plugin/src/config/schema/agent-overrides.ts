@@ -34,10 +34,6 @@ export const AgentOverrideConfigSchema = z.object({
     maxSteps: z.number().optional().describe("Maximum tool-call steps per invocation"),
     permission: PermissionSchema.describe("Per-tool permission overrides"),
     maxTokens: z.number().optional().describe("Maximum output tokens"),
-    variant: z
-        .string()
-        .optional()
-        .describe("OpenCode reasoning variant (e.g. for extended thinking)"),
     fallback_models: z
         .union([z.string(), z.array(z.string())])
         .optional()

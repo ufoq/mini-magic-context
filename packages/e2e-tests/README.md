@@ -1,6 +1,6 @@
-# @ufoq/opencode-mini-magic-context-e2e
+# @ufoq/pi-mini-magic-context-e2e
 
-End-to-end test harness for the Mini Magic Context plugins (OpenCode and Pi). Spawns a real `opencode serve` subprocess (or a Pi child process) pointed at a local mock Anthropic server and drives sessions through the appropriate harness.
+End-to-end test harness for the Pi Mini Magic Context extension. It spawns a real Pi child process pointed at a local mock Anthropic server, drives sessions through Pi RPC, and asserts against SQLite state, log output, and captured provider requests.
 
 ## Running
 
@@ -14,17 +14,13 @@ cd packages/e2e-tests && bun test
 
 ## Architecture
 
-- **`src/mock-provider/server.ts`** — Anthropic-compatible mock HTTP server. Accepts POST `/messages`, supports both SSE streaming (default for OpenCode) and single-shot JSON, lets tests script responses with precise control over `input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`. Captures every request body for assertions.
-
-- **`src/opencode-runner/spawn.ts`** — Subprocess runner that launches `opencode serve` with an isolated config/data/cache directory, a custom `mock-anthropic` provider pointed at the mock, and the plugin loaded from local source via `file://` spec.
-
-- **`src/pi-runner/`** + **`src/pi-harness.ts`** — Pi-flavored counterpart. Spawns a real Pi child process pointed at the same mock Anthropic server and loads the Pi plugin from local source.
+- **`src/mock-provider/server.ts`** — Anthropic-compatible mock HTTP server. It accepts POST `/messages`, supports the response modes exercised by Pi, lets tests script responses with precise usage values, and captures every request body for assertions.
+- **`src/pi-harness.ts`** — Pi RPC test harness.
+- **`tests/pi-*.test.ts`** — Pi integration suites covering context management, historian execution, drops, search/tagging, todo synthesis, and overflow handling.
 
 ### Pi RPC harness
 
 Pi e2e tests run through `pi --mode rpc`. Each `PiTestHarness` owns one persistent Pi subprocess for its lifetime and talks to it over strict JSONL on stdio. `harness.sendPrompt()` sends a `prompt` RPC command and collects the event slice from `agent_start` through `agent_end`.
-
-- **`tests/*.test.ts`** — Test suites. OpenCode suites use `harness.ts` / `opencode-runner`; Pi suites (`tests/pi-*.test.ts`) use `pi-harness.ts` / `pi-runner`. Each test creates a session, sends prompts, and asserts against SQLite state, log output, and captured mock requests.
 
 ## Configuration and storage
 
@@ -33,46 +29,25 @@ Tests use the standard Mini Magic Context paths:
 - Config: `<project>/.cortexkit/mini-magic-context.jsonc`
 - Database: `~/.local/share/cortexkit/mini-magic-context/context.db`
 
-The spawner provisions isolated directories so test runs don't touch real user data.
+The harness provisions isolated directories so test runs do not touch real user data.
 
 ## Requirements
 
-- `opencode` CLI available on PATH for OpenCode suites.
-- Pi CLI installed for Pi suites (see `packages/pi-plugin/README.md`).
+- Pi CLI installed (see `packages/pi-plugin/README.md`).
 - Bun.
-- No `OPENCODE_SERVER_PASSWORD` required — the spawner strips it so the test server runs unsecured on a random localhost port.
 
 ## Writing a test
 
 ```ts
-import { MockProvider } from "../src/mock-provider/server";
-import { spawnOpencode } from "../src/opencode-runner/spawn";
+import { PiTestHarness } from "../src/pi-harness";
 
-const mock = new MockProvider();
-const { baseURL } = await mock.start();
-const opencode = await spawnOpencode({ mockProviderURL: baseURL });
-
-// Script exactly what the main agent should return on each turn.
-mock.script([
+const harness = await PiTestHarness.create();
+harness.mock.script([
     { text: "response 1", usage: { input_tokens: 10_000, output_tokens: 50 } },
-    { text: "response 2", usage: { input_tokens: 50_000, output_tokens: 50, cache_read_input_tokens: 10_000 } },
 ]);
 
-// Drive the session via the SDK.
-const { createOpencodeClient } = await import("@opencode-ai/sdk");
-const client = createOpencodeClient({ baseUrl: opencode.url });
-const { data: session } = await client.session.create({ query: { directory: opencode.env.workdir } });
-await client.session.prompt({
-    path: { id: session!.id },
-    body: {
-        model: { providerID: "mock-anthropic", modelID: "mock-sonnet" },
-        parts: [{ type: "text", text: "turn 1" }],
-    },
-});
+await harness.sendPrompt("turn 1");
+expect(harness.mock.requests().length).toBe(1);
 
-// Assert against captured requests and plugin state.
-expect(mock.requests().length).toBe(1);
-
-await opencode.kill();
-await mock.stop();
+await harness.dispose();
 ```
