@@ -34,7 +34,7 @@ const ctxExpandArgsShape = {
         .number()
         .optional()
         .describe(
-            "Full untruncated recovery of ONE message by its ordinal (every text part + every tool call's complete input/output). Use an ordinal from a compartment, ctx_search hit, or verbose range. Recovers a tool output you dropped with ctx_reduce.",
+            "Full untruncated recovery of ONE message by its ordinal (every text part + every tool call's complete input/output). Use an ordinal from a compartment, ctx_search hit, or verbose range. Recovers a tool output that context management has since compacted or replaced on the wire.",
         ),
 };
 // The tool definition exposes only the documented argument shape to the model

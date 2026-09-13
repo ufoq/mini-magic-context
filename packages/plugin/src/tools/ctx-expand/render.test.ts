@@ -93,7 +93,7 @@ describe("renderVerboseRange", () => {
 });
 
 describe("renderMessageByOrdinal", () => {
-    test("recovers the FULL untruncated tool output (the ctx_reduce way-back)", () => {
+    test("recovers the FULL untruncated tool output (the way back from a drop)", () => {
         const fullOutput = "ERROR at line 42\n".repeat(50);
         const cleanup = provide([
             {

@@ -11,7 +11,7 @@
  *   - `renderMessageById`: the FULL untruncated content of one message (any
  *     role) — every text part, and every tool call's complete input + output —
  *     read straight from the harness's stored history (opencode.db / Pi JSONL).
- *     This is the cheap way back from a `ctx_reduce` drop: the wire placeholder
+ *     This is the way back from a drop: the wire placeholder
  *     is `[dropped §N§]`, but the original output still lives in storage until
  *     the row is genuinely deleted (session prune/revert), in which case we say
  *     so rather than re-running the tool (which could now give a different

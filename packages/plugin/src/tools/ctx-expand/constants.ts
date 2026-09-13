@@ -8,6 +8,6 @@ Returns the raw transcript as [N] U:/A: lines, capped at ~15K tokens; an oversiz
 
 Two recovery modes for finer detail:
 - ctx_expand(start=120, end=245, verbose=true) — lists each message SEPARATELY with its ordinal [N] and a per-part preview (each tool call shown with its output size). Use this to find the exact message or tool call you want, then recover it in full by ordinal.
-- ctx_expand(message=138) — returns the FULL untruncated content of the message at that ordinal: every text part, and every tool call's complete input + output, read from stored history. This is the cheap way to get back a tool output you dropped with ctx_reduce — the original is still in storage even though the wire shows [dropped §N§]. If the message was deleted from history (session prune/revert), it says so.`;
+- ctx_expand(message=138) — returns the FULL untruncated content of the message at that ordinal: every text part, and every tool call's complete input + output, read from stored history. This is the way back to a tool output that context management has since compacted or replaced on the wire (you may see \`[dropped §N§]\` in its place) — the original is always still in storage. If the message was deleted from history (session prune/revert), it says so.`;
 
 export const CTX_EXPAND_TOKEN_BUDGET = 15_000;

@@ -67,4 +67,23 @@ describe("createToolRegistry", () => {
         expect(Object.keys(memoryOff).sort()).toEqual(["ctx_expand", "ctx_search"]);
         expect(Object.keys(rustConfigured).sort()).toEqual(["ctx_expand", "ctx_search"]);
     });
+
+    // Design invariant: reduction is extension-only. The model may RECOVER
+    // context (ctx_expand) and SEARCH it (ctx_search), but never shrink it —
+    // mini has no ctx_reduce tool, and no tool description may advertise one.
+    // A description promising an uncallable tool is worse than no mention: the
+    // model cargo-cults a call it cannot make (see the retired `§N§` markers).
+    it("never advertises a model-callable ctx_reduce tool", () => {
+        isolateDb();
+        const tools = buildRegistry({});
+
+        expect(tools).not.toHaveProperty("ctx_reduce");
+        for (const definition of Object.values(tools)) {
+            expect(definition?.description ?? "").not.toContain("ctx_reduce");
+            for (const arg of Object.values(definition?.args ?? {})) {
+                const argSchema = arg as { description?: string };
+                expect(argSchema.description ?? "").not.toContain("ctx_reduce");
+            }
+        }
+    });
 });
