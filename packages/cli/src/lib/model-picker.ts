@@ -1,5 +1,5 @@
 /**
- * Shared model-selection UX for the setup wizard (both OpenCode and Pi).
+ * Model-selection UX for the Pi setup wizard.
  *
  * Replaces the old per-harness `buildModelSelection` recommendation trees, which
  * hardcoded a curated list of "recommended" model ids. That was wrong for two
@@ -11,7 +11,7 @@
  */
 import type { PromptIO, SelectOption } from "./prompts";
 
-export type ModelRole = "historian" | "dreamer" | "sidekick";
+export type ModelRole = "historian";
 
 interface RoleCopy {
     title: string;
@@ -32,23 +32,6 @@ const ROLE_COPY: Record<ModelRole, RoleCopy> = {
             "your costs down.",
         pickMessage: "Select a model for the historian",
         placeholder: "type to filter (e.g. haiku, flash, mini)…",
-    },
-    dreamer: {
-        title: "Dreamer",
-        blurb:
-            "The dreamer runs periodically (typically overnight) to consolidate and maintain\n" +
-            "your project memories. It is not on the hot path and does NOT need a frontier\n" +
-            "model — a cheaper or local model is a good fit here.",
-        pickMessage: "Select a model for the dreamer",
-        placeholder: "type to filter (e.g. flash, local, glm)…",
-    },
-    sidekick: {
-        title: "Sidekick",
-        blurb:
-            "The sidekick augments your prompt with relevant project context when you run\n" +
-            "/ctx-aug. Fast models are preferred here.",
-        pickMessage: "Select a model for the sidekick",
-        placeholder: "type to filter…",
     },
 };
 

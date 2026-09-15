@@ -38,8 +38,11 @@ export class FailClosedBlockingError extends Error {
     }
 }
 
-/** OpenCode native hidden agents that must never be blocked by the gate. */
-const OPENCODE_INTERNAL_AGENT_NAMES = new Set(["title", "summary", "compaction"]);
+/**
+ * Native hidden-agent names that must never be blocked by the gate: the harness
+ * uses these for its own single-shot title/summary/compaction passes.
+ */
+const NATIVE_INTERNAL_AGENT_NAMES = new Set(["title", "summary", "compaction"]);
 
 /**
  * Magic Context hidden-child agent ids (and stable prefixes). These sessions are
@@ -55,7 +58,7 @@ export function formatFailClosedBlockingMessage(reason: FailClosedReason): strin
         return [
             `Magic Context cannot operate: shared database schema v${reason.persistedVersion}`,
             `is newer than this build supports (max v${reason.supportedVersion}).`,
-            "A newer OpenCode/Pi instance upgraded the database; this build fail-closed",
+            "A newer Magic Context build upgraded the database; this build fail-closes",
             "so it cannot corrupt the cache or silently fall back to native compaction.",
             `Update or unpin Magic Context on this harness, then restart.`,
             `Recovery: ${FAIL_CLOSED_DOCTOR_COMMAND}`,
@@ -88,7 +91,7 @@ export function isFailClosedBlockingError(error: unknown): error is FailClosedBl
 
 /**
  * Whether this transform/context pass should skip the loud block.
- * Primary user sessions are never exempt; internal OpenCode agents, Magic
+ * Primary user sessions are never exempt; harness-internal agents, Magic
  * Context hidden children, and Pi subagent processes are.
  */
 export function shouldBypassFailClosedBlock(input: {
@@ -100,7 +103,7 @@ export function shouldBypassFailClosedBlock(input: {
     if (input.isInternalChildSession === true) return true;
     const agent = typeof input.agent === "string" ? input.agent.trim() : "";
     if (agent.length === 0) return false;
-    if (OPENCODE_INTERNAL_AGENT_NAMES.has(agent)) return true;
+    if (NATIVE_INTERNAL_AGENT_NAMES.has(agent)) return true;
     if (isMagicContextHiddenAgentName(agent)) return true;
     return false;
 }

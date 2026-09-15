@@ -87,7 +87,7 @@ describe("isSecretKey — false positives we deliberately reject", () => {
 describe("sanitizeConfigValue — preserves benign config keys", () => {
     it("does not redact pin_key_files nested object", () => {
         const config = {
-            dreamer: {
+            historian: {
                 pin_key_files: {
                     enabled: true,
                     token_budget: 10000,
@@ -96,7 +96,7 @@ describe("sanitizeConfigValue — preserves benign config keys", () => {
             },
         };
         const sanitized = sanitizeConfigValue(config) as typeof config;
-        expect(sanitized.dreamer.pin_key_files).toEqual({
+        expect(sanitized.historian.pin_key_files).toEqual({
             enabled: true,
             token_budget: 10000,
             min_reads: 4,
