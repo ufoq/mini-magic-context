@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "30e0a985e41c0c30949eba50cc9fae6caa97e1ae986841d03fd848d8d8be4e76";
+const KNOWN_TEST_INVENTORY_DIGEST = "366fc69679d20fdda45296b0296c35df21e360de5f6eacd546688ceaf6ebde15";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([
     "src/features/magic-context/compression-depth-storage.test.ts",
