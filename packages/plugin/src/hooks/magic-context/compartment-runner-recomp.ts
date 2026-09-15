@@ -40,7 +40,7 @@ import {
 import { clearInjectionCache } from "./inject-compartments";
 import {
     createDefaultBoundarySnapshotForTests,
-    resolveOpenCodeProtectedTailBoundary,
+    resolveProtectedTailBoundaryForHarness,
 } from "./protected-tail-boundary";
 import { getRawSessionMessageCount, readSessionChunk } from "./read-session-chunk";
 import { buildReferenceBlocks } from "./reference-retrieval";
@@ -153,7 +153,7 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
         const boundarySnapshot =
             process.env.NODE_ENV === "test"
                 ? createDefaultBoundarySnapshotForTests(sessionId)
-                : resolveOpenCodeProtectedTailBoundary({
+                : resolveProtectedTailBoundaryForHarness({
                       db,
                       sessionId,
                       mode: "manual-full-recomp",

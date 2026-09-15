@@ -58,7 +58,7 @@ import {
     createDefaultBoundarySnapshotForTests,
     hasRunnableCompartmentWindow,
     recordHighPressureNoEligibleHead,
-    resolveOpenCodeProtectedTailBoundary,
+    resolveProtectedTailBoundaryForHarness,
     selectPerRunCap,
     validateBoundarySnapshot,
 } from "./protected-tail-boundary";
@@ -244,7 +244,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         if (!validation.ok && validation.reason === "stale_snapshot") {
             const refreshed = deps.refreshBoundarySnapshot
                 ? deps.refreshBoundarySnapshot(boundarySnapshot, validation)
-                : resolveOpenCodeProtectedTailBoundary({
+                : resolveProtectedTailBoundaryForHarness({
                       db,
                       sessionId,
                       mode: "incremental-runner",
