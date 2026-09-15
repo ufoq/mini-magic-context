@@ -34,7 +34,7 @@ export class PiAdapter implements HarnessAdapter {
         const settings = readPiSettings();
         if (!settings) return false;
         const packages = (settings.packages ?? []) as unknown[];
-        return packages.some((entry) => isPiMagicContextPackageEntry(entry));
+        return packages.some((entry) => isPiMagicContextPackageEntry(entry, piPackageBaseDir()));
     }
 
     getConfigPaths(): HarnessConfigPaths {
@@ -54,7 +54,9 @@ export class PiAdapter implements HarnessAdapter {
                 ? (settings.packages as unknown[])
                 : [];
 
-            const idx = packages.findIndex((entry) => isPiMagicContextPackageEntry(entry));
+            const idx = packages.findIndex((entry) =>
+                isPiMagicContextPackageEntry(entry, piPackageBaseDir()),
+            );
             if (idx === -1) {
                 packages.push(PI_PACKAGE_SOURCE);
                 settings.packages = packages;
@@ -96,7 +98,7 @@ export class PiAdapter implements HarnessAdapter {
             }
             const before = settings.packages.length;
             settings.packages = settings.packages.filter(
-                (entry: unknown) => !isPiMagicContextPackageEntry(entry),
+                (entry: unknown) => !isPiMagicContextPackageEntry(entry, piPackageBaseDir()),
             );
             if (settings.packages.length === before) {
                 return {
@@ -128,7 +130,7 @@ export class PiAdapter implements HarnessAdapter {
     }
 
     getPluginCacheInfo(): PluginCacheInfo {
-        // Pi doesn't have a separate user-level plugin cache the way OpenCode
+        // Pi keeps no separate user-level plugin cache,
         // does — it shells out to npm at install time. Reporting as "no cache"
         // means doctor --clear will skip Pi cleanup, which is the correct
         // behavior since there's nothing for us to safely clear.
@@ -169,6 +171,11 @@ interface PiSettingsLike {
 function readPiSettings(): PiSettingsLike | null {
     const result = readJsoncConfig(getPiUserExtensionsPath());
     return result.kind === "parsed" ? (result.value as PiSettingsLike) : null;
+}
+
+/** Directory relative local-path package entries are resolved against. */
+function piPackageBaseDir(): { baseDir: string } {
+    return { baseDir: dirname(getPiUserExtensionsPath()) };
 }
 
 function readPiSettingsForUpdate(): PiSettingsLike {

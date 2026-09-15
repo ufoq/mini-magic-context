@@ -103,7 +103,7 @@ export function writePiSettingsPackage(
     ensureDir(dirname(settingsPath));
     const packages = Array.isArray(settings.packages) ? settings.packages : [];
 
-    const hasPackage = hasPiMagicContextPackage(packages);
+    const hasPackage = hasPiMagicContextPackage(packages, { baseDir: dirname(settingsPath) });
 
     if (!hasPackage) packages.push(packageSource);
     settings.packages = packages;
@@ -128,8 +128,8 @@ export function writeMagicContextConfig(
     }
 
     // The Pi model picker yields Pi-native provider ids (openai-codex/...,
-    // google-antigravity/...). The shared config is canonical (OpenCode) form so
-    // OpenCode can read the same file; normalize before writing.
+    // google-antigravity/...). The shared config stores canonical provider ids
+    // shared by all harnesses; normalize before writing.
     config.historian = compactObject({
         ...((config.historian as Record<string, unknown> | undefined) ?? {}),
         model: piModelRefToCanonical(options.historianModel),

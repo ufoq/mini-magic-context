@@ -198,6 +198,65 @@ afterEach(() => {
 });
 
 describe("Pi doctor", () => {
+    it("recognizes a local-path install instead of reporting a missing npm package", async () => {
+        const root = makeTempRoot();
+        const cwd = makeTempRoot("mc-pi-doctor-cwd-");
+        const agentDir = setEnv(root, cwd);
+        writeHealthyFiles(agentDir, cwd);
+
+        // Simulate `pi install <local path>`: Pi records the path verbatim,
+        // relative to the settings directory. The package name is only
+        // discoverable by reading the manifest it points at.
+        const localPkg = join(agentDir, "local-plugin");
+        mkdirSync(localPkg, { recursive: true });
+        writeFileSync(
+            join(localPkg, "package.json"),
+            JSON.stringify({ name: "@ufoq/pi-mini-magic-context", version: "0.1.0" }),
+        );
+        writeFileSync(
+            join(agentDir, "settings.json"),
+            JSON.stringify({ packages: ["local-plugin"] }),
+        );
+        const prompts = new MockPrompts();
+
+        const code = await runDoctor(baseOptions(root, cwd, prompts));
+
+        expect(code).toBe(0);
+        const output = prompts.messages.join("\n");
+        expect(output).toContain("PASS npm:@ufoq/pi-mini-magic-context is registered");
+        expect(output).not.toContain("is missing from packages[]");
+    });
+
+    it("still reports a genuinely missing package entry", async () => {
+        const root = makeTempRoot();
+        const cwd = makeTempRoot("mc-pi-doctor-cwd-");
+        const agentDir = setEnv(root, cwd);
+        writeHealthyFiles(agentDir, cwd);
+        writeFileSync(
+            join(agentDir, "settings.json"),
+            JSON.stringify({ packages: ["npm:some-other-extension"] }),
+        );
+        const prompts = new MockPrompts();
+
+        // FAIL lines are printed to stderr rather than through PromptIO.
+        const errors: string[] = [];
+        const originalError = console.error;
+        console.error = (...args: unknown[]) => {
+            errors.push(args.map(String).join(" "));
+        };
+        let code: number;
+        try {
+            code = await runDoctor(baseOptions(root, cwd, prompts));
+        } finally {
+            console.error = originalError;
+        }
+
+        expect(code).toBe(1);
+        expect(errors.join("\n")).toContain(
+            "FAIL npm:@ufoq/pi-mini-magic-context is missing from packages[]",
+        );
+    });
+
     it("passes Phase 1 with a healthy mocked environment", async () => {
         const root = makeTempRoot();
         const cwd = makeTempRoot("mc-pi-doctor-cwd-");

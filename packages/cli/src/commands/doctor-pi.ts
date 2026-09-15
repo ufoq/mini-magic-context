@@ -434,7 +434,7 @@ async function runHealthChecks(options: {
             add(
                 results,
                 "fail",
-                `Pi ${version} is older than required ${MIN_PI_VERSION}. Subagents (historian/dreamer/sidekick) use the long-form \`--extension\` flag introduced in Pi 0.71.0; older versions hard-fail with "Unknown option". Run \`pi update\` (or \`npm install -g @earendil-works/pi-coding-agent@latest\`).`,
+                `Pi ${version} is older than required ${MIN_PI_VERSION}. The historian subagent uses the long-form \`--extension\` flag introduced in Pi 0.71.0; older versions hard-fail with "Unknown option". Run \`pi update\` (or \`npm install -g @earendil-works/pi-coding-agent@latest\`).`,
             );
         } else if (version) {
             add(results, "pass", `Pi version meets minimum ${MIN_PI_VERSION} requirement`);
@@ -462,6 +462,9 @@ async function runHealthChecks(options: {
     }
 
     const settingsPath = getPiUserExtensionsPath();
+    // Relative local-path entries (e.g. "../my-plugin") are stored relative to
+    // the settings file, so resolve them against its directory.
+    const packageContext = { baseDir: dirname(settingsPath) };
     let packages: unknown[] = [];
     if (!existsSync(settingsPath)) {
         add(results, "fail", `Pi settings not found at ${settingsPath}`);
@@ -473,7 +476,7 @@ async function runHealthChecks(options: {
         } else {
             packages = packagesFrom(parsed.value);
             add(results, "pass", `Pi settings found at ${settingsPath}`);
-            if (hasPiMagicContextPackage(packages)) {
+            if (hasPiMagicContextPackage(packages, packageContext)) {
                 add(results, "pass", `${PI_PACKAGE_SOURCE} is registered in packages[]`);
             } else {
                 add(results, "fail", `${PI_PACKAGE_SOURCE} is missing from packages[]`);
@@ -699,7 +702,9 @@ async function runHealthChecks(options: {
     // extensions today, but we still check for self-conflicts that the user
     // can hit (e.g. accidentally registering both an npm entry AND a local
     // dev-path entry, which causes duplicate plugin loading).
-    const piEntries = packages.filter(isPiMagicContextPackageEntry).map(describePiPackageEntry);
+    const piEntries = packages
+        .filter((entry) => isPiMagicContextPackageEntry(entry, packageContext))
+        .map(describePiPackageEntry);
     if (piEntries.length > 1) {
         add(
             results,
@@ -711,7 +716,7 @@ async function runHealthChecks(options: {
     }
 
     const otherExtensions = packages
-        .filter((entry) => !isPiMagicContextPackageEntry(entry))
+        .filter((entry) => !isPiMagicContextPackageEntry(entry, packageContext))
         .map(describePiPackageEntry);
     if (otherExtensions.length > 0) {
         add(results, "info", `Other Pi extensions registered: ${otherExtensions.join(", ")}`);
@@ -719,8 +724,10 @@ async function runHealthChecks(options: {
         add(results, "info", "No other Pi extensions listed in settings.json");
     }
 
-    const configuredEntry = packages.find(isPiMagicContextPackageEntry);
-    const configuredSpecifier = getPiMagicContextPackageSpecifier(configuredEntry);
+    const configuredEntry = packages.find((entry) =>
+        isPiMagicContextPackageEntry(entry, packageContext),
+    );
+    const configuredSpecifier = getPiMagicContextPackageSpecifier(configuredEntry, packageContext);
     const expectedPluginVersion =
         pinnedVersionFromPackageSpecifier(configuredSpecifier) ?? latest ?? null;
     const staleCaches = findPiMagicContextCacheDirs(

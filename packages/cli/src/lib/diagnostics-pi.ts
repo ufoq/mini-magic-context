@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/paths";
 import { parseCompartmentOutput } from "@magic-context/core/hooks/magic-context/compartment-parser";
@@ -159,7 +159,7 @@ function currentUserHash(): string {
 }
 
 function redactSecretString(value: string): string {
-    // Apply the shared comprehensive redactor (OpenCode parity: adds
+    // Apply the shared comprehensive redactor (adds
     // github_pat_/ghp_/hf_/AKIA/Slack/Google/JWT and generic key=value forms that
     // the bespoke version leaked) AND then the original looser patterns as a
     // SUPERSET — the shared `sk-` pattern requires 32+ chars (real key length),
@@ -439,8 +439,9 @@ export async function collectDiagnostics(cwd = process.cwd()): Promise<PiDiagnos
     const dbPath = join(storageDirPath, "context.db");
     const logPath = getMagicContextLogPath();
     const logFileSize = existsSync(logPath) ? statSync(logPath).size : 0;
+    const packageContext = { baseDir: dirname(settingsPath) };
     const otherPiExtensions = packages
-        .filter((entry) => !isPiMagicContextPackageEntry(entry))
+        .filter((entry) => !isPiMagicContextPackageEntry(entry, packageContext))
         .map(describePiPackageEntry);
     const recentSessions = collectPiRecentSessions();
     const historianDumps = collectPiHistorianDumps(recentSessions);
@@ -458,7 +459,7 @@ export async function collectDiagnostics(cwd = process.cwd()): Promise<PiDiagnos
             path: settingsPath,
             exists: existsSync(settingsPath),
             ...(settingsParsed.parseError ? { parseError: settingsParsed.parseError } : {}),
-            hasMagicContextPackage: hasPiMagicContextPackage(packages),
+            hasMagicContextPackage: hasPiMagicContextPackage(packages, packageContext),
             packages: sanitizeValue(packages) as unknown[],
         },
         configPaths: {
