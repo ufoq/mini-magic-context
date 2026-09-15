@@ -33,7 +33,7 @@ export interface BundledIssueReport {
 /**
  * Drop log lines that reference a session ID OTHER than `sessionId`.
  * See logs-opencode.ts for the rationale; this Pi variant uses the same
- * approach because Pi historian logs include the OpenCode-style `ses_*`
+ * approach because Pi historian logs include the `ses_*`
  * shape for its own child sessions and that's what the picker presents.
  */
 function filterLogLinesBySession(lines: string[], sessionId: string | null): string[] {

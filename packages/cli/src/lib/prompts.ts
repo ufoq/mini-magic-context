@@ -1,9 +1,8 @@
 /**
  * Unified prompts wrapper around @clack/prompts.
  *
- * Maintains backward-compatible API surface for both the previous OpenCode
- * plugin CLI (`selectOne(message, [{label, value, recommended}])`) and Pi
- * plugin CLI (`PromptIO`/`SelectOption` interfaces with `recommended` flag).
+ * Exposes the `PromptIO`/`SelectOption` surface (with the `recommended` flag)
+ * consumed by the setup and doctor wizards.
  *
  * The CLI ships with `#!/usr/bin/env node` and is invoked via `npx`, which
  * runs it on Node. `install.sh` redirects stdin from `/dev/tty` so Clack's

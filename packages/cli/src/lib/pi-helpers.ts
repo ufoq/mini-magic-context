@@ -31,7 +31,7 @@ export function getPiCommandInvocation(piPath: string, args: string[]): PiComman
 export function detectPiBinary(): PiBinaryInfo | null {
     // Node-only PATH walker, not which/where: shelling out fails in
     // Alpine/slim/Nix/bunx sandboxes that lack those binaries (same reason the
-    // OpenCode detector switched to findOnPath). findOnPath handles platform
+    // detector switched to findOnPath). findOnPath handles platform
     // extensions (.cmd/.exe) and X_OK checks internally.
     const fromPath = findOnPath("pi");
     if (fromPath) return { path: fromPath, source: "path" };

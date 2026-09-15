@@ -1,6 +1,5 @@
 /**
- * Shared helpers for building `doctor --issue` GitHub issue bodies across
- * both OpenCode and Pi.
+ * Shared helpers for building `doctor --issue` GitHub issue bodies.
  *
  * Two responsibilities live here:
  *
@@ -14,10 +13,9 @@
  *      log block (the noise-heavy section) from the top, preserving the
  *      diagnostics / configuration / error sections that matter most.
  *
- * Both helpers are harness-agnostic — they operate on already-sanitized
- * markdown — so OpenCode and Pi share the same byte budget, the same
- * truncation marker text, and the same precision/false-positive tradeoff
- * on what counts as an "error" line.
+ * Both helpers operate on already-sanitized markdown, so every caller shares
+ * the same byte budget, the same truncation marker text, and the same
+ * precision/false-positive tradeoff on what counts as an "error" line.
  */
 
 /**
@@ -36,7 +34,7 @@ const FALLBACK_TRUNCATION_MARKER = "\n\n[truncated for GitHub 64KB limit]\n";
 /**
  * Pattern tokens that mark a log line as ERROR-shaped. Magic Context's
  * runtime uses a small, predictable vocabulary in `sessionLog(...)` calls
- * across both OpenCode and Pi plugins: `failed:`, `Error:`, `EMERGENCY`,
+ * `failed:`, `Error:`, `EMERGENCY`,
  * `exception`. We also pick up stack-frame lines (`    at SomeFn
  * (file:line:col)`) so the agent reading the issue sees enough context to
  * identify the call site.
