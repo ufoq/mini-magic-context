@@ -17,7 +17,6 @@ export function createPiHistorianClient(args: {
 	timeoutMs?: number;
 	thinkingLevel?: string;
 	directory: string;
-	accountingSessionId: string;
 	notify: (text: string) => void;
 }) {
 	const sessions = new Map<string, unknown[]>();
@@ -50,8 +49,6 @@ export function createPiHistorianClient(args: {
 			timeoutMs: args.timeoutMs,
 			cwd: args.directory,
 			thinkingLevel: args.thinkingLevel,
-			accountingSessionId: args.accountingSessionId,
-			accountingSubagent: "recomp",
 		});
 		if (!result.ok) {
 			throw new Error(

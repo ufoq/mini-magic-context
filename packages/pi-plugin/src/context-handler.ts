@@ -89,12 +89,6 @@ import {
 	createTagger,
 	type Tagger,
 } from "@magic-context/core/features/magic-context/tagger";
-import {
-	findNewestPiAssistantEntryId,
-	normalizeMaterializeReason,
-	recordPendingPiTransformDecision,
-	schedulePiTransformDecisionResolve,
-} from "@magic-context/core/features/magic-context/transform-decision-log";
 import { computePiWorkMetrics } from "@magic-context/core/features/magic-context/work-metrics";
 import {
 	applyFlushedStatuses,
@@ -1713,11 +1707,6 @@ export function registerPiContextHandler(
 
 			const tEntryBranch = performance.now();
 			const branchEntries = readPiBranchEntriesForContext(ctx, sessionId);
-			schedulePiTransformDecisionResolve({
-				db: options.db,
-				sessionId,
-				branchEntries,
-			});
 			const rawMessageProvider = {
 				readMessages: () =>
 					branchEntries !== null
@@ -2350,30 +2339,6 @@ export function registerPiContextHandler(
 			// and bounding the set to the live branch prevents session-long growth.
 			if (strictEntryIds) {
 				recordSuccessfulTaggedMessageIds(sessionId, strictEntryIds);
-			}
-			const piDecisionSnapshotNewestAssistant = result.bustedThisPass
-				? findNewestPiAssistantEntryId(branchEntries)
-				: undefined;
-			if (piDecisionSnapshotNewestAssistant !== undefined) {
-				recordPendingPiTransformDecision(
-					sessionId,
-					{
-						tsMs: Date.now(),
-						decision: schedulerDecision,
-						materialized: result.materialized,
-						materializeReason: normalizeMaterializeReason(
-							"pi",
-							result.materializeReason,
-							result.materialized,
-						),
-						emergency: result.emergency,
-						droppedTokens: result.droppedTokens,
-						droppedCount: result.droppedCount,
-						inputTokens: usageInputTokens,
-						bustedThisPass: true,
-					},
-					piDecisionSnapshotNewestAssistant,
-				);
 			}
 			logTransformTiming(
 				sessionId,

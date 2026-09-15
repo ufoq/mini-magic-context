@@ -172,16 +172,3 @@ export {
     updateTagMessageId,
     updateTagStatus,
 } from "./storage-tags";
-export {
-    bumpEpochsForWorkspaceMemberSet,
-    bumpEpochsForWorkspaceMembers,
-    computeWorkspaceEpochFingerprint,
-    type ExpandedWorkspaceIdentitySet,
-    expandWorkspaceIdentitySet,
-    expandWorkspaceIdentitySetWithAliases,
-    resolveStoredPathWorkspaceIdentity,
-    resolveWorkspaceIdentitySet,
-    sourceNameForMemory,
-    storedPathBelongsToWorkspace,
-    type WorkspaceIdentitySet,
-} from "./workspaces";

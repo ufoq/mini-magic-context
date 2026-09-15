@@ -183,7 +183,6 @@ export function registerCtxRecompCommand(
 								timeoutMs: currentDeps.historianTimeoutMs,
 								thinkingLevel: currentDeps.historianThinkingLevel,
 								directory: ctx.cwd,
-								accountingSessionId: sessionId,
 								notify: (text) => {
 									sendCtxStatusMessage(pi, {
 										title: "/ctx-recomp",

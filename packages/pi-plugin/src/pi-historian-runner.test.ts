@@ -13,7 +13,6 @@ import {
 	recordOverflowDetected,
 	reserveProtectedTailDrainTokens,
 } from "@magic-context/core/features/magic-context/storage";
-import { getUserMemoryCandidates } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import type { ProtectedTailBoundarySnapshot } from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import type {
@@ -80,10 +79,6 @@ function rawMessages(count = 12) {
 
 function successXml(fact = "Pi historian facts can promote to memory.") {
 	return `<compartment start="1" end="2" title="Initial Pi slice"><p1>Summarized the first Pi turn.</p1></compartment>\n<PROJECT_RULES>\n* ${fact}\n</PROJECT_RULES>`;
-}
-
-function successXmlWithUserObservation(observation: string) {
-	return `${successXml()}\n<user_observations>\n* ${observation}\n</user_observations>`;
 }
 
 function twoCompartmentSuccessXml() {
@@ -408,30 +403,6 @@ describe("runPiHistorian", () => {
 		}
 	});
 
-	it("stores userObservations as candidates (post-commit) when user memories are enabled", async () => {
-		const { db } = await runHistorianWith({
-			outputs: [successXmlWithUserObservation("User prefers concise answers.")],
-			userMemoriesEnabled: true,
-		});
-		try {
-			// Mini: the historian publishes compartments only — user observations
-			// are not persisted as memory candidates.
-			expect(getUserMemoryCandidates(db)).toEqual([]);
-		} finally {
-			closeQuietly(db);
-		}
-	});
-	it("does NOT store userObservations when user memories are disabled (privacy gate)", async () => {
-		const { db } = await runHistorianWith({
-			outputs: [successXmlWithUserObservation("User prefers concise answers.")],
-			userMemoriesEnabled: false,
-		});
-		try {
-			expect(getUserMemoryCandidates(db)).toEqual([]);
-		} finally {
-			closeQuietly(db);
-		}
-	});
 	it("runs the Pi subagent, parses output, and publishes compartments", async () => {
 		const { db, runner } = await runHistorianWith({ outputs: [successXml()] });
 		try {

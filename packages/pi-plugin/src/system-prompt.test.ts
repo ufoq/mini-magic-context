@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { insertUserMemory } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import {
 	buildMagicContextBlock,
@@ -43,8 +42,6 @@ describe("buildMagicContextBlock v2 system-prompt parity", () => {
 		mkdirSync(cwd, { recursive: true });
 		writeFileSync(join(cwd, "ARCHITECTURE.md"), "# Architecture", "utf8");
 		try {
-			insertUserMemory(db, "Stable profile should move to m[0]", []);
-
 			const block = buildMagicContextBlock({
 				db,
 				cwd,
@@ -67,7 +64,6 @@ describe("buildMagicContextBlock v2 system-prompt parity", () => {
 		const cwd = tempDir("pi-no-guidance-");
 		writeFileSync(join(cwd, "STRUCTURE.md"), "# Structure", "utf8");
 		try {
-			insertUserMemory(db, "Profile", []);
 			const block = buildMagicContextBlock({
 				db,
 				cwd,

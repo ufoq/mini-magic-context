@@ -2,9 +2,6 @@ import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HISTORIAN_AGENT, HISTORIAN_EDITOR_AGENT } from "../../agents/historian";
 import { DEFAULT_HISTORIAN_TIMEOUT_MS } from "../../config/schema/magic-context";
-import { openDatabase } from "../../features/magic-context/storage";
-import type { SubagentKind } from "../../features/magic-context/storage-subagent-invocations";
-import { recordChildInvocation } from "../../features/magic-context/subagent-token-capture";
 import * as shared from "../../shared";
 import { extractLatestAssistantText } from "../../shared/assistant-message-extractor";
 import {
@@ -12,7 +9,6 @@ import {
     getProjectMagicContextHistorianDir,
 } from "../../shared/data-path";
 import { describeError, getErrorMessage } from "../../shared/error-message";
-import { getHarness } from "../../shared/harness";
 import type { HarnessClient } from "../../shared/harness-client";
 import { shouldKeepSubagents } from "../../shared/keep-subagents";
 import { buildHistorianEditorPrompt } from "./compartment-prompt";
@@ -74,7 +70,6 @@ export async function runValidatedHistorianPass(args: {
      *  to clean low-signal U: lines and cross-compartment duplicates. If editor
      *  validation fails, falls back to the draft (first-pass) result. */
     twoPass?: boolean;
-    subagentKind?: SubagentKind;
     agentId?: string;
     language?: string;
 }): Promise<ValidatedHistorianPassResult> {
@@ -106,9 +101,8 @@ export async function runValidatedHistorianPass(args: {
                   draftXml: firstRun.result,
                   draftValidation: firstValidation,
                   draftDumpPath: firstRun.dumpPath,
-                  draftInvocationId: firstRun.invocationId ?? null,
               })
-            : { ...firstValidation, invocationId: firstRun.invocationId ?? null };
+            : firstValidation;
         cleanupHistorianDump(args.parentSessionId, firstRun.dumpPath);
         return finalResult;
     }
@@ -149,9 +143,8 @@ export async function runValidatedHistorianPass(args: {
                   draftXml: repairRun.result,
                   draftValidation: repairValidation,
                   draftDumpPath: repairRun.dumpPath,
-                  draftInvocationId: repairRun.invocationId ?? null,
               })
-            : { ...repairValidation, invocationId: repairRun.invocationId ?? null };
+            : repairValidation;
         // Keep firstRun.dumpPath (initial failure) for debugging.
         // Only cleanup the successful repair run's dump.
         cleanupHistorianDump(args.parentSessionId, repairRun.dumpPath);
@@ -198,7 +191,6 @@ async function runEditorPassOrFallback(args: {
     draftXml: string;
     draftValidation: ValidatedHistorianPassResult;
     draftDumpPath?: string;
-    draftInvocationId?: number | null;
 }): Promise<ValidatedHistorianPassResult> {
     shared.sessionLog(args.parentSessionId, "historian two-pass: running editor on draft");
     const editorRun = await runHistorianPrompt({
@@ -209,7 +201,6 @@ async function runEditorPassOrFallback(args: {
         timeoutMs: args.timeoutMs,
         dumpLabel: `${args.dumpLabelBase}-editor`,
         agentId: HISTORIAN_EDITOR_AGENT,
-        parentInvocationId: args.draftInvocationId ?? null,
     });
 
     if (!editorRun.ok || !editorRun.result) {
@@ -217,7 +208,7 @@ async function runEditorPassOrFallback(args: {
             error: editorRun.error,
         });
         // Editor failed → keep the validated draft; FK links to the draft run.
-        return { ...args.draftValidation, invocationId: args.draftInvocationId ?? null };
+        return args.draftValidation;
     }
 
     const editorValidation = validateHistorianOutput(
@@ -234,12 +225,12 @@ async function runEditorPassOrFallback(args: {
             { error: editorValidation.error },
         );
         // Editor output was bad — keep editor dump for debugging.
-        return { ...args.draftValidation, invocationId: args.draftInvocationId ?? null };
+        return args.draftValidation;
     }
 
     cleanupHistorianDump(args.parentSessionId, editorRun.dumpPath);
     shared.sessionLog(args.parentSessionId, "historian two-pass: editor accepted");
-    return { ...editorValidation, invocationId: editorRun.invocationId ?? null };
+    return editorValidation;
 }
 
 async function runHistorianPrompt(args: {
@@ -255,8 +246,6 @@ async function runHistorianPrompt(args: {
     agentId?: string;
     /** Resolved historian fallback chain (forwarded to the prompt helper). */
     fallbackModels?: readonly string[];
-    subagentKind?: SubagentKind;
-    parentInvocationId?: number | null;
 }): Promise<HistorianRunResult> {
     const {
         client,
@@ -268,40 +257,12 @@ async function runHistorianPrompt(args: {
         modelOverride,
         agentId = HISTORIAN_AGENT,
         fallbackModels,
-        subagentKind,
-        parentInvocationId,
     } = args;
     let agentSessionId: string | null = null;
-    const startedAt = Date.now();
-    let invocationRecorded = false;
     // Keep FAILED historian child sessions for debugging (the model output, the
     // exact prompt, and the error are all inspectable in the child session). Only
     // delete on SUCCESS, where the result is already persisted as a compartment.
     let outcomeOk = false;
-
-    const recordInvocation = (params: {
-        status: "completed" | "failed" | "aborted";
-        messages?: unknown[];
-        error?: unknown;
-    }): number | null => {
-        if (invocationRecorded) return null;
-        invocationRecorded = true;
-        return recordChildInvocation({
-            db: openDatabase(),
-            parentSessionId,
-            harness: getHarness(),
-            subagent:
-                agentId === HISTORIAN_EDITOR_AGENT
-                    ? "historian_editor"
-                    : (subagentKind ?? "historian"),
-            startedAt,
-            status: params.status,
-            messages: params.messages,
-            error: params.error,
-            parentInvocationId:
-                agentId === HISTORIAN_EDITOR_AGENT ? (parentInvocationId ?? null) : null,
-        });
-    };
 
     try {
         shared.sessionLog(
@@ -324,10 +285,6 @@ async function runHistorianPrompt(args: {
         agentSessionId = typeof createdSession?.id === "string" ? createdSession.id : null;
 
         if (!agentSessionId) {
-            recordInvocation({
-                status: "failed",
-                error: "Historian could not create its child session.",
-            });
             return { ok: false, error: "Historian could not create its child session." };
         }
 
@@ -396,13 +353,11 @@ async function runHistorianPrompt(args: {
         const messages = shared.normalizeSDKResponse(messagesResponse, [] as unknown[], {
             preferResponseOnMissingData: true,
         });
-        const invocationId = recordInvocation({ status: "completed", messages });
         const result = extractLatestAssistantText(messages);
         if (!result) {
             return {
                 ok: false,
                 error: "Historian returned no assistant output.",
-                invocationId: invocationId ?? undefined,
             };
         }
 
@@ -413,14 +368,13 @@ async function runHistorianPrompt(args: {
             result,
         );
         outcomeOk = true;
-        return { ok: true, result, dumpPath, invocationId: invocationId ?? undefined };
+        return { ok: true, result, dumpPath };
     } catch (modelError: unknown) {
         const desc = describeError(modelError);
         shared.sessionLog(
             parentSessionId,
             `historian prompt failed: ${desc.brief} promptLength=${prompt.length}${desc.stackHead ? ` stackHead="${desc.stackHead}"` : ""}`,
         );
-        recordInvocation({ status: "failed", error: modelError });
         return {
             ok: false,
             error: `Historian failed while processing this session: ${desc.brief}`,
@@ -542,7 +496,7 @@ async function runFallbackHistorianPass(args: {
             // Only cleanup the successful run's dump. Prior failed dumps
             // (args.dumpPaths + earlier chain attempts) are kept for debugging.
             cleanupHistorianDump(args.parentSessionId, fallbackRun.dumpPath);
-            return { ...fallbackValidation, invocationId: fallbackRun.invocationId ?? null };
+            return fallbackValidation;
         }
         lastError = fallbackValidation.error ?? lastError;
         // Keep the dump for debugging; escalate to the next candidate.

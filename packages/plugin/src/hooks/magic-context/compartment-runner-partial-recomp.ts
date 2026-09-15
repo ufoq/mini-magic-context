@@ -416,7 +416,6 @@ export async function executePartialRecompInternal(
                 fallbackModelId: deps.fallbackModelId,
                 fallbackModels: deps.fallbackModels,
                 twoPass: deps.historianTwoPass,
-                subagentKind: "recomp",
                 agentId: HISTORIAN_RECOMP_AGENT,
                 language: deps.language,
                 callbacks: {

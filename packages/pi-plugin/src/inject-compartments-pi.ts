@@ -35,7 +35,6 @@ import {
 	persistCachedM0,
 	readProjectDocsCanonical,
 } from "@magic-context/core/features/magic-context/storage";
-import type { UserMemory } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import { COMPARTMENT_RENDER_EPOCH } from "@magic-context/core/hooks/magic-context/compartment-render-epoch";
 import {
 	DEFAULT_HISTORY_BUDGET_TOKENS,
@@ -48,16 +47,6 @@ import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-ses
 import type { MessageLike } from "@magic-context/core/hooks/magic-context/tag-messages";
 import { sessionLog as logSession } from "@magic-context/core/shared/logger";
 import { resolvePiStableId, SYNTH_USER_ID_PREFIX } from "./read-session-pi";
-
-interface WorkspaceRenderContext {
-	identities: string[];
-	expandedIdentities: string[];
-	ownIdentities: string[];
-	shareCategories: string[] | null;
-	namesByIdentity: Map<string, string>;
-	canonicalIdentityByStoredPath: Map<string, string>;
-	isWorkspaced: boolean;
-}
 
 /**
  * Pi message shapes — kept structurally compatible with
@@ -82,18 +71,6 @@ type PiToolResultMessage = {
 	timestamp?: number;
 };
 type PiAgentMessage = PiUserMessage | PiAssistantMessage | PiToolResultMessage;
-
-function emptyWorkspaceRenderContextPi(): WorkspaceRenderContext {
-	return {
-		identities: [],
-		expandedIdentities: [],
-		ownIdentities: [],
-		shareCategories: null,
-		namesByIdentity: new Map(),
-		canonicalIdentityByStoredPath: new Map(),
-		isWorkspaced: false,
-	};
-}
 
 /**
  * Resolve the cross-pass-stable id for the i-th Pi message.
@@ -443,8 +420,6 @@ interface FrozenM0Inputs {
 	markers: PiM0SnapshotMarkers;
 	compartments: PiCompartment[];
 	memories: Memory[];
-	userProfile: UserMemory[];
-	workspace: WorkspaceRenderContext;
 }
 
 /**
@@ -477,9 +452,6 @@ export interface PiM0M1State {
 	 *  Distinct from injectionBudgetTokens — using the memory budget here would
 	 *  over-demote every compartment. */
 	historyBudgetTokens?: number;
-	/** User-profile block budget (~4K). The m[1] new-user-profile delta is
-	 *  trimmed to 25% of this (matches OpenCode renderM1). Defaults when unset. */
-	userProfileBudgetTokens?: number;
 	/** Provider-side cache-eviction signals for HARD-bust detection. */
 	hardSignals?: PiM0HardSignals;
 }
@@ -977,12 +949,8 @@ export function renderM0Pi(
 function renderedMemoryIdsForPi(
 	state: PiM0M1State,
 	memories: readonly Memory[],
-	workspace?: WorkspaceRenderContext,
-	db?: ContextDatabase,
 ): number[] {
 	void state;
-	void workspace;
-	void db;
 	// Mini: memory rendering is removed from m[0]/m[1], so no memory ids are
 	// ever rendered. The memory set is always empty in the live path.
 	return memories.map((memory) => memory.id);
@@ -1026,10 +994,8 @@ function readFrozenM0InputsPi(
 	// share the same frozen compartment set; a concurrent writer cannot make m[0]
 	// include rows that m[1] still considers "new".
 	const read = db.transaction(() => {
-		const workspace = emptyWorkspaceRenderContextPi();
 		const compartments = getCompartments(db, state.sessionId);
 		const memories: Memory[] = [];
-		const userProfile: UserMemory[] = [];
 		const markers: PiM0SnapshotMarkers = {
 			maxCompartmentSeq: compartments.reduce(
 				(max, compartment) =>
@@ -1051,7 +1017,7 @@ function readFrozenM0InputsPi(
 			modelKey: (state.hardSignals ?? EMPTY_PI_HARD_SIGNALS).modelKey,
 			projectIdentity: state.projectIdentity,
 		};
-		return { docs, markers, compartments, memories, userProfile, workspace };
+		return { docs, markers, compartments, memories };
 	});
 	return read();
 }
@@ -1089,12 +1055,7 @@ function renderFreshM0PiNonPersisted(
 	return {
 		m0,
 		snapshotMarkers: frozen.markers,
-		renderedMemoryIds: renderedMemoryIdsForPi(
-			state,
-			frozen.memories,
-			frozen.workspace,
-			db,
-		),
+		renderedMemoryIds: renderedMemoryIdsForPi(state, frozen.memories),
 	};
 }
 
@@ -1115,12 +1076,7 @@ export function materializeM0Pi(
 	const snapshotMarkers = frozen.markers;
 
 	const snapshotCompartments = frozen.compartments;
-	const renderedMemoryIds = renderedMemoryIdsForPi(
-		state,
-		frozen.memories,
-		frozen.workspace,
-		db,
-	);
+	const renderedMemoryIds = renderedMemoryIdsForPi(state, frozen.memories);
 	// Over-budget tightening loop (matches OpenCode materializeM0): if the
 	// rendered m[0] exceeds the history budget, escalate the decay pressure and
 	// re-render up to 3x so tight budgets demote more aggressively. Without this,

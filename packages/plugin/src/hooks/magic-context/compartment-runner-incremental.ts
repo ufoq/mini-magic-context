@@ -31,17 +31,9 @@ import {
     rollbackProtectedTailDrainReservation,
     setPendingCompactionMarkerState,
 } from "../../features/magic-context/storage";
-import {
-    type HistorianRunInput,
-    recordHistorianRun,
-    summarizeImportance,
-    tallyFactsByCategory,
-} from "../../features/magic-context/storage-historian-runs";
 import { updateSessionMeta } from "../../features/magic-context/storage-meta";
-import { getLatestHistorianInvocationId } from "../../features/magic-context/storage-subagent-invocations";
 import { normalizeSDKResponse } from "../../shared";
 import { describeError } from "../../shared/error-message";
-import { getHarness } from "../../shared/harness";
 import { sessionLog } from "../../shared/logger";
 import { updateCompactionMarkerAfterPublication } from "./compaction-marker-manager";
 import { buildCompartmentAgentPrompt } from "./compartment-prompt";
@@ -101,48 +93,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
     let stateFilePath: string | undefined;
     let drainReservation: ReturnType<typeof reserveProtectedTailDrainTokens>["reservation"] = null;
 
-    // historian_runs telemetry (migration v24). Captured across the run and
-    // recorded ONCE in `finally` so every exit path (no-op, failure, success) is
-    // logged. Best-effort: recordHistorianRun never throws into this path.
-    const runStartedAt = Date.now();
-    const invocationBaseline = getLatestHistorianInvocationId(db, sessionId);
-    const telemetry: Partial<HistorianRunInput> = {
-        runKind: "incremental",
-        status: "failed", // pessimistic default; overwritten on no-op/success
-    };
-    const recordTelemetry = (): void => {
-        // Link the FK only when a NEW historian invocation was recorded during
-        // this run (serialized per session, so the newest > baseline is ours).
-        const latest = getLatestHistorianInvocationId(db, sessionId);
-        const invocationId =
-            latest != null && (invocationBaseline == null || latest > invocationBaseline)
-                ? latest
-                : null;
-        recordHistorianRun(db, {
-            sessionId,
-            harness: getHarness(),
-            subagentInvocationId: invocationId,
-            runKind: telemetry.runKind ?? "incremental",
-            status: telemetry.status ?? "failed",
-            failureReason: telemetry.failureReason ?? null,
-            chunkStartOrdinal: telemetry.chunkStartOrdinal ?? null,
-            chunkEndOrdinal: telemetry.chunkEndOrdinal ?? null,
-            unprocessedFrom: telemetry.unprocessedFrom ?? null,
-            compartmentsProduced: telemetry.compartmentsProduced ?? 0,
-            compartmentIdMin: telemetry.compartmentIdMin ?? null,
-            compartmentIdMax: telemetry.compartmentIdMax ?? null,
-            factsEmitted: telemetry.factsEmitted ?? 0,
-            factsByCategory: telemetry.factsByCategory ?? null,
-            eventsEmitted: telemetry.eventsEmitted ?? 0,
-            importanceMin: telemetry.importanceMin ?? null,
-            importanceMax: telemetry.importanceMax ?? null,
-            importanceAvg: telemetry.importanceAvg ?? null,
-            discardedLast: telemetry.discardedLast ?? false,
-            legacy: telemetry.legacy ?? false,
-        });
-        void runStartedAt; // (kept for future duration column; timing lives on the FK row)
-    };
-
     const notifyHistorianIssue = async (message: string): Promise<void> => {
         issueNotified = true;
         if (shouldSuppressHistorianAlert(sessionId)) {
@@ -193,7 +143,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             // This is a real failure (stored compartments are corrupt) — record
             // it so `doctor --issue` and the >=95% abort path can see it.
             const failCount = incrementHistorianFailure(db, sessionId, existingValidationError);
-            telemetry.failureReason = `existing-validation: ${existingValidationError}`;
             await notifyHistorianIssue(
                 buildHistorianFailureNotice(failCount, existingValidationError),
             );
@@ -211,7 +160,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 ? createDefaultBoundarySnapshotForTests(sessionId)
                 : null);
         if (!boundarySnapshot) {
-            telemetry.failureReason = "missing protected-tail boundary snapshot";
             sessionLog(
                 sessionId,
                 "historian no-op: missing protected-tail boundary snapshot from trigger decision",
@@ -271,8 +219,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 sessionId,
                 `historian no-op: stale protected-tail snapshot (${validation.detail ?? validation.reason ?? "unknown"})`,
             );
-            telemetry.status = "noop";
-            telemetry.failureReason = "stale_snapshot";
             rollbackDrainReservation();
             return;
         }
@@ -303,8 +249,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             // latch has done its job. Clear it so a high irreducible floor can't keep
             // it armed and later bypass the steady-state throttle for fresh tail.
             clearEmergencyDrainLatch(db, sessionId);
-            telemetry.status = "noop";
-            telemetry.failureReason = "nothing to compact before protected tail";
             rollbackDrainReservation();
             return;
         }
@@ -333,8 +277,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 sessionId,
                 `historian rate-limit skip: ${reserve.skippedReason ?? "quota exhausted"}`,
             );
-            telemetry.status = "noop";
-            telemetry.failureReason = "protected-tail drain quota exhausted";
             return;
         }
         drainReservation = reserve.reservation;
@@ -342,8 +284,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         const chunk = readSessionChunk(sessionId, historianChunkTokens, offset, eligibleEndOrdinal);
         const forceKeepLastCompartmentForChunk =
             deps.forceKeepLastCompartment === true && !chunk.hasMore;
-        telemetry.chunkStartOrdinal = chunk.startIndex;
-        telemetry.chunkEndOrdinal = chunk.endIndex;
         if (!chunk.text || chunk.messageCount === 0) {
             sessionLog(
                 sessionId,
@@ -357,8 +297,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             // Eligible head produced no compactable chunk — treat as tail-exhausted
             // and clear the catch-up latch (see the protected-tail no-op above).
             clearEmergencyDrainLatch(db, sessionId);
-            telemetry.status = "noop";
-            telemetry.failureReason = "chunk empty after filtering";
             rollbackDrainReservation();
             return;
         }
@@ -372,7 +310,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
 
         const chunkCoverageError = validateChunkCoverage(chunk);
         if (chunkCoverageError) {
-            telemetry.failureReason = `chunk-coverage: ${chunkCoverageError}`;
             sessionLog(
                 sessionId,
                 `historian failure: source=chunk-coverage reason="${chunkCoverageError}" chunkRange=${chunk.startIndex}-${chunk.endIndex}`,
@@ -457,7 +394,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 `historian failure: source=validation reason="${validatedPass.error}" chunkRange=${chunk.startIndex}-${chunk.endIndex} fallbackModel=${deps.fallbackModelId ?? "<none>"} twoPass=${deps.historianTwoPass ? "true" : "false"}`,
             );
             const failCount = incrementHistorianFailure(db, sessionId, validatedPass.error);
-            telemetry.failureReason = `validation: ${validatedPass.error}`;
             await notifyHistorianIssue(buildHistorianFailureNotice(failCount, validatedPass.error));
             return;
         }
@@ -487,7 +423,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             const lookaheadMargin = chunk.endIndex - lastEmitted.endMessage;
             if (lookaheadMargin <= BOUNDARY_HEALING_SLACK) {
                 persistedCompartments = emittedCompartments.slice(0, -1);
-                telemetry.discardedLast = true;
                 sessionLog(
                     sessionId,
                     `historian discard-last: dropped provisional compartment ${lastEmitted.startMessage}-${lastEmitted.endMessage} (lookaheadMargin=${lookaheadMargin} <= ${BOUNDARY_HEALING_SLACK}); will re-derive from raw next run`,
@@ -499,7 +434,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
 
         const lastNewEnd = newCompartments[newCompartments.length - 1]?.endMessage ?? 0;
         if (lastNewEnd + 1 <= offset) {
-            telemetry.failureReason = `no forward progress beyond raw message ${offset - 1}`;
             sessionLog(
                 sessionId,
                 `historian failure: source=no-progress reason="historian returned compartments that did not advance past raw message ${offset - 1}" newCompartmentCount=${newCompartments.length} lastNewEnd=${lastNewEnd} priorEnd=${offset - 1}`,
@@ -553,11 +487,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             ? resolveProjectIdentity(promotionDirectory)
             : "";
 
-        // discard-last: drop events anchored to the discarded provisional
-        // compartment (atCompartment is a 1-based index into the EMITTED list;
-        // anything > persistedCompartments.length pointed at the dropped tail).
-        // They re-emit next run anchored to the persisted range.
-        const publishableEvents: [] = [];
         let persistedIds: number[] = [];
 
         // Append new compartments (existing stay untouched in DB) and publish all
@@ -657,26 +586,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         updateSessionMeta(db, sessionId, { compartmentInProgress: false });
         completedSuccessfully = true;
 
-        // historian_runs telemetry — full success metrics (recorded in finally).
-        {
-            const facts = validatedPass.facts ?? [];
-            const validIds = persistedIds.filter((id): id is number => typeof id === "number");
-            const imp = summarizeImportance(persistedCompartments.map((c) => c.importance ?? 50));
-            telemetry.status = "success";
-            telemetry.failureReason = null;
-            telemetry.unprocessedFrom = lastCompartmentEnd + 1;
-            telemetry.compartmentsProduced = persistedCompartments.length;
-            telemetry.compartmentIdMin = validIds.length > 0 ? Math.min(...validIds) : null;
-            telemetry.compartmentIdMax = validIds.length > 0 ? Math.max(...validIds) : null;
-            telemetry.factsEmitted = facts.length;
-            telemetry.factsByCategory = facts.length > 0 ? tallyFactsByCategory(facts) : null;
-            telemetry.eventsEmitted = publishableEvents.length;
-            telemetry.importanceMin = imp.min;
-            telemetry.importanceMax = imp.max;
-            telemetry.importanceAvg = imp.avg;
-            // legacy stays false — incremental publish always produces v2 rows.
-        }
-
         // v2: compute + store raw chunk embeddings (the ctx_search semantic
         // substrate over session history). Fire-and-forget, best-effort, gated by
         // memory flags so a memory-off user never hits the embedding endpoint.
@@ -710,7 +619,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
     } catch (error: unknown) {
         // Historian runs are fail-closed because they update durable compartment state.
         const desc = describeError(error);
-        telemetry.failureReason = `exception: ${desc.brief}`;
         sessionLog(
             sessionId,
             `historian failure: source=exception ${desc.brief}${desc.stackHead ? ` stackHead="${desc.stackHead}"` : ""}`,
@@ -733,8 +641,6 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             }
             updateSessionMeta(db, sessionId, { compartmentInProgress: false });
         }
-        // Record one historian_runs row for this attempt (every exit path).
-        recordTelemetry();
         cleanupHistorianStateFile(stateFilePath);
     }
 }

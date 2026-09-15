@@ -1,19 +1,9 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "366fc69679d20fdda45296b0296c35df21e360de5f6eacd546688ceaf6ebde15";
+const KNOWN_TEST_INVENTORY_DIGEST = "fd3bbd5ec0b1843020f336ec22537910c1318bb296549f62e1392e8f4f59c095";
 
-const NON_MINI_TESTS: ReadonlySet<string> = new Set([
-    "src/features/magic-context/compression-depth-storage.test.ts",
-    "src/features/magic-context/search.test.ts",
-    "src/features/magic-context/storage-historian-runs.test.ts",
-    "src/features/magic-context/storage-subagent-invocations.test.ts",
-    "src/features/magic-context/sticky-injection-cas-race.test.ts",
-    "src/features/magic-context/tagger-recovery.test.ts",
-    "src/features/magic-context/transform-decision-log.test.ts",
-    "src/features/magic-context/user-memory/storage-user-memory.test.ts",
-    "src/features/magic-context/workspaces.test.ts",
-] as const);
+const NON_MINI_TESTS: ReadonlySet<string> = new Set([] as const);
 
 const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
 const digest = createHash("sha256").update(`${allTests.join("\n")}\n`).digest("hex");

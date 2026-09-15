@@ -11,9 +11,6 @@ import {
 } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { openDatabase } from "@magic-context/core/features/magic-context/storage";
-import type { SubagentKind } from "@magic-context/core/features/magic-context/storage-subagent-invocations";
-import { recordChildInvocation } from "@magic-context/core/features/magic-context/subagent-token-capture";
 import {
 	piModelRefToCanonical,
 	resolveModelRefForPi,
@@ -266,12 +263,6 @@ const KNOWN_PI_SUBAGENT_AGENTS = [
 	"historian-editor",
 ] as const;
 
-function inferAccountingSubagent(agent: string): SubagentKind {
-	if (agent.includes("compressor")) return "compressor";
-	if (agent.includes("recomp")) return "recomp";
-	return "historian";
-}
-
 type FailedRunResult = Extract<SubagentRunResult, { ok: false }>;
 
 type PiRunMode = {
@@ -369,9 +360,8 @@ type ExtensionRetryResult = {
  *   fine — we just don't surface intermediate state to the caller.
  * - Per-turn token usage. Pi reports usage in each `message_end`, but
  *   the runner contract only returns the final assistant text. If the
- *   sidekick/historian/dreamer ever needs token accounting, we'll add
- *   a `usage` field to `SubagentRunResult.meta` rather than changing
- *   the core contract.
+ *   a subagent ever needs token usage, we'll add a `usage` field to
+ *   `SubagentRunResult.meta` rather than changing the core contract.
  */
 export class PiSubagentRunner implements SubagentRunner {
 	readonly harness = "pi";
@@ -478,7 +468,7 @@ export class PiSubagentRunner implements SubagentRunner {
 			return { result: primaryResult, extensionRetryUsed: false };
 		}
 
-		const sessionId = options.accountingSessionId ?? "pi-subagent";
+		const sessionId = "pi-subagent";
 		sessionLog(sessionId, isolatedRetryLogMessage(primaryResult));
 		const isolatedResult = await this.runModelChain(
 			options,
@@ -567,39 +557,6 @@ export class PiSubagentRunner implements SubagentRunner {
 		modelRefOverride?: string,
 	): Promise<SubagentRunResult> {
 		const startTime = Date.now();
-		let recordedAccounting = false;
-		const recordAccounting = (
-			result: SubagentRunResult,
-			messages: unknown[] = [],
-		) => {
-			if (!options.accountingSessionId || recordedAccounting) return;
-			recordedAccounting = true;
-			recordChildInvocation({
-				db: openDatabase(),
-				parentSessionId: options.accountingSessionId,
-				harness: "pi",
-				subagent:
-					options.accountingSubagent ?? inferAccountingSubagent(options.agent),
-				task: options.accountingTask ?? null,
-				startedAt: startTime,
-				status: result.ok
-					? "completed"
-					: result.reason === "abort"
-						? "aborted"
-						: "failed",
-				messages,
-				providerId:
-					typeof options.model === "string"
-						? options.model.split("/")[0]
-						: null,
-				modelId:
-					typeof options.model === "string"
-						? options.model.split("/").slice(1).join("/")
-						: null,
-				error: result.ok ? null : result.error,
-				parentInvocationId: options.accountingParentInvocationId ?? null,
-			});
-		};
 		if (options.signal?.aborted) {
 			const result: SubagentRunResult = {
 				ok: false,
@@ -607,17 +564,6 @@ export class PiSubagentRunner implements SubagentRunner {
 				error: "pi subagent aborted by caller",
 				durationMs: Date.now() - startTime,
 			};
-			// Same best-effort contract as settle(): accounting must never throw
-			// out of the return path (a DB write failure here would propagate to
-			// the caller as a spurious spawn error). Telemetry is best-effort.
-			try {
-				recordAccounting(result);
-			} catch (err) {
-				sessionLog(
-					options.accountingSessionId ?? "subagent",
-					`subagent accounting failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
 			return result;
 		}
 
@@ -633,14 +579,6 @@ export class PiSubagentRunner implements SubagentRunner {
 				durationMs: Date.now() - startTime,
 				...(transient ? { transient: true } : {}),
 			};
-			try {
-				recordAccounting(result);
-			} catch (err) {
-				sessionLog(
-					options.accountingSessionId ?? "subagent",
-					`subagent accounting failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
 			return result;
 		};
 
@@ -707,7 +645,6 @@ export class PiSubagentRunner implements SubagentRunner {
 		// fallback chain is configured, `buildArgs` emits Pi's `--models a,b,c`.
 
 		return new Promise<SubagentRunResult>((resolve) => {
-			let accountingMessages: unknown[] = [];
 			// Track whether we've already resolved so timeout/abort/exit don't
 			// double-resolve. JS promises tolerate double-resolve silently but
 			// we want explicit control so we can distinguish "timeout fired
@@ -718,18 +655,6 @@ export class PiSubagentRunner implements SubagentRunner {
 				if (settled) return;
 				settled = true;
 				cleanupSystemPromptFile();
-				// recordAccounting must never block resolution: a throw here (e.g.
-				// a DB write failure during token accounting) would leave the
-				// promise unresolved and hang the caller (historian/dreamer/
-				// sidekick). Accounting is best-effort telemetry; resolve regardless.
-				try {
-					recordAccounting(result, accountingMessages);
-				} catch (err) {
-					sessionLog(
-						options.accountingSessionId ?? "subagent",
-						`subagent accounting failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
-					);
-				}
 				resolve(result);
 			};
 
@@ -906,7 +831,6 @@ export class PiSubagentRunner implements SubagentRunner {
 			// `message_end` for the final assistant turn (stopReason="stop"
 			// + no toolCall content), then drain until natural child exit.
 			const accumulatedMessages: unknown[] = [];
-			accountingMessages = accumulatedMessages;
 
 			rl.on("line", (line) => {
 				if (line.length === 0) return;
@@ -1498,7 +1422,7 @@ export function buildArgs(
 	const strictTools = STRICT_TOOL_ALLOWLIST.get(options.agent);
 	if (strictTools === undefined) {
 		sessionLog(
-			options.accountingSessionId ?? "pi-subagent",
+			"pi-subagent",
 			`Pi subagent agent "${options.agent}" has no strict tool allow-list; forcing --no-tools`,
 		);
 		args.push("--no-tools");

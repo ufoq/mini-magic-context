@@ -11,11 +11,6 @@ import { clearCompressionDepth } from "../../features/magic-context/compression-
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import { appendM0Mutation } from "../../features/magic-context/storage";
 import {
-    recordHistorianRun,
-    summarizeImportance,
-    tallyFactsByCategory,
-} from "../../features/magic-context/storage-historian-runs";
-import {
     clearCachedM0M1,
     clearPendingCompactionMarkerStateIf,
     getPendingCompactionMarkerState,
@@ -380,7 +375,6 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
                 fallbackModelId: deps.fallbackModelId,
                 fallbackModels: deps.fallbackModels,
                 twoPass: deps.historianTwoPass,
-                subagentKind: "recomp",
                 agentId: HISTORIAN_RECOMP_AGENT,
                 language: deps.language,
                 callbacks: {
@@ -422,26 +416,6 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
                     }
                 }
 
-                // historian_runs telemetry: record the TERMINAL failure for this
-                // chunk. The budget-reduction retry above already `continue`d for
-                // recoverable cases, so reaching here means every attempt
-                // (primary + repair + fallback chain) failed to produce valid
-                // output. Recording failures (not just successes) honors the
-                // historian_runs design intent: capture whether a run failed and
-                // why. The kept failed child session + dump XMLs hold per-attempt
-                // detail; this row makes the failure queryable.
-                recordHistorianRun(db, {
-                    sessionId,
-                    harness: getHarness(),
-                    subagentInvocationId: validatedPass.invocationId ?? null,
-                    runKind: "recomp",
-                    status: "failed",
-                    failureReason: validatedPass.error,
-                    chunkStartOrdinal: chunk.startIndex,
-                    chunkEndOrdinal: chunk.endIndex,
-                    compartmentsProduced: 0,
-                });
-
                 const partial = await promoteAndFinalize(
                     `historian failed to validate messages ${chunk.startIndex}-${chunk.endIndex}: ${validatedPass.error}`,
                 );
@@ -449,38 +423,6 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
                     return `## Magic Recomp — Partial\n\n${partial}`;
                 }
                 return `## Magic Recomp — Failed\n\nRecomp failed while rebuilding messages ${chunk.startIndex}-${chunk.endIndex}: ${validatedPass.error}\n\nNothing was written.`;
-            }
-
-            // historian_runs telemetry: one row per SUCCESSFUL recomp pass. Failure
-            // early-returns above are already captured in subagent_invocations; we
-            // keep recomp instrumentation to the clean per-pass success point to
-            // avoid destabilizing this delicate multi-pass path. run_kind="recomp"
-            // also covers /ctx-session-upgrade (upgrade = full recomp + migration).
-            {
-                const passComps = validatedPass.compartments ?? [];
-                const passFacts = validatedPass.facts ?? [];
-                const imp = summarizeImportance(passComps.map((c) => c.importance ?? 50));
-                recordHistorianRun(db, {
-                    sessionId,
-                    harness: getHarness(),
-                    // Exact FK: the invocation of the attempt that produced this
-                    // validated output. A kind-filtered "latest historian" lookup
-                    // mislinks here because recomp invocations are recorded under
-                    // subagent='recomp', not 'historian'.
-                    subagentInvocationId: validatedPass.invocationId ?? null,
-                    runKind: "recomp",
-                    status: "success",
-                    chunkStartOrdinal: chunk.startIndex,
-                    chunkEndOrdinal: chunk.endIndex,
-                    unprocessedFrom: passComps[passComps.length - 1]?.endMessage ?? null,
-                    compartmentsProduced: passComps.length,
-                    factsEmitted: passFacts.length,
-                    factsByCategory: passFacts.length > 0 ? tallyFactsByCategory(passFacts) : null,
-                    eventsEmitted: (validatedPass.events ?? []).length,
-                    importanceMin: imp.min,
-                    importanceMax: imp.max,
-                    importanceAvg: imp.avg,
-                });
             }
 
             candidateCompartments = [

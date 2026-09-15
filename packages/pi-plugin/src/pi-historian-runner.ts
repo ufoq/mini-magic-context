@@ -60,14 +60,7 @@ import {
 	rollbackProtectedTailDrainReservation,
 	setPendingPiCompactionMarkerState,
 } from "@magic-context/core/features/magic-context/storage";
-import {
-	type HistorianRunInput,
-	recordHistorianRun,
-	summarizeImportance,
-	tallyFactsByCategory,
-} from "@magic-context/core/features/magic-context/storage-historian-runs";
 import { updateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
-import { getLatestHistorianInvocationId } from "@magic-context/core/features/magic-context/storage-subagent-invocations";
 import {
 	buildCompartmentAgentPrompt,
 	buildHistorianEditorPrompt,
@@ -442,13 +435,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 
 	updateSessionMeta(db, sessionId, { compartmentInProgress: true });
 
-	// historian_runs telemetry (migration v24) — recorded ONCE in finally so every
-	// exit path is logged. Best-effort. Mirrors the OpenCode incremental runner.
-	const invocationBaseline = getLatestHistorianInvocationId(db, sessionId);
-	const telemetry: Partial<HistorianRunInput> = {
-		runKind: "incremental",
-		status: "failed",
-	};
 	let completedSuccessfully = false;
 	let retainDrainReservationForRetryThrottle = false;
 	let drainReservation: ReturnType<
@@ -599,8 +585,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					sessionId,
 					`historian rate-limit skip: ${reserve.skippedReason ?? "quota exhausted"}`,
 				);
-				telemetry.status = "noop";
-				telemetry.failureReason = "protected-tail drain quota exhausted";
 				return;
 			}
 			drainReservation = reserve.reservation;
@@ -626,8 +610,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				}
 				// Eligible head produced no compactable chunk — clear the latch.
 				clearEmergencyDrainLatch(db, sessionId);
-				telemetry.status = "noop";
-				telemetry.failureReason = "chunk empty after filtering";
 				rollbackDrainReservation();
 				return;
 			}
@@ -793,8 +775,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					signal,
 					thinkingLevel,
 					onProgress: buildProgressLogger("first"),
-					accountingSessionId: sessionId,
-					accountingSubagent: "historian",
 				},
 			});
 
@@ -844,8 +824,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 						signal,
 						thinkingLevel,
 						onProgress: buildProgressLogger("repair"),
-						accountingSessionId: sessionId,
-						accountingSubagent: "historian",
 					},
 				});
 				validatedPass = await validateHistorianResult(
@@ -903,8 +881,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							signal,
 							thinkingLevel,
 							onProgress: buildProgressLogger("fallback"),
-							accountingSessionId: sessionId,
-							accountingSubagent: "historian",
 						},
 					});
 					const fbPass = await validateHistorianResult(
@@ -975,8 +951,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							signal,
 							thinkingLevel,
 							onProgress: buildProgressLogger("editor"),
-							accountingSessionId: sessionId,
-							accountingSubagent: "historian_editor",
 						},
 					});
 					const editorPass = await validateHistorianResult(
@@ -1079,22 +1053,12 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				}
 			}
 
-			// A wrapup caller may request final weak-lookahead preservation, but the
-			// runner is authoritative: a token-capped chunk (`chunk.hasMore`) still has
-			// more raw history after it, so it must use normal discard-last healing and
-			// promotion. Only the actual final chunk keeps its weak-lookahead tail and
-			// skips unanchored promotion.
-			const discardedLast = newCompartments.length < emittedCompartments.length;
-
 			// Mini: the historian publishes compartments only — no fact/observation
 			// promotion to project memory and no user-memory/primer candidate writes.
 			// Embeddings over the new compartment chunks are the ctx_search semantic
 			// substrate and stay active.
 			const embeddingActive = true;
 
-			// Events: stored, NOT rendered. Best-effort. discard-last: drop events
-			// anchored to the discarded provisional compartment.
-			const publishableEvents: [] = [];
 			let persistedIds: number[] = [];
 
 			// Atomic publication: append + durable facts/events/drop queue + clear failure state.
@@ -1216,38 +1180,9 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					}
 				})();
 			}
-
-			// historian_runs telemetry — full success metrics.
-			{
-				const facts = validatedPass.facts ?? [];
-				const validIds = persistedIds.filter(
-					(id): id is number => typeof id === "number",
-				);
-				const imp = summarizeImportance(
-					newCompartments.map((c) => c.importance ?? 50),
-				);
-				telemetry.status = "success";
-				telemetry.chunkStartOrdinal = chunk.startIndex;
-				telemetry.chunkEndOrdinal = chunk.endIndex;
-				telemetry.unprocessedFrom = lastNewEnd + 1;
-				telemetry.compartmentsProduced = newCompartments.length;
-				telemetry.compartmentIdMin =
-					validIds.length > 0 ? Math.min(...validIds) : null;
-				telemetry.compartmentIdMax =
-					validIds.length > 0 ? Math.max(...validIds) : null;
-				telemetry.factsEmitted = facts.length;
-				telemetry.factsByCategory =
-					facts.length > 0 ? tallyFactsByCategory(facts) : null;
-				telemetry.eventsEmitted = publishableEvents.length;
-				telemetry.importanceMin = imp.min;
-				telemetry.importanceMax = imp.max;
-				telemetry.importanceAvg = imp.avg;
-				telemetry.discardedLast = discardedLast;
-			}
 		});
 	} catch (error) {
 		const desc = describeError(error);
-		telemetry.failureReason = `exception: ${desc.brief}`;
 		sessionLog(
 			sessionId,
 			`historian failure: source=exception ${desc.brief}${desc.stackHead ? ` stackHead="${desc.stackHead}"` : ""}`,
@@ -1269,38 +1204,6 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			}
 		}
 		updateSessionMeta(db, sessionId, { compartmentInProgress: false });
-		// Record one historian_runs row for this attempt (every exit path).
-		try {
-			const latest = getLatestHistorianInvocationId(db, sessionId);
-			const invocationId =
-				latest != null &&
-				(invocationBaseline == null || latest > invocationBaseline)
-					? latest
-					: null;
-			recordHistorianRun(db, {
-				sessionId,
-				harness: "pi",
-				subagentInvocationId: invocationId,
-				runKind: telemetry.runKind ?? "incremental",
-				status: telemetry.status ?? "failed",
-				failureReason: telemetry.failureReason ?? null,
-				chunkStartOrdinal: telemetry.chunkStartOrdinal ?? null,
-				chunkEndOrdinal: telemetry.chunkEndOrdinal ?? null,
-				unprocessedFrom: telemetry.unprocessedFrom ?? null,
-				compartmentsProduced: telemetry.compartmentsProduced ?? 0,
-				compartmentIdMin: telemetry.compartmentIdMin ?? null,
-				compartmentIdMax: telemetry.compartmentIdMax ?? null,
-				factsEmitted: telemetry.factsEmitted ?? 0,
-				factsByCategory: telemetry.factsByCategory ?? null,
-				eventsEmitted: telemetry.eventsEmitted ?? 0,
-				importanceMin: telemetry.importanceMin ?? null,
-				importanceMax: telemetry.importanceMax ?? null,
-				importanceAvg: telemetry.importanceAvg ?? null,
-				discardedLast: telemetry.discardedLast ?? false,
-			});
-		} catch {
-			/* telemetry must not break compaction */
-		}
 	}
 }
 

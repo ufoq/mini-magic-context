@@ -171,7 +171,6 @@ export interface HistorianRunResult {
     result?: string;
     error?: string;
     dumpPath?: string;
-    invocationId?: number;
 }
 
 export type ValidatedHistorianPassResult =
@@ -187,17 +186,8 @@ export type ValidatedHistorianPassResult =
           primerCandidates?: Array<{ question: string; originCompartmentIndex?: number }>;
           /** v2: historian-extracted events (stored, not rendered). */
           events?: ParsedEvent[];
-          /**
-           * Subagent-invocation id of the model attempt that actually produced
-           * this validated output (primary, repair, editor, or fallback). The
-           * caller uses it as the exact `historian_runs.subagent_invocation_id`
-           * FK so the telemetry row joins to the right tokens/model — a kind-
-           * filtered "latest invocation" lookup mislinks recomp passes (recorded
-           * under subagent='recomp') to a stale subagent='historian' row.
-           */
-          invocationId?: number | null;
       }
-    | { ok: false; error: string; invocationId?: number | null };
+    | { ok: false; error: string };
 
 export interface StoredCompartmentRange {
     startMessage: number;
