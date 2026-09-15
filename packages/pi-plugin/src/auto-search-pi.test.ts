@@ -296,34 +296,6 @@ describe("runAutoSearchHintForPi", () => {
 		}
 	});
 
-	it("skips stacked sidekick augmentation without searching", async () => {
-		const db = createTestDb();
-		const spy = spyOn(searchModule, "unifiedSearch").mockImplementation(
-			async () => [memoryResult()],
-		);
-		try {
-			const messages = [
-				userMessage(
-					"Implement this\n\n<sidekick-augmentation>context</sidekick-augmentation>",
-					1,
-				),
-			];
-
-			await runAutoSearchHintForPi({
-				sessionId: "ses-auto",
-				db,
-				messages,
-				options: baseOptions,
-			});
-
-			expect(spy).toHaveBeenCalledTimes(0);
-			expect(textOf(messages[0])).not.toContain("<ctx-search-hint>");
-		} finally {
-			spy.mockRestore();
-			closeQuietly(db);
-		}
-	});
-
 	it("strips plugin markers from the prompt before searching", async () => {
 		const db = createTestDb();
 		let capturedPrompt = "";

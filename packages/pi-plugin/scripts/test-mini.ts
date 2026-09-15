@@ -1,9 +1,13 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "9a064066e7d17e016698822fdb7db321c0ac419d2247252bd2f5b2aa7651f6a7";
+const KNOWN_TEST_INVENTORY_DIGEST = "bd335d4a49fcf98ac02dcd753a9115fcbed1df5999e0e7371cb9ac4fe0669d93";
 const NON_MINI_TESTS = new Set([] as const);
-const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
+// `*.test.ts` matches at every depth (git pathspec `*` crosses `/`), so this
+// covers root-level src tests as well as nested ones. Using `src/**/*.test.ts`
+// silently skipped the root-level files, which is how several stale tests
+// drifted out of the gated run.
+const allTests = (await $`git ls-files '*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
 const digest = createHash("sha256").update(`${allTests.join("\n")}\n`).digest("hex");
 const staleManifestEntries = [...NON_MINI_TESTS].filter((path) => !allTests.includes(path));
 

@@ -72,8 +72,8 @@ function extractSessionShutdownHandlerBody(src: string): string {
 describe("agent_end handler (blocking-historian regression)", () => {
 	const body = extractAgentEndHandlerBody(INDEX_SRC);
 	// Strip line comments first — the documentation comments inside
-	// the handler legitimately reference `awaitInFlightHistorians` and
-	// `awaitInFlightDreamers` to explain WHY they're not called here.
+	// the handler legitimately reference `awaitInFlightHistorians`
+	// to explain WHY it's not called here.
 	// Tests must look at code only.
 	const codeOnly = body
 		.split("\n")
@@ -93,10 +93,6 @@ describe("agent_end handler (blocking-historian regression)", () => {
 		expect(codeOnly).not.toContain("awaitInFlightHistorians");
 	});
 
-	test("handler code does NOT call awaitInFlightDreamers", () => {
-		expect(codeOnly).not.toContain("awaitInFlightDreamers");
-	});
-
 	test("handler contains no await keyword in code", () => {
 		// Match `await ` as a keyword (followed by space/identifier).
 		expect(codeOnly).not.toMatch(/\bawait\s+\w/);
@@ -112,10 +108,6 @@ describe("session_shutdown handler (drain location)", () => {
 			"withTimeout(awaitInFlightHistorians(), SHUTDOWN_DRAIN_MS)",
 		);
 		expect(body).not.toContain("Promise.race");
-	});
-
-	test("drains in-flight dreamers (Promise.race with timeout)", () => {
-		expect(body).toContain("awaitInFlightDreamers");
 	});
 
 	test("drain timeout uses unref/clear helper", () => {

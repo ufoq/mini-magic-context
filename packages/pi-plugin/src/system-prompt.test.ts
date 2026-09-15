@@ -29,8 +29,7 @@ describe("buildMagicContextBlock v2 system-prompt parity", () => {
 			expect(block).not.toBeNull();
 			expect(block).toContain(MAGIC_CONTEXT_GUIDANCE_MARKER);
 			expect(block).toContain("ctx_search");
-			expect(block).toContain("ctx_memory");
-			expect(block).toContain("ctx_note");
+			expect(block).toContain("ctx_expand");
 		} finally {
 			closeQuietly(db);
 		}

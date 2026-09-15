@@ -37,7 +37,13 @@ describe("tagTranscript source_contents persistence", () => {
 			];
 			const tagger = createTagger();
 			tagger.initFromDb(sessionId, db);
-			const transcript = createPiTranscript(messages, sessionId);
+			// Stable ids come from Pi's SessionEntry layer; positional entryIds is
+			// the supported fallback (unresolved messages are never tagged).
+			const transcript = createPiTranscript(messages, sessionId, [
+				"entry-1",
+				"entry-2",
+				"entry-3",
+			]);
 			const { targets } = tagTranscript(sessionId, transcript, tagger, db);
 
 			// Each text part should have produced a tag — we expect 3 tags
@@ -86,7 +92,7 @@ describe("tagTranscript source_contents persistence", () => {
 			];
 			const tagger = createTagger();
 			tagger.initFromDb(sessionId, db);
-			const transcript = createPiTranscript(messages, sessionId);
+			const transcript = createPiTranscript(messages, sessionId, ["entry-1"]);
 			const { targets } = tagTranscript(sessionId, transcript, tagger, db);
 
 			expect(targets.size).toBe(1);
@@ -111,7 +117,7 @@ describe("tagTranscript source_contents persistence", () => {
 			tagger.initFromDb(sessionId, db);
 
 			// First pass: tag the original.
-			const transcript1 = createPiTranscript(messages, sessionId);
+			const transcript1 = createPiTranscript(messages, sessionId, ["entry-1"]);
 			tagTranscript(sessionId, transcript1, tagger, db);
 
 			// Second pass: messages now appear with §N§ prefix (this is
@@ -119,7 +125,7 @@ describe("tagTranscript source_contents persistence", () => {
 			// saveSourceContent uses INSERT OR IGNORE so the original from
 			// pass 1 is preserved.
 			const messages2 = [userMessage("\u00a71\u00a7 original message", 2)];
-			const transcript2 = createPiTranscript(messages2, sessionId);
+			const transcript2 = createPiTranscript(messages2, sessionId, ["entry-1"]);
 			tagTranscript(sessionId, transcript2, tagger, db);
 
 			// The persisted source should still be the very first stripped

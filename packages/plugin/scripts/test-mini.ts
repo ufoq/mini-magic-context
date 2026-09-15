@@ -1,11 +1,13 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "fd3bbd5ec0b1843020f336ec22537910c1318bb296549f62e1392e8f4f59c095";
+const KNOWN_TEST_INVENTORY_DIGEST = "b5029eea5a63b27f4d363c68f21e093d93c869cf7eb198b2029ecc889a77bead";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([] as const);
 
-const allTests = (await $`git ls-files 'src/**/*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
+// `*.test.ts` matches at every depth (git pathspec `*` crosses `/`), covering
+// src/ tests plus scripts/ (build-schema, visual-memory experiments).
+const allTests = (await $`git ls-files '*.test.ts'`.text()).trim().split("\n").filter(Boolean).sort();
 const digest = createHash("sha256").update(`${allTests.join("\n")}\n`).digest("hex");
 const staleManifestEntries = [...NON_MINI_TESTS].filter((path) => !allTests.includes(path));
 

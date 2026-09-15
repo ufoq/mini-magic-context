@@ -18,12 +18,19 @@ describe("stripPiDroppedPlaceholderMessages", () => {
 				userMessage([{ type: "text", text: "[dropped §3§]" }], 3),
 				assistantMessage("real answer", 4),
 			];
+			const stableIdByRef = new Map<object, string>(
+				messages.map((message, index) => [
+					message as object,
+					`entry-${index + 1}`,
+				]),
+			);
 
 			const result = stripPiDroppedPlaceholderMessages({
 				db,
 				sessionId: "ses-placeholders",
 				messages,
 				isCacheBusting: true,
+				stableIdByRef,
 			});
 
 			// Only the assistant placeholder (#2) is removed; the all-[dropped]
@@ -53,6 +60,10 @@ describe("stripPiDroppedPlaceholderMessages", () => {
 				sessionId: "ses-image-marker",
 				messages,
 				isCacheBusting: true,
+				stableIdByRef: new Map<object, string>([
+					[messages[0] as object, "entry-keep"],
+					[marker as object, "entry-marker"],
+				]),
 			});
 
 			expect(result).toEqual({ removed: 0, discovered: 0 });
@@ -74,6 +85,10 @@ describe("stripPiDroppedPlaceholderMessages", () => {
 				sessionId: "ses-placeholders",
 				messages: first,
 				isCacheBusting: true,
+				stableIdByRef: new Map<object, string>([
+					[first[0] as object, "entry-keep"],
+					[first[1] as object, "entry-ph-2"],
+				]),
 			});
 
 			const replay = [
@@ -86,6 +101,11 @@ describe("stripPiDroppedPlaceholderMessages", () => {
 				sessionId: "ses-placeholders",
 				messages: replay,
 				isCacheBusting: false,
+				stableIdByRef: new Map<object, string>([
+					[replay[0] as object, "entry-keep"],
+					[replay[1] as object, "entry-ph-2"],
+					[replay[2] as object, "entry-ph-3"],
+				]),
 			});
 
 			expect(result).toEqual({ removed: 1, discovered: 0 });

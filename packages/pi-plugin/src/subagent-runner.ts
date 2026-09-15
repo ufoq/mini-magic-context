@@ -10,7 +10,6 @@ import {
 	resolve as resolvePath,
 } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import {
 	piModelRefToCanonical,
 	resolveModelRefForPi,
@@ -24,8 +23,7 @@ import type {
 } from "@magic-context/core/shared/subagent-runner";
 
 /**
- * Resolve the Pi CLI entry that should be spawned for historian/dreamer/
- * sidekick subagents.
+ * Resolve the Pi CLI entry that should be spawned for historian subagents.
  *
  * Why this isn't just "pi": when the Pi plugin runs inside an interactive
  * `pi` session, that user has the `pi` binary on PATH and `spawn("pi", ...)`
@@ -125,39 +123,6 @@ function resolvePiInvocation(): PiInvocation {
 }
 
 /**
- * Resolve the path to the lean subagent extension entry that gets loaded
- * inside spawned Pi child processes. The bundle ships at
- * `dist/subagent-entry.js` next to `dist/index.js` (this module). We use
- * `import.meta.url` so the path resolves correctly regardless of where
- * the npm package is installed (or where it's symlinked from in dev).
- *
- * Falls back to undefined if the file isn't found at the expected
- * location — caller should treat that as a soft signal to skip the
- * `-x` flag (subagent will run without Magic Context tools, which is
- * acceptable for ctx_*-using agents in dev/test before the bundle exists).
- */
-function resolveSubagentEntryPath(): string | undefined {
-	try {
-		// Resolve from the current module's directory. In dev (running
-		// .ts via Bun) and in prod (running .js from dist/), this lands
-		// in the same directory as the runner itself.
-		const here = dirname(fileURLToPath(import.meta.url));
-		const candidate = resolvePath(here, "subagent-entry.js");
-		if (existsSync(candidate)) return candidate;
-
-		// Dev fallback: when running source from packages/pi-plugin/src/
-		// the .js bundle doesn't exist yet; skip the --extension flag so
-		// tests running pre-build don't fail. Production builds always
-		// have the bundle.
-		return undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-const SUBAGENT_ENTRY_PATH = resolveSubagentEntryPath();
-
-/**
  * Grace period (ms) after we detect the terminal assistant message_end
  * before we SIGTERM the Pi child. Pi's print mode often finishes the agent
  * loop and emits agent_end / a clean stopReason but doesn't actually exit
@@ -197,35 +162,17 @@ function resolveSubagentExtensionEntry(entry: string): string {
 }
 
 const PI_READ_ONLY_BUILTINS = ["read", "grep", "find", "ls"] as const;
-const _PI_AFT_READ_TOOLS = ["aft_outline", "aft_zoom", "aft_search"] as const;
 const PI_HISTORIAN_TOOLS = [...PI_READ_ONLY_BUILTINS, "aft_search"] as const;
-
-/**
- * Set of subagent agent ids that get ctx_memory in the lean child extension.
- * Sidekick is retrieval-only and uses ctx_search; only dreamer-equivalent
- * agents need memory mutation/list capabilities.
- *
- * Membership uses the SAME agent strings the Pi callers actually pass
- * (see e.g. `dreamer/index.ts` passing `"magic-context-dreamer"`). If
- * a new dreamer-equivalent caller is added, register its agent id
- * here too. Mismatched agent strings silently disable the elevated
- * action surface.
- */
-const DREAMER_ACTION_AGENTS: ReadonlySet<string> = new Set();
-const SEARCH_ONLY_SUBAGENT_TOOL_AGENTS: ReadonlySet<string> = new Set();
 
 /**
  * Agents that must run under a HARD tool allow-list (`pi --tools <names>`), not
  * just a narrowed extension. The allow-list is a registry-build filter in Pi
  * (AgentSession._refreshToolRegistry): a tool enters the registry ONLY if its
  * name is in the set, so it strips Pi's built-ins (read/bash/edit/write) AND any
- * other extension tool, leaving exactly the named tools. This is the Pi mirror of
- * OpenCode's per-agent locked allow-list — every dreamer TASK agent runs under a
- * tight, per-task tool budget. The allow-list only KEEPS an existing
- * registration; for the ctx_* tools the lean extension must still have registered
- * them (see the *_SUBAGENT_TOOL_AGENTS sets above). For aft_* tools, Pi tolerates
- * names that no extension registered: unknown names are absent from the registry
- * after filtering, so listing optional AFT read tools is safe when AFT is not
+ * other extension tool, leaving exactly the named tools. The allow-list only
+ * KEEPS an existing registration; for aft_* tools, Pi tolerates names that no
+ * extension registered: unknown names are absent from the registry after
+ * filtering, so listing optional AFT read tools is safe when AFT is not
  * installed while still allowing them when an AFT provider extension is present.
  */
 const STRICT_TOOL_ALLOWLIST_ENTRIES: readonly (readonly [
@@ -248,12 +195,6 @@ const STRICT_TOOL_ALLOWLIST_ENTRIES: readonly (readonly [
 
 const STRICT_TOOL_ALLOWLIST: ReadonlyMap<string, readonly string[]> = new Map(
 	STRICT_TOOL_ALLOWLIST_ENTRIES,
-);
-
-const ZERO_TOOL_PROMPT_REQUIRED_AGENTS: ReadonlySet<string> = new Set(
-	STRICT_TOOL_ALLOWLIST_ENTRIES.filter(([, tools]) => tools.length === 0).map(
-		([agent]) => agent,
-	),
 );
 
 const KNOWN_PI_SUBAGENT_AGENTS = [
@@ -581,20 +522,6 @@ export class PiSubagentRunner implements SubagentRunner {
 			};
 			return result;
 		};
-
-		// A zero-tool child cannot receive its task instructions unless a system
-		// prompt is provided. Refuse before spawning so Pi cannot substitute a
-		// persisted user-mode prompt.
-		if (
-			ZERO_TOOL_PROMPT_REQUIRED_AGENTS.has(options.agent) &&
-			options.systemPrompt.trim().length === 0
-		) {
-			return failBeforeSpawn(
-				"invalid_prompt",
-				`zero-tool Pi subagent "${options.agent}" requires a non-empty system prompt`,
-				true,
-			);
-		}
 
 		// Large prompts (e.g. a ~50K-token historian chunk ≈ 200 KB) overflow
 		// Linux's per-argv-entry limit (MAX_ARG_STRLEN, 128 KiB) and make spawn()
@@ -1336,7 +1263,6 @@ export function buildArgs(
 		disableDiscoveredExtensions?: boolean;
 		subagentExtensions?: readonly string[];
 		omitPositionalMessage?: boolean;
-		subagentEntryPath?: string;
 		systemPromptPath?: string;
 		modelRef?: string;
 	},
@@ -1386,32 +1312,6 @@ export function buildArgs(
 		for (const extension of opts.subagentExtensions) {
 			args.push("--extension", resolveSubagentExtensionEntry(extension));
 		}
-	}
-
-	// Load Magic Context's lean subagent extension entry in children that need the
-	// scoped ctx_* tools. With no allowlist, discovered extensions remain enabled
-	// so provider and other auto-discovered extensions can register, while the full Magic Context entry sees
-	// MAGIC_CONTEXT_PI_SUBAGENT=1 and returns before wiring recursive hooks. The
-	// lean entry is explicitly loaded via --extension and is NOT guarded; it only
-	// registers subagent-scoped tools and never historian/dreamer/event handlers.
-	// When the bundle isn't present (e.g. running source from src/ without a build),
-	// skip the flag — the affected subagent simply lacks Magic Context ctx_* tools.
-	//
-	// We use the long form `--extension` (not the `-e` short form) to
-	// avoid clashes with extension-registered flags. Older Pi versions
-	// also exposed `-x`, but that alias was removed in 0.71+ — newer
-	// versions hard-fail with "Unknown option: -x".
-	// Do not load the lean Magic Context extension for historian/compressor style
-	// subagents. They do not use ctx_* tools, and loading the entry would add
-	// startup cost and an avoidable tool-registration surface. Tool-using agents
-	// (sidekick/dreamer) still receive the lean entry.
-	const subagentEntryPath = opts?.subagentEntryPath ?? SUBAGENT_ENTRY_PATH;
-	const shouldLoadSubagentExtension =
-		subagentEntryPath &&
-		(SEARCH_ONLY_SUBAGENT_TOOL_AGENTS.has(options.agent) ||
-			DREAMER_ACTION_AGENTS.has(options.agent));
-	if (shouldLoadSubagentExtension) {
-		args.push("--extension", subagentEntryPath);
 	}
 
 	// HARD tool isolation: every Magic Context child runs under either
@@ -1616,9 +1516,7 @@ export const __test = {
 	extractFinalAssistant,
 	parsePiEventLine,
 	terminateChild,
-	DREAMER_ACTION_AGENTS,
 	KNOWN_PI_SUBAGENT_AGENTS,
 	STRICT_TOOL_ALLOWLIST,
-	ZERO_TOOL_PROMPT_REQUIRED_AGENTS,
 	resetProviderFormCache: () => PI_PROVIDER_FORM_CACHE.clear(),
 };

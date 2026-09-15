@@ -616,13 +616,6 @@ describe("runPiHistorian", () => {
 			expect(
 				loadProtectedTailMeta(db, "ses-historian").priorBoundaryOrdinal,
 			).toBe(3);
-			// Mini: historian_runs telemetry is not persisted (recordHistorianRun
-			// is a no-op), so no rows are ever written.
-			expect(
-				db
-					.prepare("SELECT status FROM historian_runs WHERE session_id = ?")
-					.get("ses-historian"),
-			).toBeNull();
 		} finally {
 			closeQuietly(db);
 		}

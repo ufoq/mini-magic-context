@@ -42,11 +42,9 @@
  *
  * Before appending, we check whether the target message already contains
  * the exact hint or any `<ctx-search-hint>` block. Before searching, we
- * skip if raw user text already contains `<sidekick-augmentation>`,
- * `<ctx-search-hint>`, or `<ctx-search-auto>`, matching OpenCode's stacked
- * augmentation guard (lines 106-115, 189-198). Prompt extraction strips
- * Magic Context markers and prior plugin blocks before embedding, matching
- * OpenCode lines 118-143.
+ * skip if raw user text already contains `<ctx-search-hint>` or
+ * `<ctx-search-auto>` (stacked augmentation guard). Prompt extraction
+ * strips Magic Context markers and prior plugin blocks before embedding.
  */
 
 import type { ContextEvent } from "@earendil-works/pi-coding-agent";
