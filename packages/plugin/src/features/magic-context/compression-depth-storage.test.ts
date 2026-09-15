@@ -6,12 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     clearCompressionDepth,
-    closeDatabase,
     getAverageCompressionDepth,
     getMaxCompressionDepth,
     incrementCompressionDepth,
-    openDatabase,
-} from "./storage";
+} from "./compression-depth-storage";
+import { closeDatabase, openDatabase } from "./storage";
 
 const tempDirs: string[] = [];
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
