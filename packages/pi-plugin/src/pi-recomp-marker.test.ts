@@ -1,9 +1,9 @@
 import { describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import { getPendingPiCompactionMarkerState } from "@magic-context/core/features/magic-context/storage";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+import { appendCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import { getPendingPiCompactionMarkerState } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import { queueAndApplyPiRecompMarker } from "./pi-recomp-marker";
 import { createTestDb } from "./test-utils.test";
 

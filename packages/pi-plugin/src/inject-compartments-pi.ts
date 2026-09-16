@@ -25,7 +25,7 @@
  *     historyRefreshSessions signal.
  */
 
-import type { Memory } from "@magic-context/core/features/magic-context/memory/types";
+import type { Memory } from "@ufoq/mini-magic-context-core/features/magic-context/memory/types";
 import {
 	type ContextDatabase,
 	clearCachedM0M1,
@@ -34,18 +34,18 @@ import {
 	getOrCreateSessionMeta,
 	persistCachedM0,
 	readProjectDocsCanonical,
-} from "@magic-context/core/features/magic-context/storage";
-import { COMPARTMENT_RENDER_EPOCH } from "@magic-context/core/hooks/magic-context/compartment-render-epoch";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { COMPARTMENT_RENDER_EPOCH } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-render-epoch";
 import {
 	DEFAULT_HISTORY_BUDGET_TOKENS,
 	extractM0Block,
 	renderCompartmentAtTier,
 	renderDecayedCompartments,
-} from "@magic-context/core/hooks/magic-context/decay-render";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/decay-render";
 
-import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
-import type { MessageLike } from "@magic-context/core/hooks/magic-context/tag-messages";
-import { sessionLog as logSession } from "@magic-context/core/shared/logger";
+import { estimateTokens } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-formatting";
+import type { MessageLike } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-messages";
+import { sessionLog as logSession } from "@ufoq/mini-magic-context-core/shared/logger";
 import { resolvePiStableId, SYNTH_USER_ID_PREFIX } from "./read-session-pi";
 
 /**

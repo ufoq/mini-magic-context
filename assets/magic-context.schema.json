@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
+  "$id": "https://raw.githubusercontent.com/ufoq/mini-magic-context/master/assets/magic-context.schema.json",
   "title": "Mini Magic Context Configuration",
   "description": "Configuration schema for the Pi Mini Magic Context extension. Place as mini-magic-context.jsonc in <project>/.cortexkit/ or ~/.config/cortexkit/.",
   "type": "object",

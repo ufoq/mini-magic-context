@@ -9,7 +9,7 @@
         "skipLibCheck": true,
         "types": ["bun-types"],
         "paths": {
-            "@magic-context/core/*": ["../plugin/src/*"]
+            "@ufoq/mini-magic-context-core/*": ["../plugin/src/*"]
         }
     },
     "include": ["src/**/*.ts", "tests/**/*.ts"]

@@ -15,10 +15,10 @@
  * caveman compression — caveman is text-only.
  */
 import { describe, expect, it } from "bun:test";
-import { getSourceContents } from "@magic-context/core/features/magic-context/storage-source";
-import { createTagger } from "@magic-context/core/features/magic-context/tagger";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
-import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
+import { getSourceContents } from "@ufoq/mini-magic-context-core/features/magic-context/storage-source";
+import { createTagger } from "@ufoq/mini-magic-context-core/features/magic-context/tagger";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
+import { tagTranscript } from "@ufoq/mini-magic-context-core/shared/tag-transcript";
 import { assistantMessage, createTestDb, userMessage } from "./test-utils.test";
 import { createPiTranscript } from "./transcript-pi";
 

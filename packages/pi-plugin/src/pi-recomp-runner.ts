@@ -1,8 +1,8 @@
 import {
 	type RawMessageProvider,
 	setRawMessageProvider,
-} from "@magic-context/core/hooks/magic-context/read-session-chunk";
-import { sessionLog } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 import { setMagicContextRecompActive } from "./status-line";
 
 /**

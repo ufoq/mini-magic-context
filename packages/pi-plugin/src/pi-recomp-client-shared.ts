@@ -1,4 +1,4 @@
-import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
+import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 
 /**
  * Shared OpenCode-client emulation backed by a Pi `SubagentRunner`.

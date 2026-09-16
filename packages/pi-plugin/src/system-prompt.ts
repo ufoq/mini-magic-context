@@ -9,14 +9,14 @@
  */
 
 import { createHash } from "node:crypto";
-import { buildMagicContextSection } from "@magic-context/core/agents/magic-context-prompt";
+import { buildMagicContextSection } from "@ufoq/mini-magic-context-core/agents/magic-context-prompt";
 import {
 	type ContextDatabase,
 	getOrCreateSessionMeta,
 	updateSessionMeta,
-} from "@magic-context/core/features/magic-context/storage";
-import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
-import { sessionLog } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { estimateTokens } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-formatting";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 
 const PROJECT_DOCS_MARKER = "<project-docs>";
 const USER_PROFILE_MARKER = "<user-profile>";
@@ -112,7 +112,7 @@ export function processSystemPromptForCache(args: {
 
 	// Step 1: hash detection vs persisted value.
 	let sessionMeta:
-		| import("@magic-context/core/features/magic-context/types").SessionMeta
+		| import("@ufoq/mini-magic-context-core/features/magic-context/types").SessionMeta
 		| undefined;
 	try {
 		sessionMeta = getOrCreateSessionMeta(db, sessionId);

@@ -38,14 +38,14 @@
  */
 
 import * as crypto from "node:crypto";
-import { withContentLanguageDirective } from "@magic-context/core/agents/language-directive";
-import { embedAndStoreCompartmentChunks } from "@magic-context/core/features/magic-context/compartment-embedding";
-import { isCompartmentLeaseHeld } from "@magic-context/core/features/magic-context/compartment-lease";
+import { withContentLanguageDirective } from "@ufoq/mini-magic-context-core/agents/language-directive";
+import { embedAndStoreCompartmentChunks } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-embedding";
+import { isCompartmentLeaseHeld } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-lease";
 import {
 	appendCompartments,
 	getCompartments,
-} from "@magic-context/core/features/magic-context/compartment-storage";
-import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import { resolveProjectIdentityForSession } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
 import {
 	clearEmergencyDrainLatch,
 	clearEmergencyRecovery,
@@ -59,22 +59,22 @@ import {
 	reserveProtectedTailDrainTokens,
 	rollbackProtectedTailDrainReservation,
 	setPendingPiCompactionMarkerState,
-} from "@magic-context/core/features/magic-context/storage";
-import { updateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { updateSessionMeta } from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta";
 import {
 	buildCompartmentAgentPrompt,
 	buildHistorianEditorPrompt,
 	COMPARTMENT_AGENT_SYSTEM_PROMPT,
 	HISTORIAN_EDITOR_SYSTEM_PROMPT,
-} from "@magic-context/core/hooks/magic-context/compartment-prompt";
-import { queueDropsForCompartmentalizedMessages } from "@magic-context/core/hooks/magic-context/compartment-runner-drop-queue";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-prompt";
+import { queueDropsForCompartmentalizedMessages } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-runner-drop-queue";
 import {
 	buildHistorianFailureNotice,
 	buildHistorianRepairPrompt,
 	validateChunkCoverage,
 	validateHistorianOutput,
 	validateStoredCompartments,
-} from "@magic-context/core/hooks/magic-context/compartment-runner-validation";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-runner-validation";
 import {
 	createDefaultBoundarySnapshotForTests,
 	hasRunnableCompartmentWindow,
@@ -82,23 +82,23 @@ import {
 	recordHighPressureNoEligibleHead,
 	selectPerRunCap,
 	validateBoundarySnapshot,
-} from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/protected-tail-boundary";
 import {
 	type RawMessageProvider,
 	readSessionChunk,
 	withRawMessageProvider,
-} from "@magic-context/core/hooks/magic-context/read-session-chunk";
-import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
-import { buildReferenceBlocks } from "@magic-context/core/hooks/magic-context/reference-retrieval";
-import { describeError } from "@magic-context/core/shared/error-message";
-import { sessionLog } from "@magic-context/core/shared/logger";
-import type { Database } from "@magic-context/core/shared/sqlite";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import { estimateTokens } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-formatting";
+import { buildReferenceBlocks } from "@ufoq/mini-magic-context-core/hooks/magic-context/reference-retrieval";
+import { describeError } from "@ufoq/mini-magic-context-core/shared/error-message";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
+import type { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 import type {
 	SubagentProgressEvent,
 	SubagentRunner,
 	SubagentRunOptions,
 	SubagentRunResult,
-} from "@magic-context/core/shared/subagent-runner";
+} from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 
 import { ensureProjectRegisteredFromPiDirectory } from "./embedding-bootstrap";
 import {

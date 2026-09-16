@@ -1,27 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# release.sh — Tag and push a new magic-context release
+# release.sh — Validate, tag, push, and publish a Mini Magic Context release
 #
 # Usage:
-#   ./scripts/release.sh 0.1.0        # release v0.1.0
-#   ./scripts/release.sh 0.1.0 --dry  # preview without committing/pushing
+#   ./scripts/release.sh 0.1.0              # full release: checks → tag → push → publish
+#   ./scripts/release.sh 0.1.0 --dry        # preview version sync only; nothing is written
+#   ./scripts/release.sh 0.1.0 --no-publish # tag + push, but stop before npm publish
 #
 # What it does:
-#   1. Validates the version is semver
-#   2. Checks for clean working tree (no uncommitted changes)
-#   3. Syncs version in package.json
-#   4. Runs pre-release checks (lint, typecheck, build)
-#   5. Commits the version bump
-#   6. Creates a git tag (v0.1.0)
-#   7. Pushes commit + tag to origin
-#   8. CI takes over: test → build → publish npm + GitHub release
+#   1. Validates the version is semver and the tag is unused
+#   2. Checks for a clean working tree and an in-sync lockfile
+#   3. Runs pre-release checks (lint, typecheck, tests, build, Pi e2e)
+#   4. Regenerates the JSON schema and re-lints it
+#   5. Syncs the version across all three packages
+#   6. Commits the bump, creates tag mini-vX.Y.Z, pushes to the git remotes
+#   7. Publishes the two public packages to npm
+#
+# Publishing:
+#   packages/plugin is private and is NEVER published — its code is inlined
+#   into the two public bundles at build time. The published packages are
+#   packages/pi-plugin (@ufoq/pi-mini-magic-context) and packages/cli
+#   (@ufoq/mini-magic-context).
+#
+#   Set NPM_PUBLISH_URL to publish through a token-holding gate that accepts a
+#   raw `npm pack` tarball as application/octet-stream. Otherwise the script
+#   calls `npm publish` directly, which requires an authenticated session
+#   (verify with `npm whoami`).
+#
+# Remotes:
+#   Pushing to `origin` is required. Any other remote (e.g. a GitHub mirror) is
+#   pushed best-effort: a failure is reported as a warning but does not abort
+#   the release, since mirror auth can differ from origin's.
 
 VERSION="${1:-}"
 DRY="${2:-}"
+NO_PUBLISH="${3:-}"
+# Accept the flags in either order.
+if [[ "$DRY" == "--no-publish" ]]; then DRY=""; NO_PUBLISH="--no-publish"; fi
+if [[ "$NO_PUBLISH" == "--dry" ]]; then NO_PUBLISH=""; DRY="--dry"; fi
 
 if [[ -z "$VERSION" ]]; then
-  echo "Usage: ./scripts/release.sh <version> [--dry]"
+  echo "Usage: ./scripts/release.sh <version> [--dry | --no-publish]"
   echo "  e.g. ./scripts/release.sh 0.1.0"
   exit 1
 fi
@@ -31,7 +51,13 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?
   exit 1
 fi
 
-TAG="v$VERSION"
+# The `mini-` prefix is load-bearing: the bare `v*` tag namespace is already
+# occupied by the retired @cortexkit/opencode-magic-context line (v0.1.0–v0.22.3,
+# published to npm up to 0.42.5), whose tags still live on origin and GitHub.
+# Reusing v0.1.0 would collide with that history. The dashboard line set the
+# precedent for a family prefix (`dashboard-v*`); Mini Magic Context uses
+# `mini-v*`.
+TAG="mini-v$VERSION"
 
 # Check if tag already exists
 if git rev-parse "$TAG" >/dev/null 2>&1; then
@@ -58,7 +84,7 @@ if [[ "$BRANCH" != "main" && "$BRANCH" != "master" ]]; then
 fi
 
 echo ""
-echo "  Releasing magic-context $TAG"
+echo "  Releasing Mini Magic Context $TAG"
 echo "  ─────────────────────────────"
 echo ""
 
@@ -67,7 +93,7 @@ if [[ "$DRY" == "--dry" ]]; then
   echo "→ Version sync (dry run):"
   bun scripts/version-sync.mjs "$VERSION" --dry-run
   echo ""
-  echo "[DRY RUN] Would commit, tag $TAG, and push to origin."
+  echo "[DRY RUN] Would commit, tag $TAG, push to the git remotes, and publish to npm."
   exit 0
 fi
 
@@ -79,6 +105,17 @@ PLUGIN_DIR="packages/plugin"
 PI_DIR="packages/pi-plugin"
 CLI_DIR="packages/cli"
 E2E_DIR="packages/e2e-tests"
+
+# The lockfile is tracked, so a fresh clone must be able to install from it with
+# --frozen-lockfile. If package.json drifted from bun.lock, CI and every fresh
+# clone break even though this working tree still builds from node_modules.
+# Gate on it here rather than discovering it after the tag is cut.
+echo "  [deps] bun install --frozen-lockfile..."
+if ! bun install --frozen-lockfile 2>&1; then
+  echo "Error: bun.lock is out of sync with package.json"
+  echo "       run 'bun install' and commit the updated bun.lock before releasing"
+  exit 1
+fi
 
 # Run `bun test` for a package and gate on a TRUE pass, not just "no fail line".
 #
@@ -191,25 +228,20 @@ echo "→ Generating JSON Schema..."
 bun packages/plugin/scripts/build-schema.ts || { echo "Error: Schema generation failed"; exit 1; }
 echo ""
 
-# Step 3b: Regenerate reference-seed corpus from source XML
-echo "→ Generating historian reference seeds..."
-bun packages/plugin/scripts/build-reference-seeds.ts || { echo "Error: Reference-seed generation failed"; exit 1; }
-echo ""
-
-# Step 3c: Re-lint generated artifacts. The pre-release lint (above) runs BEFORE
+# Step 3b: Re-lint generated artifacts. The pre-release lint (above) runs BEFORE
 # generation, so a generator that emits non-repo-style output would otherwise
-# only fail in CI after the tag is cut. Lint the regenerated files here so any
+# only fail after the tag is cut. Lint the regenerated files here so any
 # formatting drift fails locally.
 echo "→ Linting generated artifacts..."
-bun run --cwd "$PLUGIN_DIR" lint 2>&1 || { echo "Error: Generated artifacts failed lint (regenerated schema/seeds not repo-style)"; exit 1; }
+bun run --cwd "$PLUGIN_DIR" lint 2>&1 || { echo "Error: Generated artifacts failed lint (regenerated schema not repo-style)"; exit 1; }
 echo ""
 
-# Step 4: Sync version
+# Step 5: Sync version
 echo "→ Syncing version to $VERSION..."
 bun scripts/version-sync.mjs "$VERSION"
 echo ""
 
-# Step 4: Commit (skip if versions were already at target)
+# Step 6: Commit (skip if versions were already at target)
 echo "→ Committing version bump..."
 git add -A
 if git diff --cached --quiet; then
@@ -218,17 +250,93 @@ else
   git commit -m "release: $TAG"
 fi
 
-# Step 5: Tag
+# Step 7: Tag
 echo "→ Creating tag $TAG..."
 git tag -a "$TAG" -m "Release $TAG"
 echo ""
 
-# Step 6: Push
-echo "→ Pushing to origin..."
-git push origin "$BRANCH"
-git push origin "$TAG"
+# Step 8: Push
+echo "→ Pushing to git remotes..."
+if ! git remote | grep -qx origin; then
+  echo "Error: no 'origin' remote configured"
+  exit 1
+fi
+for remote in $(git remote); do
+  if [[ "$remote" == "origin" ]]; then
+    echo "  [$remote] (required)"
+    git push "$remote" "$BRANCH" || { echo "Error: push to origin failed"; exit 1; }
+    git push "$remote" "$TAG" || { echo "Error: tag push to origin failed"; exit 1; }
+  else
+    echo "  [$remote] (best-effort mirror)"
+    git push "$remote" "$BRANCH" "$TAG" 2>&1 || \
+      echo "  ⚠ Warning: could not push to '$remote' — push it manually when its credentials are available"
+  fi
+done
+echo ""
+
+# Step 9: Publish the public packages to npm.
+#
+# Build explicitly, then publish with --ignore-scripts so the npm-registry path
+# and the NPM_PUBLISH_URL path ship byte-identical artifact sets (packages carry
+# a prepublishOnly build that would otherwise run a second, redundant build).
+publish_package() {
+  local dir="$1" name pkg_version packdir tarball http_code response_file
+  name=$(node -p "require('./$dir/package.json').name")
+  pkg_version=$(node -p "require('./$dir/package.json').version")
+
+  echo "  [$name@$pkg_version] building..."
+  bun run --cwd "$dir" build >/dev/null 2>&1 || { echo "Error: build failed for $name"; exit 1; }
+
+  # Pack into a temp dir, never in-tree: a tarball left inside the repo would be
+  # picked up by the next release's `git add -A` and committed.
+  packdir=$(mktemp -d)
+  ( cd "$dir" && npm pack --pack-destination "$packdir" --silent >/dev/null 2>&1 ) \
+    || { echo "Error: npm pack failed for $name"; rm -rf "$packdir"; exit 1; }
+  tarball=$(ls "$packdir"/*.tgz 2>/dev/null | head -1)
+  [[ -n "$tarball" ]] || { echo "Error: no tarball produced for $name"; rm -rf "$packdir"; exit 1; }
+
+  if [[ -n "${NPM_PUBLISH_URL:-}" ]]; then
+    echo "  [$name@$pkg_version] POST $NPM_PUBLISH_URL"
+    response_file=$(mktemp)
+    # `|| http_code=000` keeps `set -e` from aborting before we can report why.
+    http_code=$(curl -s -o "$response_file" -w '%{http_code}' \
+      -X POST --data-binary "@$tarball" \
+      -H 'Content-Type: application/octet-stream' \
+      "$NPM_PUBLISH_URL" || echo '000')
+    if [[ "$http_code" != "200" ]]; then
+      echo "Error: publish failed for $name (HTTP $http_code)"
+      cat "$response_file" 2>/dev/null; echo
+      rm -f "$response_file"; rm -rf "$packdir"
+      exit 1
+    fi
+    rm -f "$response_file"
+  else
+    echo "  [$name@$pkg_version] npm publish --access public"
+    ( cd "$dir" && npm publish "$tarball" --access public --ignore-scripts ) || {
+      echo "Error: npm publish failed for $name (are you logged in? check 'npm whoami')"
+      rm -rf "$packdir"
+      exit 1
+    }
+  fi
+
+  rm -rf "$packdir"
+  echo "  ✓ published $name@$pkg_version"
+}
+
+if [[ "$NO_PUBLISH" == "--no-publish" ]]; then
+  echo "→ Skipping npm publish (--no-publish)."
+else
+  echo "→ Publishing to npm..."
+  publish_package "$PI_DIR"
+  publish_package "$CLI_DIR"
+fi
 echo ""
 
 echo "  ✓ Released $TAG"
-echo "  → GitHub Actions will now: test → build → publish"
-echo "  → Watch: https://github.com/ufoq/mini-magic-context/actions"
+if [[ "$NO_PUBLISH" == "--no-publish" ]]; then
+  echo "  → npm publish was skipped (--no-publish)"
+  echo "  → Publish manually: @ufoq/pi-mini-magic-context@$VERSION, @ufoq/mini-magic-context@$VERSION"
+else
+  echo "  → Published: @ufoq/pi-mini-magic-context@$VERSION, @ufoq/mini-magic-context@$VERSION"
+fi
+echo "  → https://github.com/ufoq/mini-magic-context/releases/tag/$TAG"

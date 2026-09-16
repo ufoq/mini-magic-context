@@ -4,8 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { PassThrough } from "node:stream";
-import * as loggerModule from "@magic-context/core/shared/logger";
-import type { SubagentRunOptions } from "@magic-context/core/shared/subagent-runner";
+import * as loggerModule from "@ufoq/mini-magic-context-core/shared/logger";
+import type { SubagentRunOptions } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 
 import { __test, PiSubagentRunner } from "./subagent-runner";
 

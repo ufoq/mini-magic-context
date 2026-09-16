@@ -10,10 +10,10 @@ import {
 	getOrCreateSessionMeta,
 	getSourceContents,
 	getTagsBySession,
-} from "@magic-context/core/features/magic-context/storage";
-import { replayCavemanCompression } from "@magic-context/core/hooks/magic-context/caveman-cleanup";
-import type { TagTarget } from "@magic-context/core/hooks/magic-context/tag-messages";
-import type { Database } from "@magic-context/core/shared/sqlite";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { replayCavemanCompression } from "@ufoq/mini-magic-context-core/hooks/magic-context/caveman-cleanup";
+import type { TagTarget } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-messages";
+import type { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 import {
 	__test,
 	handlePiCloneSessionStart,

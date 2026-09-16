@@ -70,7 +70,7 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { RawMessage } from "@magic-context/core/hooks/magic-context/read-session-raw";
+import type { RawMessage } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-raw";
 
 /**
  * Prefix for the synthetic-user RawMessage id emitted when a run of `toolResult`

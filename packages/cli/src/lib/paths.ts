@@ -1,8 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveCortexKitUserConfigPath } from "@magic-context/core/config/paths";
-import { getMagicContextLogPath as getMagicContextLogPathCore } from "@magic-context/core/shared/data-path";
+import { resolveCortexKitUserConfigPath } from "@ufoq/mini-magic-context-core/config/paths";
+import { getMagicContextLogPath as getMagicContextLogPathCore } from "@ufoq/mini-magic-context-core/shared/data-path";
 
 // ============================================================================
 // Pi paths

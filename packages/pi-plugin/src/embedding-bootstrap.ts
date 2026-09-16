@@ -2,18 +2,18 @@ import { statSync } from "node:fs";
 import {
 	cortexKitProjectConfigBasePath,
 	cortexKitUserConfigBasePath,
-} from "@magic-context/core/config/paths";
-import type { EmbeddingConfig } from "@magic-context/core/config/schema/magic-context";
+} from "@ufoq/mini-magic-context-core/config/paths";
+import type { EmbeddingConfig } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
 import {
 	type EmbeddingFeatures,
 	registerProjectEmbedding,
-} from "@magic-context/core/features/magic-context/memory/embedding";
-import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/memory/embedding";
+import { resolveProjectIdentityForSession } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	handleUntrustedLoad,
 	isConfigLoadUntrusted,
-} from "@magic-context/core/plugin/embedding-bootstrap-helpers";
+} from "@ufoq/mini-magic-context-core/plugin/embedding-bootstrap-helpers";
 import { loadPiConfigDetailed } from "./config";
 
 interface RegistrationFingerprint {

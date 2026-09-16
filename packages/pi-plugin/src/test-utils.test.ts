@@ -1,7 +1,7 @@
 import type { ContextEvent } from "@earendil-works/pi-coding-agent";
-import { initializeDatabase } from "@magic-context/core/features/magic-context/storage-db";
-import { setHarness } from "@magic-context/core/shared/harness";
-import { Database } from "@magic-context/core/shared/sqlite";
+import { initializeDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
+import { setHarness } from "@ufoq/mini-magic-context-core/shared/harness";
+import { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 
 export type PiMessage = ContextEvent["messages"][number];
 

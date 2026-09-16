@@ -3,20 +3,20 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/paths";
+import { resolveCortexKitProjectConfigPath } from "@ufoq/mini-magic-context-core/config/paths";
 import {
     dropInheritedEmbeddingKeyOnRedirect,
     stripUnsafeProjectConfigFields,
-} from "@magic-context/core/config/project-security";
-import { MagicContextConfigSchema } from "@magic-context/core/config/schema/magic-context";
-import { substituteConfigVariables } from "@magic-context/core/config/variable";
+} from "@ufoq/mini-magic-context-core/config/project-security";
+import { MagicContextConfigSchema } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
+import { substituteConfigVariables } from "@ufoq/mini-magic-context-core/config/variable";
 import {
     type EmbeddingProbeOutcome,
     probeEmbeddingEndpoint,
-} from "@magic-context/core/features/magic-context/memory/embedding-probe";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
-import { getMagicContextStorageDir } from "@magic-context/core/shared/data-path";
-import { loadPiConfig } from "@magic-context/pi-core/config";
+} from "@ufoq/mini-magic-context-core/features/magic-context/memory/embedding-probe";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { getMagicContextStorageDir } from "@ufoq/mini-magic-context-core/shared/data-path";
+import { loadPiConfig } from "@ufoq/pi-mini-magic-context/config";
 import { parse as parseJsonc, stringify as stringifyJsonc } from "comment-json";
 
 import { writeFileAtomic } from "../lib/atomic-write";
@@ -801,7 +801,7 @@ function writeDefaultMagicContextConfig(path: string): void {
     mkdirSync(dirname(path), { recursive: true });
     const config = {
         $schema:
-            "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
+            "https://raw.githubusercontent.com/ufoq/mini-magic-context/master/assets/magic-context.schema.json",
         ...MagicContextConfigSchema.parse({}),
     };
     writeFileAtomic(path, `${stringifyJsonc(config, null, 2)}\n`);

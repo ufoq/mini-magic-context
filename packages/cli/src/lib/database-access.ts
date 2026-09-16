@@ -4,9 +4,9 @@ import {
     getPersistedSchemaVersion as getCorePersistedSchemaVersion,
     isCurrentMiniDatabase,
     LATEST_SUPPORTED_VERSION,
-} from "@magic-context/core/features/magic-context/storage-db";
-import type { Database as DatabaseType } from "@magic-context/core/shared/sqlite";
-import { Database } from "@magic-context/core/shared/sqlite";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
+import type { Database as DatabaseType } from "@ufoq/mini-magic-context-core/shared/sqlite";
+import { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 
 export function getPersistedSchemaVersion(db: DatabaseType): number {
     return getCorePersistedSchemaVersion(db);

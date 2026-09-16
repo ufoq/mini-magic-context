@@ -4,13 +4,13 @@ import { createRequire } from "node:module";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
-import { resolveCortexKitProjectConfigPath } from "@magic-context/core/config/paths";
-import { parseCompartmentOutput } from "@magic-context/core/hooks/magic-context/compartment-parser";
+import { resolveCortexKitProjectConfigPath } from "@ufoq/mini-magic-context-core/config/paths";
+import { parseCompartmentOutput } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-parser";
 import {
     getMagicContextStorageDir,
     getProjectMagicContextHistorianDir,
-} from "@magic-context/core/shared/data-path";
-import { loadPiConfig } from "@magic-context/pi-core/config";
+} from "@ufoq/mini-magic-context-core/shared/data-path";
+import { loadPiConfig } from "@ufoq/pi-mini-magic-context/config";
 import { parse as parseJsonc } from "comment-json";
 import {
     getMagicContextLogPath,

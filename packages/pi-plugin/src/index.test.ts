@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import * as loggerModule from "@magic-context/core/shared/logger";
+import * as loggerModule from "@ufoq/mini-magic-context-core/shared/logger";
 
 import { __test } from "./index";
 

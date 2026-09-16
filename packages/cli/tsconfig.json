@@ -15,8 +15,8 @@
 		"types": ["node"],
 		"baseUrl": ".",
 		"paths": {
-			"@magic-context/core/*": ["../plugin/src/*"],
-			"@magic-context/pi-core/*": ["../pi-plugin/src/*"]
+			"@ufoq/mini-magic-context-core/*": ["../plugin/src/*"],
+			"@ufoq/pi-mini-magic-context/*": ["../pi-plugin/src/*"]
 		}
 	},
 	"include": ["src/**/*.ts"],

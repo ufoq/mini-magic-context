@@ -1,10 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
-import { acquireCompartmentLease } from "@magic-context/core/features/magic-context/compartment-lease";
+import { acquireCompartmentLease } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-lease";
 import {
 	appendCompartments,
 	getCompartments,
 	getSessionFacts,
-} from "@magic-context/core/features/magic-context/compartment-storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
 import {
 	getHistorianFailureState,
 	getOverflowState,
@@ -12,13 +12,13 @@ import {
 	loadProtectedTailMeta,
 	recordOverflowDetected,
 	reserveProtectedTailDrainTokens,
-} from "@magic-context/core/features/magic-context/storage";
-import type { ProtectedTailBoundarySnapshot } from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import type { ProtectedTailBoundarySnapshot } from "@ufoq/mini-magic-context-core/hooks/magic-context/protected-tail-boundary";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import type {
 	SubagentRunner,
 	SubagentRunResult,
-} from "@magic-context/core/shared/subagent-runner";
+} from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 import {
 	buildPiCompactionSummary,
 	clearPiHistorianAlertState,

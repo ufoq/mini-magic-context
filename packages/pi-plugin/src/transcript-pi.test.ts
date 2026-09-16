@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { createTagger } from "@magic-context/core/features/magic-context/tagger";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
-import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
+import { createTagger } from "@ufoq/mini-magic-context-core/features/magic-context/tagger";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
+import { tagTranscript } from "@ufoq/mini-magic-context-core/shared/tag-transcript";
 import {
 	assistantMessage,
 	assistantToolCall,

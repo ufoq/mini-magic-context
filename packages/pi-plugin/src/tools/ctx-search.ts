@@ -15,19 +15,19 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { getLastCompartmentEndMessage } from "@magic-context/core/features/magic-context/compartment-storage";
+import { getLastCompartmentEndMessage } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
 import {
 	embedTextForProject,
 	getProjectEmbeddingSnapshot,
-} from "@magic-context/core/features/magic-context/memory/embedding";
-import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
+} from "@ufoq/mini-magic-context-core/features/magic-context/memory/embedding";
+import { resolveProjectIdentityForSession } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
 import {
 	type UnifiedSearchResult,
 	unifiedSearch,
-} from "@magic-context/core/features/magic-context/search";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
-import { CTX_SEARCH_DESCRIPTION } from "@magic-context/core/tools/ctx-search/constants";
-import { unwrapImitatedReducedArgs } from "@magic-context/core/tools/unwrap-imitated-reduced-args";
+} from "@ufoq/mini-magic-context-core/features/magic-context/search";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { CTX_SEARCH_DESCRIPTION } from "@ufoq/mini-magic-context-core/tools/ctx-search/constants";
+import { unwrapImitatedReducedArgs } from "@ufoq/mini-magic-context-core/tools/unwrap-imitated-reduced-args";
 import { type Static, Type } from "typebox";
 
 const DEFAULT_LIMIT = 10;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { MagicContextConfigSchema } from "@magic-context/core/config/schema/magic-context";
+import { MagicContextConfigSchema } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
 import { resolveHistorianFromConfig } from "./index";
 
 describe("Pi config resolvers", () => {

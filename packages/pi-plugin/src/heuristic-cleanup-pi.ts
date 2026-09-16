@@ -19,24 +19,24 @@ import {
 	replaceSourceContent,
 	updateTagDropMode,
 	updateTagStatus,
-} from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	getEmergencyInputSample,
 	setEmergencyDropSample,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import type { TagEntry } from "@magic-context/core/features/magic-context/types";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import type { TagEntry } from "@ufoq/mini-magic-context-core/features/magic-context/types";
 import {
 	applyCavemanCleanup,
 	type CavemanCleanupConfig,
-} from "@magic-context/core/hooks/magic-context/caveman-cleanup";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/caveman-cleanup";
 import {
 	type EmergencyDropTag,
 	planEmergencyDrop,
-} from "@magic-context/core/hooks/magic-context/emergency-drop";
-import { stripSystemInjection } from "@magic-context/core/hooks/magic-context/system-injection-stripper";
-import type { TagTarget } from "@magic-context/core/hooks/magic-context/tag-messages";
-import { stripTagPrefix } from "@magic-context/core/hooks/magic-context/tag-part-guards";
-import { sessionLog } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/emergency-drop";
+import { stripSystemInjection } from "@ufoq/mini-magic-context-core/hooks/magic-context/system-injection-stripper";
+import type { TagTarget } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-messages";
+import { stripTagPrefix } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-part-guards";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 
 /**
  * Same DEDUP_SAFE_TOOLS list OpenCode uses. Read-only tools whose

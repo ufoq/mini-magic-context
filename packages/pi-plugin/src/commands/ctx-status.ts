@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
-import { getPendingOps } from "@magic-context/core/features/magic-context/storage";
-import { getOrCreateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
-import { getTagsBySession } from "@magic-context/core/features/magic-context/storage-tags";
-import { executeStatus } from "@magic-context/core/hooks/magic-context/execute-status";
-import { describeError } from "@magic-context/core/shared/error-message";
+import { getCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { getPendingOps } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { getOrCreateSessionMeta } from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta";
+import { getTagsBySession } from "@ufoq/mini-magic-context-core/features/magic-context/storage-tags";
+import { executeStatus } from "@ufoq/mini-magic-context-core/hooks/magic-context/execute-status";
+import { describeError } from "@ufoq/mini-magic-context-core/shared/error-message";
 import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
 
 export interface RegisterCtxStatusDeps {

@@ -26,11 +26,11 @@
 import {
 	peelLeadingMcTagNotation,
 	stripTagPrefix,
-} from "@magic-context/core/hooks/magic-context/tag-content-primitives";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-content-primitives";
 import {
 	TEMPORAL_MARKER_PATTERN,
 	temporalMarkerPrefix,
-} from "@magic-context/core/hooks/magic-context/temporal-awareness";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/temporal-awareness";
 
 type PiTextContent = { type: "text"; text: string; textSignature?: string };
 type PiImageContent = { type: "image"; data: string; mimeType: string };

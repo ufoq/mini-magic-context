@@ -1,6 +1,6 @@
 // Pi clone inheritance follows the durable-state rules documented in issue #225.
 import { readFile } from "node:fs/promises";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	type CloneCompartmentRow,
 	type CloneSessionStateFilter,
@@ -8,8 +8,8 @@ import {
 	type CopySessionStateForCloneResult,
 	copySessionStateForClone,
 	type PendingPiCompactionMarker,
-} from "@magic-context/core/features/magic-context/storage";
-import { log } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { log } from "@ufoq/mini-magic-context-core/shared/logger";
 import { convertEntriesToRawMessages } from "./read-session-pi";
 
 const CONTENT_ID_SUFFIX = /:(?:p|file)\d+$/;

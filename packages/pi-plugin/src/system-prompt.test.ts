@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
 	buildMagicContextBlock,
 	MAGIC_CONTEXT_GUIDANCE_MARKER,

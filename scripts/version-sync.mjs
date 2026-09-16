@@ -10,7 +10,7 @@
  *
  * Usage:
  *   node scripts/version-sync.mjs 0.1.0           # set version to 0.1.0
- *   node scripts/version-sync.mjs --from-tag       # read from GITHUB_REF_NAME (e.g. v0.1.0)
+ *   node scripts/version-sync.mjs --from-tag       # read from GITHUB_REF_NAME (e.g. mini-v0.1.0)
  *   node scripts/version-sync.mjs 0.1.0 --dry-run  # preview changes without writing
  */
 
@@ -54,7 +54,9 @@ function parseArgs(argv) {
             console.error("--from-tag requires GITHUB_REF_NAME environment variable");
             process.exit(1);
         }
-        version = ref.replace(/^v/, "");
+        // Tags are namespaced `mini-v<semver>` (see scripts/release.sh): the
+        // bare `v*` namespace belongs to the retired opencode-magic-context line.
+        version = ref.replace(/^mini-v/, "").replace(/^v/, "");
     }
 
     if (!version) {

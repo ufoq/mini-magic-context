@@ -15,12 +15,12 @@
  * contract.
  */
 
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	applyStrippedPlaceholderDelta,
 	getStrippedPlaceholderIds,
-} from "@magic-context/core/features/magic-context/storage";
-import { sessionLog } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 import { resolvePiStableId } from "./read-session-pi";
 
 const DROPPED_SEGMENT_PATTERN = /^\[dropped(?: §[^§]+§)?\]$/;

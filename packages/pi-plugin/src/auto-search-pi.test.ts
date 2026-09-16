@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import type { UnifiedSearchResult } from "@magic-context/core/features/magic-context/search";
-import * as searchModule from "@magic-context/core/features/magic-context/search";
+import type { UnifiedSearchResult } from "@ufoq/mini-magic-context-core/features/magic-context/search";
+import * as searchModule from "@ufoq/mini-magic-context-core/features/magic-context/search";
 import {
 	appendAutoSearchHintDecision,
 	getAutoSearchHintDecisions,
-} from "@magic-context/core/features/magic-context/storage";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
 	clearAutoSearchForPiSession,
 	runAutoSearchHintForPi,

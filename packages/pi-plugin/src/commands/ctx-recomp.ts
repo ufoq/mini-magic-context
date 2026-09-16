@@ -1,21 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { withContentLanguageDirective } from "@magic-context/core/agents/language-directive";
-import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import { withContentLanguageDirective } from "@ufoq/mini-magic-context-core/agents/language-directive";
+import { getCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	clearEmergencyRecovery,
 	isWrapupInProgress,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT } from "@magic-context/core/hooks/magic-context/compartment-prompt";
-import { executeContextRecompWithResult } from "@magic-context/core/hooks/magic-context/compartment-runner";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-prompt";
+import { executeContextRecompWithResult } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-runner";
 import {
 	type PartialRecompRange,
 	snapRangeToCompartments,
-} from "@magic-context/core/hooks/magic-context/compartment-runner-partial-recomp";
-import type { RawMessageProvider } from "@magic-context/core/hooks/magic-context/read-session-chunk";
-import { describeError } from "@magic-context/core/shared/error-message";
-import { sessionLog } from "@magic-context/core/shared/logger";
-import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-runner-partial-recomp";
+import type { RawMessageProvider } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import { describeError } from "@ufoq/mini-magic-context-core/shared/error-message";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
+import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 import {
 	signalPiDeferredHistoryRefresh,
 	signalPiDeferredMaterialization,

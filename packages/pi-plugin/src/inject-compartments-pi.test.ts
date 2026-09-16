@@ -2,14 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
+import { appendCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import { resolveProjectIdentity } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
 import {
 	getCompartments,
 	getOrCreateSessionMeta,
-} from "@magic-context/core/features/magic-context/storage";
-import { COMPARTMENT_RENDER_EPOCH } from "@magic-context/core/hooks/magic-context/compartment-render-epoch";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { COMPARTMENT_RENDER_EPOCH } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-render-epoch";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
 	__test,
 	injectM0M1Pi,

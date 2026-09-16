@@ -34,9 +34,9 @@
  * so the bypass is no longer needed.
  */
 
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
-import { getOrCreateSessionMeta } from "@magic-context/core/features/magic-context/storage";
-import type { TagTarget } from "@magic-context/core/hooks/magic-context/tag-messages";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { getOrCreateSessionMeta } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import type { TagTarget } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-messages";
 
 type PiTextContent = { type: "text"; text: string };
 type PiThinkingContent = {

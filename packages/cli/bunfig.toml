@@ -1,7 +1,7 @@
 # Test isolation: force the shared cortexkit DB onto a throwaway temp dir for the
 # whole test process so NO cli test can read or migrate the user's real shared
 # database. The CLI imports shared-core storage via
-# @magic-context/core, so a bare openDatabase() here would otherwise hit the live
+# @ufoq/mini-magic-context-core, so a bare openDatabase() here would otherwise hit the live
 # DB. resolveDatabasePath() also has a NODE_ENV=test backstop; this keeps the
 # redirect canonical. See packages/plugin/test-preload.ts for the full rationale.
 [test]

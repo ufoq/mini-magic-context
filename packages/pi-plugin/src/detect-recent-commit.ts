@@ -13,7 +13,7 @@
  * `commitSeenLastPass` per-session, mirroring OpenCode parity.
  */
 
-import { textMentionsRecentCommit } from "@magic-context/core/shared/commit-detection";
+import { textMentionsRecentCommit } from "@ufoq/mini-magic-context-core/shared/commit-detection";
 
 // We accept a broad `unknown[]` and inspect each entry defensively.
 // Pi's `event.messages` from the `pi.on("context", ...)` hook is the

@@ -95,9 +95,9 @@ async function main(): Promise<void> {
 
 	const [{ Database }, { initializeDatabase }, { setHarness }] =
 		await Promise.all([
-			import("@magic-context/core/shared/sqlite"),
-			import("@magic-context/core/features/magic-context/storage-db"),
-			import("@magic-context/core/shared/harness"),
+			import("@ufoq/mini-magic-context-core/shared/sqlite"),
+			import("@ufoq/mini-magic-context-core/features/magic-context/storage-db"),
+			import("@ufoq/mini-magic-context-core/shared/harness"),
 		]);
 	const [
 		{

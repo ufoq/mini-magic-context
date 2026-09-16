@@ -5,9 +5,9 @@ import { join } from "node:path";
 import {
 	getOrCreateSessionMeta,
 	updateSessionMeta,
-} from "@magic-context/core/features/magic-context/storage";
-import { openDatabase } from "@magic-context/core/features/magic-context/storage-db";
-import { setHarness } from "@magic-context/core/shared/harness";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { openDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
+import { setHarness } from "@ufoq/mini-magic-context-core/shared/harness";
 import {
 	buildMessageIdToMaxTag,
 	clearOldReasoningPi,
@@ -65,7 +65,7 @@ describe("buildMessageIdToMaxTag", () => {
 		const result = buildMessageIdToMaxTag(
 			targets as unknown as Map<
 				number,
-				import("@magic-context/core/hooks/magic-context/tag-messages").TagTarget
+				import("@ufoq/mini-magic-context-core/hooks/magic-context/tag-messages").TagTarget
 			>,
 		);
 		expect(result.size).toBe(1);

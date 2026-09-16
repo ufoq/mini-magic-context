@@ -5,7 +5,7 @@ import type {
 	Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Text } from "@earendil-works/pi-tui";
-import { sessionLog } from "@magic-context/core/shared/logger";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 
 export const CTX_STATUS_CUSTOM_TYPE = "ctx-status";
 

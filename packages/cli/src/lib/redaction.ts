@@ -5,7 +5,7 @@ import {
     sanitizeConfigValue,
     sanitizeDiagnosticText,
     sanitizePathString,
-} from "@magic-context/core/shared/redaction";
+} from "@ufoq/mini-magic-context-core/shared/redaction";
 
 export {
     hasShareabilitySensitiveText,

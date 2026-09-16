@@ -6,10 +6,10 @@ import {
 	type DeferredExecutePayload,
 	peekDeferredExecutePending,
 	setDeferredExecutePendingIfAbsent,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { ensureSessionMetaRow } from "@magic-context/core/features/magic-context/storage-meta-shared";
-import { applyMidTurnDeferral } from "@magic-context/core/hooks/magic-context/boundary-execution";
-import { Database } from "@magic-context/core/shared/sqlite";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { ensureSessionMetaRow } from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-shared";
+import { applyMidTurnDeferral } from "@ufoq/mini-magic-context-core/hooks/magic-context/boundary-execution";
+import { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 import { isMidTurnPi } from "./read-session-pi";
 
 function createDb(): Database {

@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { EmbeddingConfig } from "@magic-context/core/config/schema/magic-context";
-import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
+import type { EmbeddingConfig } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
+import { appendCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
 import type {
 	EmbeddingProvider,
 	EmbeddingPurpose,
-} from "@magic-context/core/features/magic-context/memory/embedding-provider";
+} from "@ufoq/mini-magic-context-core/features/magic-context/memory/embedding-provider";
 import {
 	_resetProjectEmbeddingRegistryForTests,
 	_setTestProviderFactoryForProject,
 	registerProjectEmbedding,
-} from "@magic-context/core/features/magic-context/project-embedding-registry";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/project-embedding-registry";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import { createTestDb } from "../test-utils.test";
 import { runEmbedDrain } from "./ctx-embed";
 

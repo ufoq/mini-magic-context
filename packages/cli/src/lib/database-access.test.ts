@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
     initializeDatabase,
     LATEST_SUPPORTED_VERSION,
-} from "@magic-context/core/features/magic-context/storage-db";
-import { Database } from "@magic-context/core/shared/sqlite";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
+import { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 import {
     openExistingContextDatabase,
     openExistingContextDatabaseForMutation,

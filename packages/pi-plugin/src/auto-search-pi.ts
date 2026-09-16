@@ -51,20 +51,20 @@ import type { ContextEvent } from "@earendil-works/pi-coding-agent";
 import {
 	embedTextForProject,
 	getProjectEmbeddingSnapshot,
-} from "@magic-context/core/features/magic-context/memory/embedding";
+} from "@ufoq/mini-magic-context-core/features/magic-context/memory/embedding";
 import type {
 	UnifiedSearchOptions,
 	UnifiedSearchResult,
-} from "@magic-context/core/features/magic-context/search";
-import { unifiedSearch } from "@magic-context/core/features/magic-context/search";
+} from "@ufoq/mini-magic-context-core/features/magic-context/search";
+import { unifiedSearch } from "@ufoq/mini-magic-context-core/features/magic-context/search";
 import {
 	type AutoSearchHintNoHintReason,
 	appendAutoSearchHintDecision,
 	getAutoSearchHintDecisions,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { buildAutoSearchHint } from "@magic-context/core/hooks/magic-context/auto-search-hint";
-import { log, sessionLog } from "@magic-context/core/shared/logger";
-import type { Database } from "@magic-context/core/shared/sqlite";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { buildAutoSearchHint } from "@ufoq/mini-magic-context-core/hooks/magic-context/auto-search-hint";
+import { log, sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
+import type { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 
 /**
  * Pi's full AgentMessage union, sourced from the live SDK ContextEvent

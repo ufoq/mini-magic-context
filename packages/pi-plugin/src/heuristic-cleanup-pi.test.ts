@@ -4,12 +4,12 @@ import {
 	getTagsBySession,
 	insertTag,
 	queuePendingOp,
-} from "@magic-context/core/features/magic-context/storage";
-import { createTagger } from "@magic-context/core/features/magic-context/tagger";
-import { applyPendingOperations } from "@magic-context/core/hooks/magic-context/apply-operations";
-import type { TagTarget } from "@magic-context/core/hooks/magic-context/tag-messages";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
-import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { createTagger } from "@ufoq/mini-magic-context-core/features/magic-context/tagger";
+import { applyPendingOperations } from "@ufoq/mini-magic-context-core/hooks/magic-context/apply-operations";
+import type { TagTarget } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-messages";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
+import { tagTranscript } from "@ufoq/mini-magic-context-core/shared/tag-transcript";
 import { applyPiHeuristicCleanup } from "./heuristic-cleanup-pi";
 import { createTestDb, userMessage } from "./test-utils.test";
 import { createPiTranscript } from "./transcript-pi";

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { piModelRefToCanonical } from "@magic-context/core/shared/harness-provider-map";
+import { piModelRefToCanonical } from "@ufoq/mini-magic-context-core/shared/harness-provider-map";
 import { stringify as stringifyJsonc } from "comment-json";
 import { writeFileAtomic } from "../lib/atomic-write";
 import { assertJsoncConfigsParseable, readJsoncConfigForUpdate } from "../lib/jsonc-config";
@@ -124,7 +124,7 @@ export function writeMagicContextConfig(
 
     if (!config.$schema) {
         config.$schema =
-            "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json";
+            "https://raw.githubusercontent.com/ufoq/mini-magic-context/master/assets/magic-context.schema.json";
     }
 
     // The Pi model picker yields Pi-native provider ids (openai-codex/...,

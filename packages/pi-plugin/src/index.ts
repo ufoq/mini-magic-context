@@ -4,50 +4,50 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type {
 	HistorianConfig,
 	MagicContextConfig,
-} from "@magic-context/core/config/schema/magic-context";
+} from "@ufoq/mini-magic-context-core/config/schema/magic-context";
 import {
 	type FailClosedReason,
 	formatFailClosedBlockingMessage,
-} from "@magic-context/core/features/magic-context/fail-closed-block";
-import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
-import { scheduleIncrementalIndex } from "@magic-context/core/features/magic-context/message-index-async";
-import { detectOverflow } from "@magic-context/core/features/magic-context/overflow-detection";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/fail-closed-block";
+import { resolveProjectIdentityForSession } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
+import { scheduleIncrementalIndex } from "@ufoq/mini-magic-context-core/features/magic-context/message-index-async";
+import { detectOverflow } from "@ufoq/mini-magic-context-core/features/magic-context/overflow-detection";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	getOrCreateSessionMeta,
 	getPendingPiCompactionMarkerState,
 	getSessionsWithPendingPiMarker,
 	updateSessionMeta,
-} from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	applySqliteTuningPragmas,
 	getSchemaFenceRejection,
 	openDatabaseAsync,
 	setSqlitePragmaConfig,
-} from "@magic-context/core/features/magic-context/storage-db";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
 import {
 	getOverflowState,
 	recordOverflowDetected,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
 import {
 	deriveHistorianChunkTokens,
 	resolveHistorianContextLimit,
-} from "@magic-context/core/hooks/magic-context/derive-budgets";
-import { resolveCacheTtl } from "@magic-context/core/hooks/magic-context/event-resolvers";
-import { beginBootQuietPeriod } from "@magic-context/core/plugin/boot-quiet";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/derive-budgets";
+import { resolveCacheTtl } from "@ufoq/mini-magic-context-core/hooks/magic-context/event-resolvers";
+import { beginBootQuietPeriod } from "@ufoq/mini-magic-context-core/plugin/boot-quiet";
 import {
 	ANNOUNCEMENT_FEATURES,
 	ANNOUNCEMENT_FOOTER,
 	ANNOUNCEMENT_VERSION,
 	markAnnouncementSeen,
 	shouldShowAnnouncement,
-} from "@magic-context/core/shared/announcement";
-import { getMagicContextStorageDir } from "@magic-context/core/shared/data-path";
-import { setHarness } from "@magic-context/core/shared/harness";
-import { setKeepSubagents } from "@magic-context/core/shared/keep-subagents";
-import { log } from "@magic-context/core/shared/logger";
-import { isSaneLimit } from "@magic-context/core/shared/models-dev-cache";
-import { resolveFallbackChain } from "@magic-context/core/shared/resolve-fallbacks";
+} from "@ufoq/mini-magic-context-core/shared/announcement";
+import { getMagicContextStorageDir } from "@ufoq/mini-magic-context-core/shared/data-path";
+import { setHarness } from "@ufoq/mini-magic-context-core/shared/harness";
+import { setKeepSubagents } from "@ufoq/mini-magic-context-core/shared/keep-subagents";
+import { log } from "@ufoq/mini-magic-context-core/shared/logger";
+import { isSaneLimit } from "@ufoq/mini-magic-context-core/shared/models-dev-cache";
+import { resolveFallbackChain } from "@ufoq/mini-magic-context-core/shared/resolve-fallbacks";
 
 import { handlePiCloneSessionStart } from "./clone-inheritance";
 import {

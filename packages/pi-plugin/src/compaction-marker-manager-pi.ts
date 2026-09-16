@@ -1,7 +1,7 @@
-import { getCompartmentsByEndMessageId } from "@magic-context/core/features/magic-context/compartment-storage";
-import type { PendingPiCompactionMarker } from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { sessionLog } from "@magic-context/core/shared/logger";
-import type { Database } from "@magic-context/core/shared/sqlite";
+import { getCompartmentsByEndMessageId } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import type { PendingPiCompactionMarker } from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
+import type { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 
 export type PiMarkerUpdateOutcome =
 	| { kind: "applied"; firstKeptEntryId: string }

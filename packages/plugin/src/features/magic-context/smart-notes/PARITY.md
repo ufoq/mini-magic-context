@@ -1,6 +1,6 @@
 # Smart-note compiled-check parity
 
-The compiled-check runner and SSRF guard live in `packages/plugin/src/features/magic-context/smart-notes` and are shared by OpenCode/Bun and Pi/Node via the Pi package's `@magic-context/core/*` path mapping.
+The compiled-check runner and SSRF guard live in `packages/plugin/src/features/magic-context/smart-notes` and are shared by OpenCode/Bun and Pi/Node via the Pi package's `@ufoq/mini-magic-context-core/*` path mapping.
 
 Security parity coverage:
 

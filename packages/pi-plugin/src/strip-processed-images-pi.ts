@@ -2,8 +2,8 @@ import {
 	addProcessedImageStrippedIds,
 	type ContextDatabase,
 	getProcessedImageStrippedIds,
-} from "@magic-context/core/features/magic-context/storage";
-import { sessionLog } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 
 interface PiImagePart {
 	type: "image";

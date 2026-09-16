@@ -5,7 +5,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import { createCtxExpandTool } from "./ctx-expand";
 import { createCtxSearchTool } from "./ctx-search";
 

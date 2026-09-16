@@ -4,23 +4,23 @@ import { describe, expect, it, mock } from "bun:test";
 import {
 	acquireCompartmentLease,
 	releaseCompartmentLease,
-} from "@magic-context/core/features/magic-context/compartment-lease";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-lease";
 import {
 	appendCompartments,
 	getCompartments,
 	getLastCompartmentEndMessage,
-} from "@magic-context/core/features/magic-context/compartment-storage";
-import { updateSessionMeta } from "@magic-context/core/features/magic-context/storage";
-import { initializeDatabase } from "@magic-context/core/features/magic-context/storage-db";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import { updateSessionMeta } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { initializeDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
 import {
 	getOverflowState,
 	getPendingPiCompactionMarkerState,
 	getWrapupInProgressState,
 	recordOverflowDetected,
 	setPendingPiCompactionMarkerState,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { Database } from "@magic-context/core/shared/sqlite";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
 	consumeDeferredHistoryRefresh,
 	consumeDeferredMaterialization,

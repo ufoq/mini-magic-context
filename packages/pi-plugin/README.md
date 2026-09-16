@@ -47,7 +47,7 @@ Both are validated against a Zod schema. Invalid fields fall back to defaults; b
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/ufoq/mini-magic-context/main/assets/magic-context.schema.json",
+  "$schema": "https://raw.githubusercontent.com/ufoq/mini-magic-context/master/assets/magic-context.schema.json",
   "enabled": true,
   "historian": {
     "model": "anthropic/claude-haiku-4-5"

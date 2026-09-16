@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
+import { appendCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
 import {
 	__resetMessageIndexAsyncForTests,
 	isSessionReconciled,
-} from "@magic-context/core/features/magic-context/message-index-async";
-import * as searchModule from "@magic-context/core/features/magic-context/search";
+} from "@ufoq/mini-magic-context-core/features/magic-context/message-index-async";
+import * as searchModule from "@ufoq/mini-magic-context-core/features/magic-context/search";
 import {
 	acquireWrapupInProgress,
 	getHistorianFailureState,
@@ -20,22 +20,22 @@ import {
 	setPendingPiCompactionMarkerState,
 	updateCavemanDepth,
 	updateSessionMeta,
-} from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	getEmergencyInputSample,
 	getOverflowState,
 	recordOverflowDetected,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { createTagger } from "@magic-context/core/features/magic-context/tagger";
-import { checkCompartmentTrigger } from "@magic-context/core/hooks/magic-context/compartment-trigger";
-import { deriveTriggerBudget } from "@magic-context/core/hooks/magic-context/derive-budgets";
-import { resolveExecuteThreshold } from "@magic-context/core/hooks/magic-context/event-resolvers";
-import { withRawMessageProvider } from "@magic-context/core/hooks/magic-context/read-session-chunk";
-import { setBootQuietPeriodForTests } from "@magic-context/core/plugin/boot-quiet";
-import { clearModelsDevCache } from "@magic-context/core/shared/models-dev-cache";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
-import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
-import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { createTagger } from "@ufoq/mini-magic-context-core/features/magic-context/tagger";
+import { checkCompartmentTrigger } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-trigger";
+import { deriveTriggerBudget } from "@ufoq/mini-magic-context-core/hooks/magic-context/derive-budgets";
+import { resolveExecuteThreshold } from "@ufoq/mini-magic-context-core/hooks/magic-context/event-resolvers";
+import { withRawMessageProvider } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import { setBootQuietPeriodForTests } from "@ufoq/mini-magic-context-core/plugin/boot-quiet";
+import { clearModelsDevCache } from "@ufoq/mini-magic-context-core/shared/models-dev-cache";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
+import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
+import { tagTranscript } from "@ufoq/mini-magic-context-core/shared/tag-transcript";
 
 import { clearAutoSearchForPiSession } from "./auto-search-pi";
 import {

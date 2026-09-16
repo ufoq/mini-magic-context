@@ -40,7 +40,7 @@
  * OpenCode (residual at display).
  */
 
-import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
+import { estimateTokens } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-formatting";
 
 export interface PiMessageTokenCounts {
 	conversation: number;

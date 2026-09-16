@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
-import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import type { PendingPiCompactionMarker } from "@magic-context/core/features/magic-context/storage";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+import { appendCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import type { PendingPiCompactionMarker } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
 	applyDeferredPiCompactionMarker,
 	findLatestCompactionFirstKept,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { stripUnsafeProjectConfigFields } from "@magic-context/core/config/project-security";
+import { stripUnsafeProjectConfigFields } from "@ufoq/mini-magic-context-core/config/project-security";
 
 describe("Pi project config security", () => {
 	it("strips language from project config", () => {

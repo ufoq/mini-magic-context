@@ -5,13 +5,13 @@ import { join } from "node:path";
 import {
 	cortexKitProjectConfigBasePath,
 	cortexKitUserConfigBasePath,
-} from "@magic-context/core/config/paths";
+} from "@ufoq/mini-magic-context-core/config/paths";
 import {
 	_resetProjectEmbeddingRegistryForTests,
 	getProjectEmbeddingSnapshot,
-} from "@magic-context/core/features/magic-context/memory/embedding";
-import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
-import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/memory/embedding";
+import { resolveProjectIdentity } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
+import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
 	ensureProjectRegisteredFromPiDirectory,
 	miniEmbeddingConfig,

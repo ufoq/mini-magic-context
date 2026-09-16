@@ -13,14 +13,14 @@ import { createInterface } from "node:readline";
 import {
 	piModelRefToCanonical,
 	resolveModelRefForPi,
-} from "@magic-context/core/shared/harness-provider-map";
-import { sessionLog } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/shared/harness-provider-map";
+import { sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
 import type {
 	SubagentProgressEvent,
 	SubagentRunner,
 	SubagentRunOptions,
 	SubagentRunResult,
-} from "@magic-context/core/shared/subagent-runner";
+} from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 
 /**
  * Resolve the Pi CLI entry that should be spawned for historian subagents.

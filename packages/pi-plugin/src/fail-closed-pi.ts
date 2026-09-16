@@ -16,9 +16,9 @@ import {
 	type FailClosedReason,
 	isFailClosedBlockingError,
 	shouldBypassFailClosedBlock,
-} from "@magic-context/core/features/magic-context/fail-closed-block";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
-import { log } from "@magic-context/core/shared/logger";
+} from "@ufoq/mini-magic-context-core/features/magic-context/fail-closed-block";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { log } from "@ufoq/mini-magic-context-core/shared/logger";
 
 const PREFIX = "[magic-context][pi]";
 

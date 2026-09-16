@@ -69,14 +69,14 @@
  * tagging+drops layer (which today only knows about MessageLike[]).
  */
 
-import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
-import { isRecord } from "@magic-context/core/shared/record-type-guard";
+import { estimateTokens } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-formatting";
+import { isRecord } from "@ufoq/mini-magic-context-core/shared/record-type-guard";
 import type {
 	Transcript,
 	TranscriptMessage,
 	TranscriptPart,
 	TranscriptPartKind,
-} from "@magic-context/core/shared/transcript";
+} from "@ufoq/mini-magic-context-core/shared/transcript";
 import { resolvePiStableId, SYNTH_USER_ID_PREFIX } from "./read-session-pi";
 
 // We re-declare the minimal subset of pi-ai message shapes we need.

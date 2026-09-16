@@ -8,11 +8,11 @@ import {
 	COMPARTMENT_LEASE_RENEWAL_MS,
 	releaseCompartmentLease,
 	renewCompartmentLease,
-} from "@magic-context/core/features/magic-context/compartment-lease";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-lease";
 import {
 	getCompartments,
 	getLastCompartmentEndMessage,
-} from "@magic-context/core/features/magic-context/compartment-storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
 import {
 	acquireWrapupInProgress,
 	type ContextDatabase,
@@ -21,14 +21,14 @@ import {
 	getWrapupInProgressState,
 	releaseWrapupInProgress,
 	updateWrapupInProgress,
-} from "@magic-context/core/features/magic-context/storage";
-import { resolveExecuteThreshold } from "@magic-context/core/hooks/magic-context/event-resolvers";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { resolveExecuteThreshold } from "@ufoq/mini-magic-context-core/hooks/magic-context/event-resolvers";
 import {
 	hasRunnableCompartmentWindow,
 	resolveWrapupProtectedTailBoundary,
-} from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
-import { setRawMessageProvider } from "@magic-context/core/hooks/magic-context/read-session-chunk";
-import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/protected-tail-boundary";
+import { setRawMessageProvider } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 import {
 	signalPiDeferredHistoryRefresh,
 	signalPiDeferredMaterialization,

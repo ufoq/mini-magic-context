@@ -41,21 +41,21 @@ import {
 	COMPARTMENT_LEASE_RENEWAL_MS,
 	releaseCompartmentLease,
 	renewCompartmentLease,
-} from "@magic-context/core/features/magic-context/compartment-lease";
-import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
-import { isFailClosedBlockingError } from "@magic-context/core/features/magic-context/fail-closed-block";
-import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
+} from "@ufoq/mini-magic-context-core/features/magic-context/compartment-lease";
+import { getCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import { isFailClosedBlockingError } from "@ufoq/mini-magic-context-core/features/magic-context/fail-closed-block";
+import { resolveProjectIdentityForSession } from "@ufoq/mini-magic-context-core/features/magic-context/memory/project-identity";
 import {
 	clearSessionTracking,
 	scheduleIncrementalIndex,
 	scheduleReconciliation,
-} from "@magic-context/core/features/magic-context/message-index-async";
+} from "@ufoq/mini-magic-context-core/features/magic-context/message-index-async";
 import {
 	createScheduler,
 	parseCacheTtl,
 	type Scheduler,
-} from "@magic-context/core/features/magic-context/scheduler";
-import { recordSessionProjectIdentity } from "@magic-context/core/features/magic-context/session-project-storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/scheduler";
+import { recordSessionProjectIdentity } from "@ufoq/mini-magic-context-core/features/magic-context/session-project-storage";
 import {
 	type ContextDatabase,
 	clearPendingPiCompactionMarkerStateIf,
@@ -70,8 +70,8 @@ import {
 	isWrapupInProgress,
 	setSessionWorkMetrics,
 	updateSessionMeta,
-} from "@magic-context/core/features/magic-context/storage";
-import { getOrCreateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
+import { getOrCreateSessionMeta } from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta";
 import {
 	clearDeferredExecutePendingIfMatches,
 	clearDetectedContextLimit,
@@ -83,58 +83,58 @@ import {
 	type PendingPiCompactionMarker,
 	peekDeferredExecutePending,
 	setDeferredExecutePendingIfAbsent,
-} from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { getSourceContents } from "@magic-context/core/features/magic-context/storage-source";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import { getSourceContents } from "@ufoq/mini-magic-context-core/features/magic-context/storage-source";
 import {
 	createTagger,
 	type Tagger,
-} from "@magic-context/core/features/magic-context/tagger";
-import { computePiWorkMetrics } from "@magic-context/core/features/magic-context/work-metrics";
+} from "@ufoq/mini-magic-context-core/features/magic-context/tagger";
+import { computePiWorkMetrics } from "@ufoq/mini-magic-context-core/features/magic-context/work-metrics";
 import {
 	applyFlushedStatuses,
 	applyPendingOperations,
 	RECENT_TOOL_SKELETON_WINDOW,
-} from "@magic-context/core/hooks/magic-context/apply-operations";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/apply-operations";
 import {
 	applyMidTurnDeferral,
 	detectMidTurnBypassReason,
-} from "@magic-context/core/hooks/magic-context/boundary-execution";
-import { replayCavemanCompression } from "@magic-context/core/hooks/magic-context/caveman-cleanup";
-import { checkCompartmentTrigger } from "@magic-context/core/hooks/magic-context/compartment-trigger";
-import { deriveTriggerBudget } from "@magic-context/core/hooks/magic-context/derive-budgets";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/boundary-execution";
+import { replayCavemanCompression } from "@ufoq/mini-magic-context-core/hooks/magic-context/caveman-cleanup";
+import { checkCompartmentTrigger } from "@ufoq/mini-magic-context-core/hooks/magic-context/compartment-trigger";
+import { deriveTriggerBudget } from "@ufoq/mini-magic-context-core/hooks/magic-context/derive-budgets";
 import {
 	DEFAULT_CONTEXT_LIMIT,
 	resolveExecuteThreshold,
-} from "@magic-context/core/hooks/magic-context/event-resolvers";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/event-resolvers";
 import {
 	getRawHistoryEligibility,
 	hasRunnableCompartmentWindow,
 	type ProtectedTailBoundarySnapshot,
 	resolveBoundaryContext,
 	resolveProtectedTailBoundary,
-} from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/protected-tail-boundary";
 import {
 	readRawSessionMessages,
 	setRawMessageProvider,
-} from "@magic-context/core/hooks/magic-context/read-session-chunk";
-import { invalidateTrueRawTokenCache } from "@magic-context/core/hooks/magic-context/read-session-true-raw-tokens";
-import { modelAcceptsEmptyContent } from "@magic-context/core/hooks/magic-context/sentinel";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import { invalidateTrueRawTokenCache } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-true-raw-tokens";
+import { modelAcceptsEmptyContent } from "@ufoq/mini-magic-context-core/hooks/magic-context/sentinel";
 import {
 	buildEditSupersessionReclaim,
 	buildSupersessionReclaimOps,
-} from "@magic-context/core/hooks/magic-context/supersession-reclaim";
-import { stripTagPrefix } from "@magic-context/core/hooks/magic-context/tag-content-primitives";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/supersession-reclaim";
+import { stripTagPrefix } from "@ufoq/mini-magic-context-core/hooks/magic-context/tag-content-primitives";
 import {
 	advanceToolReclaimWatermarkToCurrentMax,
 	buildSyntheticToolReclaimOps,
-} from "@magic-context/core/hooks/magic-context/tool-reclaim";
-import { log, sessionLog } from "@magic-context/core/shared/logger";
-import { isSaneLimit } from "@magic-context/core/shared/models-dev-cache";
-import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/tool-reclaim";
+import { log, sessionLog } from "@ufoq/mini-magic-context-core/shared/logger";
+import { isSaneLimit } from "@ufoq/mini-magic-context-core/shared/models-dev-cache";
+import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 import {
 	TEXT_TAG_IDENTITY_MARKER,
 	tagTranscript,
-} from "@magic-context/core/shared/tag-transcript";
+} from "@ufoq/mini-magic-context-core/shared/tag-transcript";
 import {
 	clearAutoSearchForPiSession,
 	runAutoSearchHintForPi,

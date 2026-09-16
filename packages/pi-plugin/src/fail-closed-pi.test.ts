@@ -4,8 +4,8 @@ import { describe, expect, it } from "bun:test";
 import {
 	FAIL_CLOSED_DOCTOR_COMMAND,
 	isFailClosedBlockingError,
-} from "@magic-context/core/features/magic-context/fail-closed-block";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/fail-closed-block";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 
 import { registerPiFailClosedSurface } from "./fail-closed-pi";
 

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MagicContextConfigSchema } from "@magic-context/core/config/schema/magic-context";
+import { MagicContextConfigSchema } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
 import { loadPiConfig } from "./index";
 
 const tempRoots: string[] = [];

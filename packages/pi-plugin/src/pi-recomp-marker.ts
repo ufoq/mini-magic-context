@@ -1,9 +1,9 @@
-import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
+import { getCompartments } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
 import {
 	type ContextDatabase,
 	clearPendingPiCompactionMarkerStateIf,
 	setPendingPiCompactionMarkerState,
-} from "@magic-context/core/features/magic-context/storage";
+} from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import { applyDeferredPiCompactionMarker } from "./compaction-marker-manager-pi";
 import { signalPiDeferredHistoryRefresh } from "./context-handler";
 import {

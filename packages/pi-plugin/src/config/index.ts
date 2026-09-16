@@ -1,21 +1,21 @@
 import {
 	cortexKitProjectConfigBasePath,
 	cortexKitUserConfigBasePath,
-} from "@magic-context/core/config/paths";
-import "@magic-context/core/config/prune-config-leaf";
+} from "@ufoq/mini-magic-context-core/config/paths";
+import "@ufoq/mini-magic-context-core/config/prune-config-leaf";
 import { existsSync, readFileSync } from "node:fs";
 
 import {
 	constrainProjectThresholdOverrides,
 	dropInheritedEmbeddingKeyOnRedirect,
 	stripUnsafeProjectConfigFields,
-} from "@magic-context/core/config/project-security";
-import { pruneNestedConfigLeaf } from "@magic-context/core/config/prune-config-leaf";
+} from "@ufoq/mini-magic-context-core/config/project-security";
+import { pruneNestedConfigLeaf } from "@ufoq/mini-magic-context-core/config/prune-config-leaf";
 import {
 	type MagicContextConfig,
 	MagicContextConfigSchema,
-} from "@magic-context/core/config/schema/magic-context";
-import { substituteConfigVariables } from "@magic-context/core/config/variable";
+} from "@ufoq/mini-magic-context-core/config/schema/magic-context";
+import { substituteConfigVariables } from "@ufoq/mini-magic-context-core/config/variable";
 import { parse as parseJsonc } from "comment-json";
 
 export interface LoadPiConfigOptions {

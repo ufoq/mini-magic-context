@@ -18,21 +18,21 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { getLastCompartmentEndMessage } from "@magic-context/core/features/magic-context/compartment-storage";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import { getLastCompartmentEndMessage } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-storage";
+import type { ContextDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import {
 	readSessionChunk,
 	setRawMessageProvider,
-} from "@magic-context/core/hooks/magic-context/read-session-chunk";
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
 import {
 	CTX_EXPAND_DESCRIPTION,
 	CTX_EXPAND_TOKEN_BUDGET,
-} from "@magic-context/core/tools/ctx-expand/constants";
+} from "@ufoq/mini-magic-context-core/tools/ctx-expand/constants";
 import {
 	renderMessageByOrdinal,
 	renderVerboseRange,
-} from "@magic-context/core/tools/ctx-expand/render";
-import { unwrapImitatedReducedArgs } from "@magic-context/core/tools/unwrap-imitated-reduced-args";
+} from "@ufoq/mini-magic-context-core/tools/ctx-expand/render";
+import { unwrapImitatedReducedArgs } from "@ufoq/mini-magic-context-core/tools/unwrap-imitated-reduced-args";
 import { type Static, Type } from "typebox";
 import { readPiSessionMessages } from "../read-session-pi";
 
