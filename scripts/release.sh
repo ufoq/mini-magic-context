@@ -51,12 +51,15 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?
   exit 1
 fi
 
-# The `mini-` prefix is load-bearing: the bare `v*` tag namespace is already
-# occupied by the retired @cortexkit/opencode-magic-context line (v0.1.0–v0.22.3,
-# published to npm up to 0.42.5), whose tags still live on origin and GitHub.
-# Reusing v0.1.0 would collide with that history. The dashboard line set the
-# precedent for a family prefix (`dashboard-v*`); Mini Magic Context uses
-# `mini-v*`.
+# The `mini-` prefix keeps release tags distinct from the tags already in this
+# repo's own history. This fork carries the full upstream cortexkit/magic-context
+# history, where v0.1.0 (and 126 other v* tags) are ancestors of HEAD — git tags
+# share one flat namespace per repo, so a bare `v0.1.0` would already exist. The
+# upstream line is still actively released (its npm package is
+# @cortexkit/opencode-magic-context, currently 0.42.x), so the two streams stay
+# separated permanently. npm scopes are independent, so version NUMBERS were
+# never in conflict — this is purely about git tag names. dashboard-v* set the
+# family-prefix precedent.
 TAG="mini-v$VERSION"
 
 # Check if tag already exists
