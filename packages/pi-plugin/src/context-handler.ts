@@ -242,6 +242,7 @@ let persistReasoningWatermarkForRun = updateSessionMeta;
 export const __test = {
 	FORWARD_PRESSURE_LIMIT_FACTOR,
 	applyForwardPressureFloor,
+	buildPiAlignedEntryIds,
 	convertLocatedPiUserEntry,
 	readPiBranchEntriesForContext,
 	getTaggedStableMessageIdsForTests(sessionId: string): ReadonlySet<string> {
@@ -1140,8 +1141,28 @@ function addPiBranchEntryToLookup(
 
 function isPiContextEmitEligible(entry: unknown): entry is { id: string } {
 	if (!entry || typeof entry !== "object") return false;
-	const row = entry as { type?: unknown; id?: unknown; summary?: unknown };
+	const row = entry as {
+		type?: unknown;
+		id?: unknown;
+		summary?: unknown;
+		message?: unknown;
+	};
 	if (typeof row.id !== "string") return false;
+	// `system` message entries are persisted by Pi 0.87+ but are NOT part of the
+	// `context` event's messages: `emitContext` filters `role !== "system"`
+	// before handing the conversation to handlers (Pi re-attaches the prompt and
+	// tool state itself afterwards). This predicate decides whether an entry
+	// contributes a slot to the aligned-id lane, which is positionally compared
+	// against `event.messages`, so a system entry MUST NOT be counted — otherwise
+	// the lane is one longer than `event.messages` and never matches (silently
+	// disabling the O(1) fast path), and any host/extension change that happens
+	// to make the lengths coincide would map every slot onto the WRONG entry.
+	if (
+		row.type === "message" &&
+		(row.message as { role?: unknown } | undefined)?.role === "system"
+	) {
+		return false;
+	}
 	return (
 		row.type === "message" ||
 		row.type === "custom_message" ||

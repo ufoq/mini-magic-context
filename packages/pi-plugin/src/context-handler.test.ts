@@ -2787,6 +2787,60 @@ describe("convertLocatedPiUserEntry: ordinal counter agrees with the reader", ()
 	});
 });
 
+describe("buildPiAlignedEntryIds: aligned lane must mirror event.messages", () => {
+	// The aligned-id lane is positionally compared against `event.messages`
+	// (`context-handler.ts` resolves it only when the lengths are equal). Pi's
+	// `emitContext` filters `role !== "system"` out of `event.messages`, so the
+	// lane must not count the Pi 0.87+ system entry.
+	//
+	// Regression: the predicate previously matched ANY `type: "message"` entry,
+	// so with a persisted system entry the lane was one longer than
+	// `event.messages` and never matched — silently disabling the O(1) fast path.
+	// Worse, if another extension changed the visible count by one the lengths
+	// would coincide and every slot would map onto the WRONG entry.
+	const systemEntry = {
+		type: "message",
+		id: "sys-1",
+		message: { role: "system", content: "" },
+	};
+	const userEntry = {
+		type: "message",
+		id: "user-1",
+		message: { role: "user", content: "hi" },
+	};
+	const assistantEntry = {
+		type: "message",
+		id: "asst-1",
+		message: { role: "assistant", content: "hello" },
+	};
+
+	it("excludes the system entry so the lane length matches event.messages", () => {
+		const aligned = contextHandlerInternals.buildPiAlignedEntryIds([
+			systemEntry,
+			userEntry,
+			assistantEntry,
+		]);
+		// event.messages is [user, assistant] — 2 entries, not 3.
+		expect(aligned).toEqual(["user-1", "asst-1"]);
+	});
+
+	it("keeps a system entry out of the lane even when it is first", () => {
+		const aligned = contextHandlerInternals.buildPiAlignedEntryIds([
+			systemEntry,
+		]);
+		expect(aligned).toEqual([]);
+	});
+
+	it("still counts ordinary and custom message entries", () => {
+		const aligned = contextHandlerInternals.buildPiAlignedEntryIds([
+			userEntry,
+			{ type: "custom_message", id: "custom-1" },
+			assistantEntry,
+		]);
+		expect(aligned).toEqual(["user-1", "custom-1", "asst-1"]);
+	});
+});
+
 describe("collectMessageEntryIdsByRef", () => {
 	it("returns null when SessionManager API is unavailable", () => {
 		expect(
