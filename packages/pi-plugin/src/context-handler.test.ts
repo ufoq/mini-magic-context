@@ -42,7 +42,6 @@ import {
 	awaitInFlightHistorians,
 	clearContextHandlerSession,
 	collectMessageEntryIdsByRef,
-	collectMessageEntryIdsStrict,
 	consumeDeferredHistoryRefresh,
 	consumeDeferredMaterialization,
 	consumePendingMaterialization,
@@ -2729,48 +2728,6 @@ describe("registerPiContextHandler", () => {
 				closeQuietly(db);
 			}
 		});
-	});
-});
-
-describe("collectMessageEntryIdsStrict", () => {
-	it("returns null on API unavailable or length mismatch", () => {
-		expect(
-			collectMessageEntryIdsStrict(
-				{ sessionManager: {} } as never,
-				1,
-				"ses-strict",
-			),
-		).toBeNull();
-
-		expect(
-			collectMessageEntryIdsStrict(
-				{
-					sessionManager: {
-						getBranch: () => [{ type: "message", id: "entry-1" }],
-					},
-				} as never,
-				2,
-				"ses-strict",
-			),
-		).toBeNull();
-	});
-
-	it("returns real entry ids and preserves synthetic undefined entries", () => {
-		expect(
-			collectMessageEntryIdsStrict(
-				{
-					sessionManager: {
-						getBranch: () => [
-							{ type: "message", id: "entry-1" },
-							{ type: "compaction", firstKeptEntryId: "entry-2" },
-							{ type: "message", id: "entry-2" },
-						],
-					},
-				} as never,
-				2,
-				"ses-strict",
-			),
-		).toEqual([undefined, "entry-2"]);
 	});
 });
 

@@ -435,6 +435,27 @@ export function convertEntriesToRawMessages(entries: unknown[]): RawMessage[] {
 			continue;
 		}
 
+		if (role === "system") {
+			// Pi 0.87.0 began persisting a `role: "system"` message entry in the
+			// session branch (its system prompt, broken into `sections`) as part of
+			// canonical-session-context support. It is prompt scaffolding, not
+			// conversation: it has no historian-relevant content, and it is not
+			// something a compartment can cover.
+			//
+			// It MUST be skipped WITHOUT consuming an ordinal. Emitting it as an
+			// ordinal (the old "unknown role" fallthrough) shifted every subsequent
+			// ordinal by one and, because it carries no text, it was absorbed into
+			// the following block as pending noise — producing a first block of
+			// `[1-2] U:` where the historian's validators expect coverage to start
+			// at 1. That broke every historian publish with
+			// "gap before message 3 (expected 1)".
+			//
+			// Skipping keeps ordinals aligned with the visible conversation, so the
+			// first block starts at 1 again. Pi < 0.87.0 never emitted this entry, so
+			// this is backward-compatible.
+			continue;
+		}
+
 		// Unknown role — pass through with raw parts so formatting can
 		// drop them into "noise" lines. Forward compatibility for new
 		// AgentMessage roles Pi may add later.

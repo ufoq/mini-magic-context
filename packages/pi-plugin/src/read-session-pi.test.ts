@@ -181,6 +181,44 @@ describe("convertEntriesToRawMessages: synthetic-user entry-id propagation", () 
 		]);
 	});
 
+	it("skips the Pi 0.87+ persisted `system` message without consuming an ordinal", () => {
+		// Pi 0.87.0 began persisting its system prompt as a real `role: "system"`
+		// message entry in the session branch (with a `sections` field).
+		//
+		// Regression: before this was handled, the entry fell through the
+		// "unknown role" path and consumed ordinal 1. Because it carries no
+		// text, the chunker absorbed it into the following block as pending
+		// noise, so the historian transcript's first line became `[1-2] U:`.
+		// The historian validators require coverage to start at 1 and reject a
+		// block that starts later, failing EVERY historian publish with
+		// "gap before message 3 (expected 1)".
+		//
+		// The system entry must be skipped WITHOUT consuming an ordinal, so the
+		// first real user message is ordinal 1 again and ordinals stay aligned
+		// with the visible conversation.
+		const entries = [
+			// Pi < 0.87 never emitted this; Pi 0.87+ emits it as the first message.
+			messageEntry("sys-1", {
+				role: "system",
+				content: "",
+				sections: { preamble: "You are an expert coding assistant…" },
+			}),
+			messageEntry("user-1", { role: "user", content: "kick off" }),
+			messageEntry("asst-1", { role: "assistant", content: "fill" }),
+		];
+
+		expect(
+			convertEntriesToRawMessages(entries).map(({ id, role, ordinal }) => ({
+				id,
+				role,
+				ordinal,
+			})),
+		).toEqual([
+			{ id: "user-1", role: "user", ordinal: 1 },
+			{ id: "asst-1", role: "assistant", ordinal: 2 },
+		]);
+	});
+
 	it("assigns the first folded toolResult's id to a synthetic user emitted at toolResult→assistant", () => {
 		const entries = [
 			messageEntry("user-1", { role: "user", content: "kick off" }),
