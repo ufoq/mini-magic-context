@@ -24,7 +24,7 @@ npx @ufoq/mini-magic-context@latest setup --harness pi
 npx @ufoq/mini-magic-context@latest doctor
 ```
 
-Pi must be version **0.74.0 or later**.
+Pi must be version **0.80.2 or later** (the extension's declared peer-dependency floor).
 
 ---
 

@@ -168,7 +168,7 @@ function baseOptions(root: string, cwd: string, prompts: MockPrompts): RunDoctor
                 path: join(root, ".pi", "bin", "pi"),
                 source: "home",
             }),
-            getPiVersion: () => "0.74.0",
+            getPiVersion: () => "0.80.2",
             getLatestNpmVersion: () => "0.1.0",
             openExistingContextDatabase: () => createMockDb(),
             now: () => new Date("2026-04-28T12:34:56Z"),
@@ -268,7 +268,7 @@ describe("Pi doctor", () => {
 
         expect(code).toBe(0);
         const output = prompts.messages.join("\n");
-        expect(output).toContain("PASS Pi 0.74.0 detected");
+        expect(output).toContain("PASS Pi 0.80.2 detected");
         expect(output).toContain("PASS npm:@ufoq/pi-mini-magic-context is registered");
         expect(output).toContain("PASS SQLite integrity_check: ok");
         expect(output).toContain("Shared DB row counts: tags=1, compartments=0, session_meta=0");
@@ -410,7 +410,7 @@ describe("Pi doctor", () => {
             pluginVersion: "0.1.0",
             piInstalled: true,
             piPath: join(root, ".pi", "bin", "pi"),
-            piVersion: "0.74.0",
+            piVersion: "0.80.2",
             settings: {
                 path: join(agentDir, "settings.json"),
                 exists: true,

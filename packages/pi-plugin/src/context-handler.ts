@@ -1068,12 +1068,21 @@ export function collectMessageEntryIdsByRef(
 	// on pre-`context_edit` content, so it can look uniquely matching while
 	// referring to a different entry — the exact collision that would turn a
 	// suppressed key into a confident wrong id.
+	// `undefined` = API absent (Pi < 0.87) → branch-bucket compatibility path is
+	// allowed. `null` = API present but unreadable → fingerprint matching must
+	// stay unresolved rather than consulting the lower-authority branch index.
 	const projectedByFingerprint = buildProjectedEntryIdByFingerprint(ctx);
 
 	const result: (string | undefined)[] = new Array(messages.length);
 	let resolved = 0;
 	let fingerprintResolved = 0;
-	const consumedFingerprintIds = new Set<string>();
+	// One consumed-id set for EVERY successful attribution path. Consume-once is
+	// essential because a prior `context` handler may return the same message
+	// twice (Pi forwards whatever array it is handed): the same branch entry
+	// reference, or two structurally-identical objects, would otherwise both be
+	// attributed to a single entry, crediting a duplicated message to a real
+	// entry it did not come from.
+	const consumedEntryIds = new Set<string>();
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
 		if (!msg || typeof msg !== "object") {
@@ -1082,15 +1091,16 @@ export function collectMessageEntryIdsByRef(
 		}
 		// Reference identity is order-independent, so it is safe under any
 		// reordering a prior `context` handler performs, and it is what test
-		// doubles and non-cloning runtimes rely on.
+		// doubles and non-cloning runtimes rely on. It still respects consume-once.
 		const id = entryIdByMessageRef.get(msg as object);
-		if (typeof id === "string") {
+		if (typeof id === "string" && !consumedEntryIds.has(id)) {
+			consumedEntryIds.add(id);
 			result[i] = id;
 			resolved += 1;
 			continue;
 		}
 		const fingerprint = piMessageEntryFingerprint(msg);
-		if (projectedByFingerprint !== null) {
+		if (projectedByFingerprint !== undefined) {
 			// Consume-once is required here too: a prior `context` handler may return
 			// a duplicate of a message (Pi forwards whatever array it is handed),
 			// and two distinct objects sharing a fingerprint would otherwise both
@@ -1098,14 +1108,22 @@ export function collectMessageEntryIdsByRef(
 			// entry of its own, to a real entry. One entry backs exactly one
 			// projected message, so an id is issued at most once and repeats stay
 			// unresolved.
-			const projectedId = fingerprint
-				? projectedByFingerprint.get(fingerprint)
-				: undefined;
+			//
+			// When the projection is present but unreadable (`null`), fingerprint
+			// matching must stay UNRESOLVED: the branch index below is keyed on
+			// pre-`context_edit` raw content, so it could match an entry that is not
+			// this message's origin.
+			const projectedId =
+				projectedByFingerprint === null
+					? undefined
+					: fingerprint
+						? projectedByFingerprint.get(fingerprint)
+						: undefined;
 			if (
 				typeof projectedId === "string" &&
-				!consumedFingerprintIds.has(projectedId)
+				!consumedEntryIds.has(projectedId)
 			) {
-				consumedFingerprintIds.add(projectedId);
+				consumedEntryIds.add(projectedId);
 				result[i] = projectedId;
 				resolved += 1;
 				fingerprintResolved += 1;
@@ -1124,11 +1142,11 @@ export function collectMessageEntryIdsByRef(
 		// one clone is dropped or reordered.
 		const fingerprintId =
 			fingerprintBucket?.length === 1 &&
-			!consumedFingerprintIds.has(fingerprintBucket[0] as string)
+			!consumedEntryIds.has(fingerprintBucket[0] as string)
 				? fingerprintBucket[0]
 				: undefined;
 		if (typeof fingerprintId === "string") {
-			consumedFingerprintIds.add(fingerprintId);
+			consumedEntryIds.add(fingerprintId);
 			result[i] = fingerprintId;
 			resolved += 1;
 			fingerprintResolved += 1;
@@ -1227,16 +1245,23 @@ function isPiEntryIdAnchored(entry: unknown): entry is { id: string } {
  * to the wrong entry after a reorder. Ambiguity therefore yields no id rather
  * than a wrong id, matching the branch index' discipline.
  *
- * Returns null on Pi versions without the API (`buildSessionProjection` does not
- * exist before 0.87) or when the shape is unrecognised.
+ * Returns:
+ * - `undefined` when the API does not exist (Pi < 0.87), so callers may use the
+ *   branch-bucket compatibility path;
+ * - `null` when the API EXISTS but the projection could not be read (it threw
+ *   or had an unrecognised shape). Callers must NOT fall back to the branch
+ *   index in that case: the branch index is keyed on pre-`context_edit` raw
+ *   content, so it can confidently match an entry that is not the origin of the
+ *   projected message. "Unreadable" therefore means "leave unresolved";
+ * - the `fingerprint → entryId` map otherwise.
  */
 function buildProjectedEntryIdByFingerprint(
 	ctx: ExtensionContext,
-): Map<string, string> | null {
+): Map<string, string> | null | undefined {
 	const sm = ctx.sessionManager as
 		| { buildSessionProjection?: () => unknown }
 		| undefined;
-	if (typeof sm?.buildSessionProjection !== "function") return null;
+	if (typeof sm?.buildSessionProjection !== "function") return undefined;
 
 	let projection: unknown;
 	try {

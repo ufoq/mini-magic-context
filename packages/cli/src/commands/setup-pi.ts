@@ -205,16 +205,20 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<number> {
     const version = env.getPiVersion(pi.path);
     spinner.stop(version ? `Pi ${version} detected at ${pi.path}` : `Pi detected at ${pi.path}`);
 
-    // Pi 0.74.0 moved to the `@earendil-works/pi-coding-agent` package scope.
-    // Magic Context's peerDependency targets that scope, so older Pi versions
-    // (on `@mariozechner/pi-coding-agent`) cannot load this extension.
-    const MIN_PI_VERSION = "0.74.0";
+    // The extension's peer dependency targets `@earendil-works/pi-coding-agent`
+    // (renamed from `@mariozechner/pi-coding-agent` in Pi 0.74.0) and declares a
+    // supported floor of 0.80.2. Keep this in sync with
+    // `packages/pi-plugin/package.json` `peerDependencies`: warning at a lower
+    // version than the peer floor would green-light an install whose peer
+    // dependency is unsatisfied.
+    const MIN_PI_VERSION = "0.80.2";
     if (version && comparePiVersion(version, MIN_PI_VERSION) < 0) {
         prompts.log.warn(
             `Pi ${version} is older than the required ${MIN_PI_VERSION}.\n` +
-                `Pi 0.74.0 renamed the npm package from \`@mariozechner/pi-coding-agent\` ` +
-                `to \`@earendil-works/pi-coding-agent\`. Magic Context's peer dependency ` +
-                `targets the new scope, so older Pi installs cannot load this extension.\n` +
+                `The extension targets the \`@earendil-works/pi-coding-agent\` scope ` +
+                `(renamed from \`@mariozechner/pi-coding-agent\` in Pi 0.74.0) and ` +
+                `declares a peer dependency of ${MIN_PI_VERSION} or later, so older ` +
+                `installs cannot load it.\n` +
                 `Run \`pi update --self\` (or \`npm install -g @earendil-works/pi-coding-agent@latest\`) before continuing.`,
         );
         const proceed = await prompts.confirm(

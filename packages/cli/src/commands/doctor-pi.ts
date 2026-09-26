@@ -57,10 +57,12 @@ const REMOVED_DOCTOR_FLAGS = new Set([
     "--retry-v22-backfill",
     "--rekey-v22-dir-identity",
 ]);
-// Pi 0.74.0 renamed the npm package scope from `@mariozechner/pi-coding-agent`
-// to `@earendil-works/pi-coding-agent`. Magic Context's peerDependency targets
-// the new scope, so older Pi installs cannot load this extension.
-const MIN_PI_VERSION = "0.74.0";
+// Keep in sync with `packages/pi-plugin/package.json` `peerDependencies`. The
+// extension declares `@earendil-works/pi-coding-agent` (renamed from
+// `@mariozechner/pi-coding-agent` in Pi 0.74.0) at >= 0.80.2; reporting a lower
+// version as acceptable would green-light an install whose peer dependency is
+// unsatisfied.
+const MIN_PI_VERSION = "0.80.2";
 const ROW_COUNT_TABLES = ["tags", "compartments", "session_meta"];
 
 type CheckStatus = "pass" | "warn" | "fail" | "info";
@@ -434,7 +436,7 @@ async function runHealthChecks(options: {
             add(
                 results,
                 "fail",
-                `Pi ${version} is older than required ${MIN_PI_VERSION}. The historian subagent uses the long-form \`--extension\` flag introduced in Pi 0.71.0; older versions hard-fail with "Unknown option". Run \`pi update\` (or \`npm install -g @earendil-works/pi-coding-agent@latest\`).`,
+                `Pi ${version} is older than required ${MIN_PI_VERSION} (the extension's declared peer-dependency floor). The historian subagent also relies on the long-form \`--extension\` flag introduced in Pi 0.71.0. Run \`pi update\` (or \`npm install -g @earendil-works/pi-coding-agent@latest\`).`,
             );
         } else if (version) {
             add(results, "pass", `Pi version meets minimum ${MIN_PI_VERSION} requirement`);

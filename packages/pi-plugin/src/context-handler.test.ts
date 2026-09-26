@@ -2827,15 +2827,18 @@ describe("buildProjectedEntryIdByFingerprint: Pi-projection content index", () =
 		expect([...(index?.values() ?? [])]).toEqual(["user-1"]);
 	});
 
-	it("returns null when the projection API is unavailable (Pi < 0.87)", () => {
+	it("returns undefined when the projection API is absent (Pi < 0.87)", () => {
+		// Absent API => branch-bucket compatibility path is allowed.
 		expect(
 			contextHandlerInternals.buildProjectedEntryIdByFingerprint({
 				sessionManager: {},
 			} as never),
-		).toBeNull();
+		).toBeUndefined();
 	});
 
-	it("returns null on a malformed projection", () => {
+	it("returns null when the API exists but the projection is unreadable", () => {
+		// Present-but-unreadable => callers must NOT fall back to the branch
+		// index, because it is keyed on pre-context_edit raw content.
 		expect(
 			contextHandlerInternals.buildProjectedEntryIdByFingerprint(
 				ctxWithProjection({ entries: "nope" }),
@@ -2957,6 +2960,70 @@ describe("collectMessageEntryIdsByRef: content-keyed attribution", () => {
 			[],
 		);
 		expect(ids).toEqual(["user-1", undefined]);
+	});
+
+	it("issues an id once even when the SAME reference appears twice", () => {
+		// A prior `context` handler may repeat the very same message object.
+		// Reference matching must respect consume-once too, otherwise the
+		// duplicate is credited to an entry it did not come from.
+		const shared = { role: "user", content: "hi", timestamp: 9 };
+		const branchEntry = {
+			type: "message",
+			id: "u1",
+			message: shared,
+		};
+		const ids = collectMessageEntryIdsByRef(
+			{
+				sessionManager: { getBranch: () => [branchEntry] },
+			} as never,
+			[shared, shared] as never,
+			"ses-same-ref",
+			[branchEntry],
+		);
+		expect(ids).toEqual(["u1", undefined]);
+	});
+
+	it("does not re-issue an id across the reference and fingerprint paths", () => {
+		// One occurrence arrives by reference, a second as a structural clone.
+		// Both target the same entry, so only the first may be attributed.
+		const shared = { role: "user", content: "hi", timestamp: 11 };
+		const branchEntry = { type: "message", id: "u1", message: shared };
+		const clone = { role: "user", content: "hi", timestamp: 11 };
+		const ids = collectMessageEntryIdsByRef(
+			{
+				sessionManager: { getBranch: () => [branchEntry] },
+			} as never,
+			[shared, clone] as never,
+			"ses-mixed",
+			[branchEntry],
+		);
+		expect(ids).toEqual(["u1", undefined]);
+	});
+
+	it("leaves fingerprint matches unresolved when a present projection is unreadable", () => {
+		// The branch bucket is unique and would match, but the projection API
+		// exists and failed, so a branch-keyed (pre-edit) match is not
+		// trustworthy. Must be undefined, never the branch id.
+		const cloned = { role: "user", content: "hi", timestamp: 3 };
+		const branchEntry = {
+			type: "message",
+			id: "branch-only",
+			message: { role: "user", content: "hi", timestamp: 3 },
+		};
+		const ids = collectMessageEntryIdsByRef(
+			{
+				sessionManager: {
+					buildSessionProjection: () => {
+						throw new Error("projection unavailable");
+					},
+					getBranch: () => [branchEntry],
+				},
+			} as never,
+			[cloned] as never,
+			"ses-unreadable",
+			[branchEntry],
+		);
+		expect(ids).toEqual([undefined]);
 	});
 
 	it("still resolves two DIFFERENT entries when their messages differ", () => {
