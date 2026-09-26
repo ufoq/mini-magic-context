@@ -2841,6 +2841,66 @@ describe("buildPiAlignedEntryIds: aligned lane must mirror event.messages", () =
 	});
 });
 
+describe("buildAlignedEntryIdsFromPiProjection: prefer Pi's own projection", () => {
+	// Pi exposes `sessionManager.buildSessionProjection()`, the same projection
+	// that feeds `runner.emitContext()`. Using it means compaction checkpointing,
+	// context_edit replacements/omissions and message-eligibility filtering are
+	// taken from Pi rather than reimplemented, so the lane cannot drift.
+	function ctxWithProjection(projection: unknown): never {
+		return {
+			sessionManager: { buildSessionProjection: () => projection },
+		} as never;
+	}
+
+	it("maps each projected message to its sourceEntry id, skipping system", () => {
+		const ids = contextHandlerInternals.buildAlignedEntryIdsFromPiProjection(
+			ctxWithProjection({
+				entries: [
+					{
+						sourceEntry: {
+							type: "message",
+							id: "sys-1",
+							message: { role: "system" },
+						},
+						messages: [{ role: "system" }],
+					},
+					{
+						sourceEntry: {
+							type: "message",
+							id: "user-1",
+							message: { role: "user" },
+						},
+						messages: [{ role: "user" }],
+					},
+				],
+			}),
+		);
+		// The system message contributes no slot; the user is attributed to its entry.
+		expect(ids).toEqual(["user-1"]);
+	});
+
+	it("returns null when the projection API is unavailable (Pi < 0.87)", () => {
+		expect(
+			contextHandlerInternals.buildAlignedEntryIdsFromPiProjection({
+				sessionManager: {},
+			} as never),
+		).toBeNull();
+	});
+
+	it("returns null on a malformed projection so callers can fall back", () => {
+		expect(
+			contextHandlerInternals.buildAlignedEntryIdsFromPiProjection(
+				ctxWithProjection({ entries: "nope" }),
+			),
+		).toBeNull();
+		expect(
+			contextHandlerInternals.buildAlignedEntryIdsFromPiProjection(
+				ctxWithProjection({ entries: [{ messages: "nope" }] }),
+			),
+		).toBeNull();
+	});
+});
+
 describe("collectMessageEntryIdsByRef", () => {
 	it("returns null when SessionManager API is unavailable", () => {
 		expect(

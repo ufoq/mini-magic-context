@@ -242,6 +242,7 @@ let persistReasoningWatermarkForRun = updateSessionMeta;
 export const __test = {
 	FORWARD_PRESSURE_LIMIT_FACTOR,
 	applyForwardPressureFloor,
+	buildAlignedEntryIdsFromPiProjection,
 	buildPiAlignedEntryIds,
 	convertLocatedPiUserEntry,
 	readPiBranchEntriesForContext,
@@ -1211,6 +1212,62 @@ function buildPiAlignedEntryIds(
 	return ids;
 }
 
+/**
+ * Read Pi's OWN session projection: the authoritative `sourceEntry → messages`
+ * mapping Pi builds before cloning messages for `context` handlers
+ * (`buildSessionContext()` feeds `runner.emitContext()`).
+ *
+ * Preferring this over our own reconstruction of the branch is what makes the
+ * aligned-id lane robust: Pi applies compaction checkpointing, `context_edit`
+ * replacements/omissions, retained compaction tails, and message-eligibility
+ * filtering inside this one function. A hand-rolled walk must mirror all of
+ * that, and any divergence silently shifts which SessionEntry each visible
+ * message is attributed to — tagging and trimming the wrong messages.
+ *
+ * Returns null on Pi versions without the API (`buildSessionProjection` does not
+ * exist before 0.87) or if the shape is not recognised, so callers fall back to
+ * the branch-derived lane.
+ */
+function buildAlignedEntryIdsFromPiProjection(
+	ctx: ExtensionContext,
+): (string | undefined)[] | null {
+	const sm = ctx.sessionManager as
+		| { buildSessionProjection?: () => unknown }
+		| undefined;
+	if (typeof sm?.buildSessionProjection !== "function") return null;
+
+	let projection: unknown;
+	try {
+		projection = sm.buildSessionProjection();
+	} catch {
+		return null;
+	}
+
+	const projectedEntries = (projection as { entries?: unknown } | undefined)
+		?.entries;
+	if (!Array.isArray(projectedEntries)) return null;
+
+	const ids: (string | undefined)[] = [];
+	for (const projected of projectedEntries) {
+		if (!projected || typeof projected !== "object") return null;
+		const row = projected as { sourceEntry?: unknown; messages?: unknown };
+		if (!Array.isArray(row.messages)) return null;
+		// Reuse the branch lane's eligibility rule so both lanes attribute an id
+		// only to entries that own ordinary model content.
+		const source = row.sourceEntry;
+		const contributesId = isPiContextEmitEligible(source);
+		for (const message of row.messages) {
+			// `emitContext` strips system messages from `event.messages` before
+			// handlers run, so this lane must not carry a slot for them.
+			if ((message as { role?: unknown } | undefined)?.role === "system") {
+				continue;
+			}
+			ids.push(contributesId ? (source as { id: string }).id : undefined);
+		}
+	}
+	return ids;
+}
+
 function getPiBranchEntryLookup(
 	entries: readonly unknown[],
 ): PiBranchEntryLookup {
@@ -1533,14 +1590,16 @@ export function registerPiContextHandler(
 			);
 			rawMessageProviderUnregistersBySession.set(sessionId, unregisterRaw);
 			scheduleReconciliation(options.db, sessionId, readRawSessionMessages);
-			// Pi builds the context from this exact branch projection before cloning
-			// messages for extension handlers. A compaction-aware projection with the
-			// same length is therefore the lossless O(1) alignment lane. If another
-			// extension changed the message count, fall back to conservative fingerprint
-			// matching and leave ambiguous messages unresolved.
+			// Pi builds the context from its own projection before cloning messages
+			// for extension handlers, so that projection is the authoritative
+			// message→entry mapping. Prefer it; fall back to the branch-derived lane
+			// on Pi versions without the API, and to conservative fingerprint
+			// matching if another extension changed the message count.
 			const branchLookup =
 				branchEntries === null ? null : getPiBranchEntryLookup(branchEntries);
-			const alignedEntryIds = branchLookup?.alignedEntryIds ?? null;
+			const projectedEntryIds = buildAlignedEntryIdsFromPiProjection(ctx);
+			const alignedEntryIds =
+				projectedEntryIds ?? branchLookup?.alignedEntryIds ?? null;
 			const resolvedEntryIds =
 				alignedEntryIds?.length === event.messages.length
 					? alignedEntryIds
