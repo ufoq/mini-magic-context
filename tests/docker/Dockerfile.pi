@@ -45,7 +45,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
-# Pi coding agent. Install the latest Pi >= 0.74.0 (the floor declared
+# Pi coding agent. Install the latest Pi >= 0.80.2 (the floor declared
 # in the Pi extension's peer dependency since the v0.16+ migration to
 # the `@earendil-works/*` package scope and `github.com/earendil-works/
 # pi-mono` repository). We use `latest` because Pi's extension loader

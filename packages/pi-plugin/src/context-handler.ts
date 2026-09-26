@@ -1259,9 +1259,14 @@ function buildProjectedEntryIdByFingerprint(
 	ctx: ExtensionContext,
 ): Map<string, string> | null | undefined {
 	const sm = ctx.sessionManager as
-		| { buildSessionProjection?: () => unknown }
+		| { buildSessionProjection?: unknown }
 		| undefined;
-	if (typeof sm?.buildSessionProjection !== "function") return undefined;
+	// Distinguish "the API slot does not exist" (Pi < 0.87) from "the slot exists
+	// but is not usable". Only the former may fall back to the lower-authority
+	// branch index; a present-but-non-callable value is an unreadable projection
+	// and must leave fingerprint matches unresolved (`null`).
+	if (sm === undefined || !("buildSessionProjection" in sm)) return undefined;
+	if (typeof sm.buildSessionProjection !== "function") return null;
 
 	let projection: unknown;
 	try {

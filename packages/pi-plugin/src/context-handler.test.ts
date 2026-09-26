@@ -3077,6 +3077,30 @@ describe("collectMessageEntryIdsByRef: content-keyed attribution", () => {
 		);
 		expect(ids).toEqual([undefined]);
 	});
+
+	it("treats a present but non-callable projection slot as unreadable, not absent", () => {
+		// A malformed `buildSessionProjection` value (present, not a function)
+		// must NOT be classified as "API absent": that would enable the
+		// lower-authority branch index and could attribute pre-`context_edit`
+		// raw content to an edited message.
+		const contextMsg = {
+			role: "user",
+			content: "edited text",
+			timestamp: 9,
+		};
+		const branchEntry = {
+			type: "message",
+			id: "raw-original",
+			message: { role: "user", content: "edited text", timestamp: 9 },
+		};
+		const ids = collectMessageEntryIdsByRef(
+			{ sessionManager: { buildSessionProjection: null } } as never,
+			[contextMsg] as never,
+			"ses-noncallable",
+			[branchEntry],
+		);
+		expect(ids).toEqual([undefined]);
+	});
 });
 
 describe("collectMessageEntryIdsByRef", () => {
