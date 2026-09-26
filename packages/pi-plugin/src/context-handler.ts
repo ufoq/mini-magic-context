@@ -242,6 +242,7 @@ let persistReasoningWatermarkForRun = updateSessionMeta;
 export const __test = {
 	FORWARD_PRESSURE_LIMIT_FACTOR,
 	applyForwardPressureFloor,
+	convertLocatedPiUserEntry,
 	readPiBranchEntriesForContext,
 	getTaggedStableMessageIdsForTests(sessionId: string): ReadonlySet<string> {
 		return new Set(taggedStableMessageIdsBySession.get(sessionId));
@@ -546,6 +547,14 @@ function convertLocatedPiUserEntry(
 			continue;
 		}
 		const role = (record.message as { role?: unknown }).role;
+		// Pi 0.87+ persists its system prompt as a real `role: "system"`
+		// message entry. `convertEntriesToRawMessages` skips it WITHOUT
+		// consuming an ordinal (Pi filters it out of the `context` event, and
+		// it carries no summarizable text), so this counter must skip it in the
+		// same way. Otherwise the located user's ordinal is one higher than the
+		// reader's, and the persisted search index reports ordinals that
+		// `ctx_expand(message=N)` resolves to a different message.
+		if (role === "system") continue;
 		if (role === "toolResult") {
 			if (pendingToolStart < 0) pendingToolStart = index;
 			continue;

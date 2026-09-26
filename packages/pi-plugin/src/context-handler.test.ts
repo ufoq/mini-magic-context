@@ -2731,6 +2731,62 @@ describe("registerPiContextHandler", () => {
 	});
 });
 
+describe("convertLocatedPiUserEntry: ordinal counter agrees with the reader", () => {
+	// Pi 0.87+ persists its system prompt as a real `role: "system"` message
+	// entry. The raw-message reader skips it WITHOUT consuming an ordinal
+	// (Pi filters it out of the `context` event). This located-entry counter is
+	// a second, independent ordinal source feeding the persisted search index,
+	// so it must agree — otherwise `ctx_search` reports an ordinal that
+	// `ctx_expand(message=N)` resolves to a different message.
+	const systemEntry = {
+		type: "message",
+		id: "sys-1",
+		message: { role: "system", content: "" },
+	};
+
+	it("counts the first user as ordinal 1 even when a system entry precedes it", () => {
+		const userEntry = {
+			type: "message",
+			id: "user-1",
+			message: { role: "user", content: "hello" },
+		};
+		const located = contextHandlerInternals.convertLocatedPiUserEntry(
+			[systemEntry, userEntry],
+			"user-1",
+		);
+		expect(located?.ordinal).toBe(1);
+	});
+
+	it("keeps later ordinals aligned across a system-prefixed branch", () => {
+		const branch = [
+			systemEntry,
+			{
+				type: "message",
+				id: "user-1",
+				message: { role: "user", content: "one" },
+			},
+			{
+				type: "message",
+				id: "asst-1",
+				message: { role: "assistant", content: "two" },
+			},
+			{
+				type: "message",
+				id: "user-2",
+				message: { role: "user", content: "three" },
+			},
+		];
+		expect(
+			contextHandlerInternals.convertLocatedPiUserEntry(branch, "user-1")
+				?.ordinal,
+		).toBe(1);
+		expect(
+			contextHandlerInternals.convertLocatedPiUserEntry(branch, "user-2")
+				?.ordinal,
+		).toBe(3);
+	});
+});
+
 describe("collectMessageEntryIdsByRef", () => {
 	it("returns null when SessionManager API is unavailable", () => {
 		expect(
