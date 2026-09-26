@@ -2787,73 +2787,27 @@ describe("convertLocatedPiUserEntry: ordinal counter agrees with the reader", ()
 	});
 });
 
-describe("buildPiAlignedEntryIds: aligned lane must mirror event.messages", () => {
-	// The aligned-id lane is positionally compared against `event.messages`
-	// (`context-handler.ts` resolves it only when the lengths are equal). Pi's
-	// `emitContext` filters `role !== "system"` out of `event.messages`, so the
-	// lane must not count the Pi 0.87+ system entry.
-	//
-	// Regression: the predicate previously matched ANY `type: "message"` entry,
-	// so with a persisted system entry the lane was one longer than
-	// `event.messages` and never matched — silently disabling the O(1) fast path.
-	// Worse, if another extension changed the visible count by one the lengths
-	// would coincide and every slot would map onto the WRONG entry.
-	const systemEntry = {
-		type: "message",
-		id: "sys-1",
-		message: { role: "system", content: "" },
-	};
-	const userEntry = {
-		type: "message",
-		id: "user-1",
-		message: { role: "user", content: "hi" },
-	};
-	const assistantEntry = {
-		type: "message",
-		id: "asst-1",
-		message: { role: "assistant", content: "hello" },
-	};
-
-	it("excludes the system entry so the lane length matches event.messages", () => {
-		const aligned = contextHandlerInternals.buildPiAlignedEntryIds([
-			systemEntry,
-			userEntry,
-			assistantEntry,
-		]);
-		// event.messages is [user, assistant] — 2 entries, not 3.
-		expect(aligned).toEqual(["user-1", "asst-1"]);
-	});
-
-	it("keeps a system entry out of the lane even when it is first", () => {
-		const aligned = contextHandlerInternals.buildPiAlignedEntryIds([
-			systemEntry,
-		]);
-		expect(aligned).toEqual([]);
-	});
-
-	it("still counts ordinary and custom message entries", () => {
-		const aligned = contextHandlerInternals.buildPiAlignedEntryIds([
-			userEntry,
-			{ type: "custom_message", id: "custom-1" },
-			assistantEntry,
-		]);
-		expect(aligned).toEqual(["user-1", "custom-1", "asst-1"]);
-	});
-});
-
-describe("buildAlignedEntryIdsFromPiProjection: prefer Pi's own projection", () => {
-	// Pi exposes `sessionManager.buildSessionProjection()`, the same projection
-	// that feeds `runner.emitContext()`. Using it means compaction checkpointing,
-	// context_edit replacements/omissions and message-eligibility filtering are
-	// taken from Pi rather than reimplemented, so the lane cannot drift.
+describe("buildProjectedEntryIdByFingerprint: Pi-projection content index", () => {
+	// Pi exposes `sessionManager.buildSessionProjection()`, the projection that
+	// feeds `runner.emitContext()`. Keying on PROJECTED content is what makes
+	// attribution both complete (`context_edit` content matches no raw entry)
+	// and sound (never a positional guess).
 	function ctxWithProjection(projection: unknown): never {
 		return {
 			sessionManager: { buildSessionProjection: () => projection },
 		} as never;
 	}
 
-	it("maps each projected message to its sourceEntry id, skipping system", () => {
-		const ids = contextHandlerInternals.buildAlignedEntryIdsFromPiProjection(
+	function projected(entryId: string, role: string, text: string, ts: number) {
+		const message = { role, content: text, timestamp: ts };
+		return {
+			sourceEntry: { type: "message", id: entryId, message },
+			messages: [message],
+		};
+	}
+
+	it("indexes projected content and skips the system entry", () => {
+		const index = contextHandlerInternals.buildProjectedEntryIdByFingerprint(
 			ctxWithProjection({
 				entries: [
 					{
@@ -2862,42 +2816,199 @@ describe("buildAlignedEntryIdsFromPiProjection: prefer Pi's own projection", () 
 							id: "sys-1",
 							message: { role: "system" },
 						},
-						messages: [{ role: "system" }],
+						messages: [{ role: "system", content: "prompt" }],
 					},
-					{
-						sourceEntry: {
-							type: "message",
-							id: "user-1",
-							message: { role: "user" },
-						},
-						messages: [{ role: "user" }],
-					},
+					projected("user-1", "user", "hi", 1),
 				],
 			}),
 		);
-		// The system message contributes no slot; the user is attributed to its entry.
-		expect(ids).toEqual(["user-1"]);
+		expect(index).not.toBeNull();
+		expect(index?.size).toBe(1);
+		expect([...(index?.values() ?? [])]).toEqual(["user-1"]);
 	});
 
 	it("returns null when the projection API is unavailable (Pi < 0.87)", () => {
 		expect(
-			contextHandlerInternals.buildAlignedEntryIdsFromPiProjection({
+			contextHandlerInternals.buildProjectedEntryIdByFingerprint({
 				sessionManager: {},
 			} as never),
 		).toBeNull();
 	});
 
-	it("returns null on a malformed projection so callers can fall back", () => {
+	it("returns null on a malformed projection", () => {
 		expect(
-			contextHandlerInternals.buildAlignedEntryIdsFromPiProjection(
+			contextHandlerInternals.buildProjectedEntryIdByFingerprint(
 				ctxWithProjection({ entries: "nope" }),
 			),
 		).toBeNull();
 		expect(
-			contextHandlerInternals.buildAlignedEntryIdsFromPiProjection(
+			contextHandlerInternals.buildProjectedEntryIdByFingerprint(
 				ctxWithProjection({ entries: [{ messages: "nope" }] }),
 			),
 		).toBeNull();
+	});
+
+	it("drops a fingerprint shared by two entries instead of picking one", () => {
+		// Two distinct entries whose projected content is identical (same role,
+		// timestamp and text). A keyed lookup cannot tell them apart, so the key
+		// must be absent rather than resolved to either id.
+		const index = contextHandlerInternals.buildProjectedEntryIdByFingerprint(
+			ctxWithProjection({
+				entries: [
+					projected("entry-a", "assistant", "same text", 7),
+					projected("entry-b", "assistant", "same text", 7),
+				],
+			}),
+		);
+		expect(index?.size).toBe(0);
+	});
+});
+
+describe("collectMessageEntryIdsByRef: content-keyed attribution", () => {
+	function ctxWithProjection(projection: unknown): never {
+		return {
+			sessionManager: {
+				buildSessionProjection: () => projection,
+				getBranch: () => [],
+			},
+		} as never;
+	}
+
+	function projected(entryId: string, role: string, text: string, ts: number) {
+		const message = { role, content: text, timestamp: ts };
+		return {
+			sourceEntry: { type: "message", id: entryId, message },
+			messages: [message],
+		};
+	}
+
+	it("resolves a context_edit replacement to its ORIGINAL raw entry id", () => {
+		// The raw branch entry holds the pre-edit text; the projection pairs the
+		// EDITED text with the originating entry id. Branch-only fingerprinting
+		// could never map this, which is why the projection index is consulted.
+		const edited = { role: "user", content: "edited text", timestamp: 3 };
+		const ids = collectMessageEntryIdsByRef(
+			ctxWithProjection({
+				entries: [
+					{
+						sourceEntry: {
+							type: "message",
+							id: "user-original",
+							message: { role: "user", content: "raw text", timestamp: 3 },
+						},
+						messages: [edited],
+					},
+				],
+			}),
+			[edited] as never,
+			"ses-edit",
+			[],
+		);
+		expect(ids).toEqual(["user-original"]);
+	});
+
+	it("follows content, not position, when a prior handler reorders messages", () => {
+		// A prior `context` handler may return a same-count but reordered list
+		// (Pi forwards it to us). Attribution must follow content.
+		const a1 = { role: "assistant", content: "first reply", timestamp: 1 };
+		const a2 = { role: "assistant", content: "second reply", timestamp: 2 };
+		const ctx = ctxWithProjection({
+			entries: [
+				projected("asst-1", "assistant", "first reply", 1),
+				projected("asst-2", "assistant", "second reply", 2),
+			],
+		});
+		expect(
+			collectMessageEntryIdsByRef(ctx, [a2, a1] as never, "ses-reorder", []),
+		).toEqual(["asst-2", "asst-1"]);
+	});
+
+	it("refuses to attribute when two entries share the projected fingerprint", () => {
+		// Ambiguity must yield undefined, never a confident wrong id.
+		const dup = { role: "assistant", content: "same text", timestamp: 7 };
+		const ids = collectMessageEntryIdsByRef(
+			ctxWithProjection({
+				entries: [
+					projected("entry-a", "assistant", "same text", 7),
+					projected("entry-b", "assistant", "same text", 7),
+				],
+			}),
+			[dup] as never,
+			"ses-dup",
+			[],
+		);
+		expect(ids).toEqual([undefined]);
+	});
+
+	it("issues each projected id at most once when a handler duplicates a message", () => {
+		// A prior `context` handler may return a same-content duplicate (Pi
+		// forwards whatever array it is handed). One persisted entry backs exactly
+		// one projected message, so the id is issued once and the duplicate stays
+		// unresolved rather than being attributed to a real entry it did not come
+		// from.
+		const clone1 = { role: "user", content: "hi", timestamp: 5 };
+		const clone2 = { role: "user", content: "hi", timestamp: 5 };
+		const ids = collectMessageEntryIdsByRef(
+			ctxWithProjection({
+				entries: [projected("user-1", "user", "hi", 5)],
+			}),
+			[clone1, clone2] as never,
+			"ses-dup-message",
+			[],
+		);
+		expect(ids).toEqual(["user-1", undefined]);
+	});
+
+	it("still resolves two DIFFERENT entries when their messages differ", () => {
+		const ctx = ctxWithProjection({
+			entries: [
+				projected("user-1", "user", "first", 1),
+				projected("user-2", "user", "second", 2),
+			],
+		});
+		expect(
+			collectMessageEntryIdsByRef(
+				ctx,
+				[
+					{ role: "user", content: "first", timestamp: 1 },
+					{ role: "user", content: "second", timestamp: 2 },
+				] as never,
+				"ses-distinct",
+				[],
+			),
+		).toEqual(["user-1", "user-2"]);
+	});
+
+	it("does not fall back to a unique branch bucket for an ambiguous projection key", () => {
+		// The branch bucket is unique but refers to a DIFFERENT entry than the
+		// colliding projection pair. Falling back there would turn suppressed
+		// ambiguity into a confident wrong attribution.
+		// Production `emitContext` clones messages before handlers run, so the
+		// context message is NOT the branch entry's message object; model that
+		// with a structurally-identical clone so only the fingerprint path can
+		// match.
+		const contextMsg = {
+			role: "assistant",
+			content: "same text",
+			timestamp: 7,
+		};
+		const branchEntry = {
+			type: "message",
+			id: "branch-only",
+			message: { role: "assistant", content: "same text", timestamp: 7 },
+		};
+		const ids = collectMessageEntryIdsByRef(
+			ctxWithProjection({
+				entries: [
+					projected("entry-a", "assistant", "same text", 7),
+					projected("entry-b", "assistant", "same text", 7),
+				],
+			}),
+			[contextMsg] as never,
+			"ses-ambig",
+			[branchEntry],
+		);
+		expect(ids).toEqual([undefined]);
 	});
 });
 

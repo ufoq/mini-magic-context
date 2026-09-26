@@ -242,8 +242,7 @@ let persistReasoningWatermarkForRun = updateSessionMeta;
 export const __test = {
 	FORWARD_PRESSURE_LIMIT_FACTOR,
 	applyForwardPressureFloor,
-	buildAlignedEntryIdsFromPiProjection,
-	buildPiAlignedEntryIds,
+	buildProjectedEntryIdByFingerprint,
 	convertLocatedPiUserEntry,
 	readPiBranchEntriesForContext,
 	getTaggedStableMessageIdsForTests(sessionId: string): ReadonlySet<string> {
@@ -479,7 +478,6 @@ function buildPiTextIdentityPlan(
 interface PiBranchEntryLookup {
 	entryIdByMessageRef: Map<object, string>;
 	entryIdsByFingerprint: Map<string, string[]>;
-	alignedEntryIds: (string | undefined)[];
 }
 
 interface PiBranchProjectionCache {
@@ -1061,6 +1059,17 @@ export function collectMessageEntryIdsByRef(
 	const { entryIdByMessageRef, entryIdsByFingerprint } =
 		getPiBranchEntryLookup(entries);
 
+	// When Pi exposes its own projection we resolve fingerprints EXCLUSIVELY
+	// through it. That projection is the exact source of `event.messages`, so a
+	// genuine conversation message always has an entry there; and because
+	// ambiguous keys are dropped when the index is built, a missing key means
+	// "cannot attribute safely" and never "try a lower-authority guess". In
+	// particular we must NOT fall back to the raw branch bucket here: it is keyed
+	// on pre-`context_edit` content, so it can look uniquely matching while
+	// referring to a different entry — the exact collision that would turn a
+	// suppressed key into a confident wrong id.
+	const projectedByFingerprint = buildProjectedEntryIdByFingerprint(ctx);
+
 	const result: (string | undefined)[] = new Array(messages.length);
 	let resolved = 0;
 	let fingerprintResolved = 0;
@@ -1071,6 +1080,9 @@ export function collectMessageEntryIdsByRef(
 			result[i] = undefined;
 			continue;
 		}
+		// Reference identity is order-independent, so it is safe under any
+		// reordering a prior `context` handler performs, and it is what test
+		// doubles and non-cloning runtimes rely on.
 		const id = entryIdByMessageRef.get(msg as object);
 		if (typeof id === "string") {
 			result[i] = id;
@@ -1078,13 +1090,38 @@ export function collectMessageEntryIdsByRef(
 			continue;
 		}
 		const fingerprint = piMessageEntryFingerprint(msg);
+		if (projectedByFingerprint !== null) {
+			// Consume-once is required here too: a prior `context` handler may return
+			// a duplicate of a message (Pi forwards whatever array it is handed),
+			// and two distinct objects sharing a fingerprint would otherwise both
+			// resolve to the same id — attributing the clone, which has no persisted
+			// entry of its own, to a real entry. One entry backs exactly one
+			// projected message, so an id is issued at most once and repeats stay
+			// unresolved.
+			const projectedId = fingerprint
+				? projectedByFingerprint.get(fingerprint)
+				: undefined;
+			if (
+				typeof projectedId === "string" &&
+				!consumedFingerprintIds.has(projectedId)
+			) {
+				consumedFingerprintIds.add(projectedId);
+				result[i] = projectedId;
+				resolved += 1;
+				fingerprintResolved += 1;
+			} else {
+				result[i] = undefined;
+			}
+			continue;
+		}
 		const fingerprintBucket = fingerprint
 			? entryIdsByFingerprint.get(fingerprint)
 			: undefined;
-		// A fingerprint is only a safe fallback when it uniquely identifies a
-		// branch entry. Repeated/cloned messages can share timestamp/role/text;
-		// consuming the "next" bucket item would silently anchor to the wrong
-		// SessionEntry after one clone is dropped or reordered.
+		// Pi < 0.87 compatibility path (no projection API). A fingerprint is only
+		// a safe fallback when it uniquely identifies a branch entry.
+		// Repeated/cloned messages can share timestamp/role/text; consuming the
+		// "next" bucket item would silently anchor to the wrong SessionEntry after
+		// one clone is dropped or reordered.
 		const fingerprintId =
 			fingerprintBucket?.length === 1 &&
 			!consumedFingerprintIds.has(fingerprintBucket[0] as string)
@@ -1140,7 +1177,7 @@ function addPiBranchEntryToLookup(
 	else lookup.entryIdsByFingerprint.set(fingerprint, [row.id]);
 }
 
-function isPiContextEmitEligible(entry: unknown): entry is { id: string } {
+function isPiEntryIdAnchored(entry: unknown): entry is { id: string } {
 	if (!entry || typeof entry !== "object") return false;
 	const row = entry as {
 		type?: unknown;
@@ -1152,12 +1189,8 @@ function isPiContextEmitEligible(entry: unknown): entry is { id: string } {
 	// `system` message entries are persisted by Pi 0.87+ but are NOT part of the
 	// `context` event's messages: `emitContext` filters `role !== "system"`
 	// before handing the conversation to handlers (Pi re-attaches the prompt and
-	// tool state itself afterwards). This predicate decides whether an entry
-	// contributes a slot to the aligned-id lane, which is positionally compared
-	// against `event.messages`, so a system entry MUST NOT be counted — otherwise
-	// the lane is one longer than `event.messages` and never matches (silently
-	// disabling the O(1) fast path), and any host/extension change that happens
-	// to make the lengths coincide would map every slot onto the WRONG entry.
+	// tool state itself afterwards). A system entry must never anchor a message
+	// id, so it is excluded here rather than counted and later misattributed.
 	if (
 		row.type === "message" &&
 		(row.message as { role?: unknown } | undefined)?.role === "system"
@@ -1173,64 +1206,33 @@ function isPiContextEmitEligible(entry: unknown): entry is { id: string } {
 	);
 }
 
-function buildPiAlignedEntryIds(
-	entries: readonly unknown[],
-): (string | undefined)[] {
-	let compactionIndex = -1;
-	let firstKeptEntryId: string | undefined;
-	for (let index = entries.length - 1; index >= 0; index -= 1) {
-		const row = entries[index] as
-			| { type?: unknown; firstKeptEntryId?: unknown }
-			| undefined;
-		if (row?.type !== "compaction") continue;
-		compactionIndex = index;
-		firstKeptEntryId =
-			typeof row.firstKeptEntryId === "string"
-				? row.firstKeptEntryId
-				: undefined;
-		break;
-	}
-	if (compactionIndex < 0) {
-		return entries.filter(isPiContextEmitEligible).map((entry) => entry.id);
-	}
-
-	const ids: (string | undefined)[] = [undefined];
-	if (firstKeptEntryId !== undefined) {
-		let foundFirstKept = false;
-		for (let index = 0; index < compactionIndex; index += 1) {
-			const entry = entries[index];
-			if ((entry as { id?: unknown } | undefined)?.id === firstKeptEntryId) {
-				foundFirstKept = true;
-			}
-			if (foundFirstKept && isPiContextEmitEligible(entry)) ids.push(entry.id);
-		}
-	}
-	for (let index = compactionIndex + 1; index < entries.length; index += 1) {
-		const entry = entries[index];
-		if (isPiContextEmitEligible(entry)) ids.push(entry.id);
-	}
-	return ids;
-}
-
 /**
- * Read Pi's OWN session projection: the authoritative `sourceEntry → messages`
- * mapping Pi builds before cloning messages for `context` handlers
- * (`buildSessionContext()` feeds `runner.emitContext()`).
+ * Build a `fingerprint → SessionEntry.id` index from Pi's OWN session
+ * projection — the authoritative `sourceEntry → messages` mapping Pi uses to
+ * produce `event.messages` (`buildSessionProjection()` feeds `emitContext()`).
  *
- * Preferring this over our own reconstruction of the branch is what makes the
- * aligned-id lane robust: Pi applies compaction checkpointing, `context_edit`
- * replacements/omissions, retained compaction tails, and message-eligibility
- * filtering inside this one function. A hand-rolled walk must mirror all of
- * that, and any divergence silently shifts which SessionEntry each visible
- * message is attributed to — tagging and trimming the wrong messages.
+ * Keying on the PROJECTED message content is what makes attribution complete
+ * and sound:
+ *
+ * - complete: a `context_edit` content replacement produces a projected message
+ *   that matches no raw branch entry, so a branch-only fingerprint index cannot
+ *   resolve it. The projection pairs that edited content with the id of the
+ *   entry it originated from, so it stays resolvable.
+ * - sound: a positional lane would confidently map any same-count mutation
+ *   (reorder, replacement) onto the wrong entry. This index never does; it
+ *   matches by content only.
+ *
+ * Uniqueness is enforced per bucket: when two entries share a fingerprint the
+ * key is dropped entirely, because "consume the next one" would silently anchor
+ * to the wrong entry after a reorder. Ambiguity therefore yields no id rather
+ * than a wrong id, matching the branch index' discipline.
  *
  * Returns null on Pi versions without the API (`buildSessionProjection` does not
- * exist before 0.87) or if the shape is not recognised, so callers fall back to
- * the branch-derived lane.
+ * exist before 0.87) or when the shape is unrecognised.
  */
-function buildAlignedEntryIdsFromPiProjection(
+function buildProjectedEntryIdByFingerprint(
 	ctx: ExtensionContext,
-): (string | undefined)[] | null {
+): Map<string, string> | null {
 	const sm = ctx.sessionManager as
 		| { buildSessionProjection?: () => unknown }
 		| undefined;
@@ -1247,25 +1249,30 @@ function buildAlignedEntryIdsFromPiProjection(
 		?.entries;
 	if (!Array.isArray(projectedEntries)) return null;
 
-	const ids: (string | undefined)[] = [];
+	const index = new Map<string, string>();
+	const ambiguous = new Set<string>();
 	for (const projected of projectedEntries) {
 		if (!projected || typeof projected !== "object") return null;
 		const row = projected as { sourceEntry?: unknown; messages?: unknown };
 		if (!Array.isArray(row.messages)) return null;
-		// Reuse the branch lane's eligibility rule so both lanes attribute an id
-		// only to entries that own ordinary model content.
 		const source = row.sourceEntry;
-		const contributesId = isPiContextEmitEligible(source);
+		if (!isPiEntryIdAnchored(source)) continue;
+		const entryId = source.id;
 		for (const message of row.messages) {
-			// `emitContext` strips system messages from `event.messages` before
-			// handlers run, so this lane must not carry a slot for them.
-			if ((message as { role?: unknown } | undefined)?.role === "system") {
-				continue;
+			const fingerprint = piMessageEntryFingerprint(message);
+			if (!fingerprint || ambiguous.has(fingerprint)) continue;
+			const existing = index.get(fingerprint);
+			if (existing === undefined) {
+				index.set(fingerprint, entryId);
+			} else if (existing !== entryId) {
+				// Two entries produce identical projected content; refuse the key
+				// rather than pick one.
+				index.delete(fingerprint);
+				ambiguous.add(fingerprint);
 			}
-			ids.push(contributesId ? (source as { id: string }).id : undefined);
 		}
 	}
-	return ids;
+	return index;
 }
 
 function getPiBranchEntryLookup(
@@ -1276,7 +1283,6 @@ function getPiBranchEntryLookup(
 	const lookup: PiBranchEntryLookup = {
 		entryIdByMessageRef: new Map(),
 		entryIdsByFingerprint: new Map(),
-		alignedEntryIds: buildPiAlignedEntryIds(entries),
 	};
 	for (const entry of entries) addPiBranchEntryToLookup(lookup, entry);
 	piBranchLookupByProjection.set(entries, lookup);
@@ -1402,9 +1408,6 @@ function readPiBranchEntriesForContext(
 				const id = (entry as { id: string }).id;
 				cached.indexById.set(id, cached.entries.length + index);
 				addPiBranchEntryToLookup(cached.lookup, entry);
-				if (isPiContextEmitEligible(entry)) {
-					cached.lookup.alignedEntryIds.push(entry.id);
-				}
 			}
 			const projection = {
 				leafId,
@@ -1590,27 +1593,20 @@ export function registerPiContextHandler(
 			);
 			rawMessageProviderUnregistersBySession.set(sessionId, unregisterRaw);
 			scheduleReconciliation(options.db, sessionId, readRawSessionMessages);
-			// Pi builds the context from its own projection before cloning messages
-			// for extension handlers, so that projection is the authoritative
-			// message→entry mapping. Prefer it; fall back to the branch-derived lane
-			// on Pi versions without the API, and to conservative fingerprint
-			// matching if another extension changed the message count.
-			const branchLookup =
-				branchEntries === null ? null : getPiBranchEntryLookup(branchEntries);
-			const projectedEntryIds = buildAlignedEntryIdsFromPiProjection(ctx);
-			const alignedEntryIds =
-				projectedEntryIds ?? branchLookup?.alignedEntryIds ?? null;
+			// Attribution is content-keyed (reference identity, then Pi's own
+			// projection index); there is deliberately no positional lane, because
+			// any same-count mutation by a prior `context` handler would map a slot
+			// onto the wrong entry with full confidence. If another extension
+			// changes the message set, affected messages simply stay unresolved.
 			const resolvedEntryIds =
-				alignedEntryIds?.length === event.messages.length
-					? alignedEntryIds
-					: branchEntries === null
-						? null
-						: collectMessageEntryIdsByRef(
-								ctx,
-								event.messages as readonly PiAgentMessage[],
-								sessionId,
-								branchEntries,
-							);
+				branchEntries === null
+					? null
+					: collectMessageEntryIdsByRef(
+							ctx,
+							event.messages as readonly PiAgentMessage[],
+							sessionId,
+							branchEntries,
+						);
 			const strictEntryIds = resolvedEntryIds ? [...resolvedEntryIds] : null;
 			if (strictEntryIds && options.injection) {
 				const removed = trimPiMessagesToCachedBoundary(

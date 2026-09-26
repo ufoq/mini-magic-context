@@ -41,7 +41,7 @@ npx @ufoq/mini-magic-context@latest setup --harness pi
 npx @ufoq/mini-magic-context@latest setup --harness pi
 ```
 
-Pi requires version 0.74.0 or later. The extension registers itself in `~/.pi/agent/settings.json`. Drop a `mini-magic-context.jsonc` in `<project>/.cortexkit/` (project-level) or `~/.config/cortexkit/` (user-wide defaults). See the full [configuration schema](./assets/magic-context.schema.json).
+Pi requires version 0.80.2 or later. The extension registers itself in `~/.pi/agent/settings.json`. Drop a `mini-magic-context.jsonc` in `<project>/.cortexkit/` (project-level) or `~/.config/cortexkit/` (user-wide defaults). See the full [configuration schema](./assets/magic-context.schema.json).
 
 ### Troubleshooting
 
