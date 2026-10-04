@@ -506,6 +506,40 @@ describe("runPiHistorian", () => {
 		}
 	});
 
+	it("retries the same model when Pi surfaces a provider 429 as model_failed", async () => {
+		// Regression: subagent-runner used to settle a terminal stopReason=error
+		// (empty text) as no_assistant with a generic "pi assistant produced
+		// empty text" error, which is NOT transient-classified — so a provider
+		// 429 quota escalation skipped same-model retries and escalated straight
+		// to the session model. With the stopReason-first classification fix,
+		// the real 429 text survives in result.error and is transient.
+		const runner = runnerWithSteps([
+			{
+				ok: false,
+				reason: "model_failed",
+				error:
+					'429: {"message":"litellm.RateLimitError: You reached your Pro weekly limit."}',
+				durationMs: 2000,
+				meta: { sawProtocolOutput: true },
+			},
+			successXml("Rate-limit retry recovered Pi history."),
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model", "test/model"]);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(1);
+			// The transient path must not record a historian failure.
+			expect(getHistorianFailureState(db, "ses-historian").failureCount).toBe(
+				0,
+			);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
 	it("advances to fallback immediately for non-transient historian prompt failures", async () => {
 		const runner = runnerWithSteps([
 			new Error("401 unauthorized"),

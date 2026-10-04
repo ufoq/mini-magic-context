@@ -980,6 +980,32 @@ export class PiSubagentRunner implements SubagentRunner {
 				// of truth; a signaled close here must not turn a valid answer
 				// into a fake subprocess failure.
 				if (sawAgentEnd) {
+					// Classify by stopReason FIRST. A provider failure (e.g. HTTP
+					// 429 quota) arrives as stopReason="error" with empty text; if
+					// the empty-text check ran first, this settled as no_assistant
+					// with a misleading "pi assistant produced empty text" error —
+					// defeating transient-retry classification and hiding the real
+					// cause from failure alerts.
+					if (
+						finalStopReason === "error" ||
+						finalStopReason === "aborted" ||
+						finalStopReason === "length"
+					) {
+						settle({
+							ok: false,
+							reason:
+								finalStopReason === "length" ? "truncated" : "model_failed",
+							error:
+								finalErrorMessage ??
+								`pi assistant stopped with reason "${finalStopReason}"`,
+							durationMs: Date.now() - startTime,
+							meta: {
+								stderr: stderr.length > 0 ? stderr : undefined,
+								sawProtocolOutput: true,
+							},
+						});
+						return;
+					}
 					const trimmedAssistantText = finalAssistantText?.trim() ?? null;
 					if (
 						trimmedAssistantText === null ||

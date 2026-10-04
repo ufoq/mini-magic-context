@@ -654,7 +654,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			reason: "model_failed",
 			error: "provider exploded",
 			durationMs: expect.any(Number),
-			meta: { stderr: undefined },
+			meta: { stderr: undefined, sawProtocolOutput: true },
 		});
 	});
 
@@ -681,7 +681,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			reason: "model_failed",
 			error: "model overloaded",
 			durationMs: expect.any(Number),
-			meta: { stderr: "provider failed" },
+			meta: { stderr: "provider failed", sawProtocolOutput: true },
 		});
 	});
 
@@ -706,7 +706,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			reason: "model_failed",
 			error: 'pi assistant stopped with reason "aborted"',
 			durationMs: expect.any(Number),
-			meta: { stderr: undefined },
+			meta: { stderr: undefined, sawProtocolOutput: true },
 		});
 	});
 
@@ -731,7 +731,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			reason: "truncated",
 			error: 'pi assistant stopped with reason "length"',
 			durationMs: expect.any(Number),
-			meta: { stderr: undefined },
+			meta: { stderr: undefined, sawProtocolOutput: true },
 		});
 	});
 
@@ -1017,6 +1017,59 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			durationMs: expect.any(Number),
 			meta: { stderr: undefined, sawProtocolOutput: true },
 		});
+	});
+
+	it("returns model_failed with Pi's errorMessage when stopReason=error has empty text", async () => {
+		// Regression: a provider error (e.g. HTTP 429 quota) yields an assistant
+		// message with stopReason="error", empty text, and an errorMessage
+		// carrying the provider's message. The close handler used to check
+		// trimmedAssistantText BEFORE finalStopReason, so this settled as
+		// "no_assistant" with a misleading "pi assistant produced empty text"
+		// error — defeating transient-retry classification (429 is transient;
+		// empty text is not) and hiding the real cause from the user alert.
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run(baseOptions);
+		child.writeStdoutLine(
+			agentEnd([
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "" }],
+					stopReason: "error",
+					errorMessage:
+						'429: {"message":"litellm.RateLimitError: You reached your Pro weekly limit."}',
+				},
+			]),
+		);
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (result.ok) throw new Error("expected failure");
+		expect(result.reason).toBe("model_failed");
+		expect(result.error).toContain("429");
+		expect(result.error).toContain("Pro weekly limit");
+		expect(result.meta?.sawProtocolOutput).toBe(true);
+	});
+
+	it("still returns no_assistant for empty text with a stop=stop terminal", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run(baseOptions);
+		child.writeStdoutLine(
+			agentEnd([
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "   " }],
+					stopReason: "stop",
+				},
+			]),
+		);
+		child.emitClose(0);
+
+		expect(await resultPromise).toMatchObject({ reason: "no_assistant" });
 	});
 
 	it("returns no_assistant for empty stdout and successful exit", async () => {
