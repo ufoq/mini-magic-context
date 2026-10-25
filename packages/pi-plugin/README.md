@@ -32,6 +32,16 @@ npx @ufoq/mini-magic-context@latest doctor --harness pi
 
 ---
 
+## Pi compatibility
+
+Version 0.1.1 is tested with Pi 0.85.1 and 1.4.0. Install this update **before**
+upgrading Pi from 0.85.x: version 0.1.0 does not handle the system entries added
+by newer Pi hosts correctly. The database schema is unchanged; do not reset it.
+
+Pi versions before 1.2.0 have a known host bug that can drop extension-added
+system guidance during custom-message-triggered runs. Ordinary user turns work
+on 0.85.1; Pi 1.4.0 is the recommended host for all tested paths.
+
 ## Configuration
 
 Two config files (merged, project overrides user):

@@ -1,6 +1,6 @@
 {
 	"name": "@ufoq/pi-mini-magic-context",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "module",
 	"description": "Pi coding agent extension for Mini Magic Context — historian-backed context management and journal search",
 	"main": "dist/index.js",
@@ -38,21 +38,27 @@
 	"dependencies": {
 		"@huggingface/transformers": "^4.1.0",
 		"comment-json": "^5.0.0",
-		"typebox": "^1.3.1",
 		"zod": "^4.1.8"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.1",
-		"@earendil-works/pi-coding-agent": "0.87.1",
-		"@earendil-works/pi-tui": "0.87.1",
+		"@earendil-works/pi-coding-agent": "1.4.0",
+		"@earendil-works/pi-tui": "1.4.0",
 		"@types/better-sqlite3": "^7.6.13",
 		"@types/bun": "^1.3.10",
 		"@types/node": "^22.20.0",
+		"typebox": "^1.3.1",
 		"typescript": "^5.8.0"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": ">=0.80.2",
-		"@earendil-works/pi-tui": ">=0.80.2"
+		"@earendil-works/pi-tui": ">=0.80.2",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"typebox": {
+			"optional": true
+		}
 	},
 	"exports": {
 		".": {

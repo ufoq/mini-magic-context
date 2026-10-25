@@ -11,9 +11,9 @@ set -euo pipefail
 # What it does:
 #   1. Validates the version is semver and the tag is unused
 #   2. Checks for a clean working tree and an in-sync lockfile
-#   3. Runs pre-release checks (lint, typecheck, tests, build, Pi e2e)
-#   4. Regenerates the JSON schema and re-lints it
-#   5. Syncs the version across all three packages
+#   3. Syncs package versions and the lockfile before any build
+#   4. Runs pre-release checks (lint, typecheck, tests, build, Pi e2e)
+#   5. Regenerates the JSON schema and re-lints it
 #   6. Commits the bump, creates tag mini-vX.Y.Z, pushes to the git remotes
 #   7. Publishes the two public packages to npm
 #
@@ -120,6 +120,12 @@ if ! bun install --frozen-lockfile 2>&1; then
   exit 1
 fi
 
+# Sync before building so validated bundles carry the version being released.
+echo "→ Syncing version to $VERSION..."
+bun scripts/version-sync.mjs "$VERSION"
+bun install --lockfile-only
+bun install --frozen-lockfile
+
 # Run `bun test` for a package and gate on a TRUE pass, not just "no fail line".
 #
 # Bun has a known post-completion panic on large suites: every test passes and
@@ -168,8 +174,7 @@ run_package_tests "plugin" "$PLUGIN_DIR"
 echo "  [plugin] bun build..."
 bun run --cwd "$PLUGIN_DIR" build 2>&1 || { echo "Error: Plugin build failed"; exit 1; }
 
-# Copy root README into the Pi package (this is what gets published).
-cp README.md "$PI_DIR/README.md"
+# Each public package owns its README; do not overwrite it during release.
 
 echo "  [pi-plugin] bun lint..."
 bun run --cwd "$PI_DIR" lint 2>&1 || { echo "Error: Pi-plugin lint failed"; exit 1; }
@@ -237,11 +242,6 @@ echo ""
 # formatting drift fails locally.
 echo "→ Linting generated artifacts..."
 bun run --cwd "$PLUGIN_DIR" lint 2>&1 || { echo "Error: Generated artifacts failed lint (regenerated schema not repo-style)"; exit 1; }
-echo ""
-
-# Step 5: Sync version
-echo "→ Syncing version to $VERSION..."
-bun scripts/version-sync.mjs "$VERSION"
 echo ""
 
 # Step 6: Commit (skip if versions were already at target)

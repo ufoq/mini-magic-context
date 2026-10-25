@@ -12,11 +12,28 @@ bun run test:e2e
 cd packages/e2e-tests && bun test
 ```
 
+## Explicit compatibility matrix
+
+The runner uses Node and the plugin's pinned Pi development dependency by default.
+Override the host and extension paths to test another Pi or an unpacked tarball:
+
+```bash
+E2E_PI_CLI=/absolute/path/to/pi/dist/cli.js \
+E2E_PI_PLUGIN_ROOT=/absolute/path/to/unpacked/package \
+bun run test:e2e
+```
+
+`E2E_PI_RUNTIME` can override `node`. The version comes from the selected CLI's
+manifest, not a Bun cache entry. The custom-message guidance test requires
+Pi >=1.2.0, where the host fixed prompt preservation for these runs. Release
+coverage also includes restart, tree navigation, recall, provider-429 fallback,
+and materialization.
+
 ## Architecture
 
 - **`src/mock-provider/server.ts`** — Anthropic-compatible mock HTTP server. It accepts POST `/messages`, supports the response modes exercised by Pi, lets tests script responses with precise usage values, and captures every request body for assertions.
 - **`src/pi-harness.ts`** — Pi RPC test harness.
-- **`tests/pi-*.test.ts`** — Pi integration suites covering context management, historian execution, drops, search/tagging, todo synthesis, and overflow handling.
+- **`tests/pi-*.test.ts`** — Pi integration suites covering context management, historian execution, drops, search/tagging, release compatibility, and overflow handling.
 
 ### Pi RPC harness
 

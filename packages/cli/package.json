@@ -1,6 +1,6 @@
 {
   "name": "@ufoq/mini-magic-context",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI for Pi Mini Magic Context setup and diagnostics",
   "keywords": [
     "pi",

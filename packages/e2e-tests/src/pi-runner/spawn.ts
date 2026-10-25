@@ -1,51 +1,39 @@
 /** Shared Pi e2e process configuration helpers. */
 
-import { existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 export const REPO_ROOT = resolve(import.meta.dir, "../../../..");
-export const PI_PLUGIN_ROOT = join(REPO_ROOT, "packages/pi-plugin");
-const require_ = createRequire(import.meta.url);
-
-function compareSemver(a: string, b: string): number {
-  const left = a.split(".").map((part) => Number(part));
-  const right = b.split(".").map((part) => Number(part));
-  for (let i = 0; i < Math.max(left.length, right.length); i++) {
-    const diff = (left[i] ?? 0) - (right[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
+export const PI_PLUGIN_ROOT = process.env.E2E_PI_PLUGIN_ROOT
+  ? resolve(process.env.E2E_PI_PLUGIN_ROOT)
+  : join(REPO_ROOT, "packages/pi-plugin");
 function resolvePiPackageJson(): string {
-  try {
-    return require_.resolve("@earendil-works/pi-coding-agent/package.json");
-  } catch {
-    const bunModules = join(REPO_ROOT, "node_modules/.bun");
-    const prefix = "@earendil-works+pi-coding-agent@";
-    const candidates = readdirSync(bunModules, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
-      .map((entry) => {
-        const version = entry.name.slice(prefix.length).split("+")[0] ?? "0.0.0";
-        return { name: entry.name, version };
-      })
-      .sort((a, b) => compareSemver(b.version, a.version));
-    const best = candidates[0];
-    if (best === undefined) {
-      throw new Error(`Could not locate @earendil-works/pi-coding-agent under ${bunModules}`);
+  if (process.env.E2E_PI_CLI) {
+    // Read the version of the *selected* CLI, not an unrelated workspace install.
+    let dir = dirname(realpathSync(resolve(process.env.E2E_PI_CLI)));
+    while (true) {
+      const manifest = join(dir, "package.json");
+      if (existsSync(manifest) && JSON.parse(readFileSync(manifest, "utf8")).name === "@earendil-works/pi-coding-agent")
+        return manifest;
+      const parent = dirname(dir);
+      if (parent === dir) throw new Error(`No Pi package.json above ${process.env.E2E_PI_CLI}`);
+      dir = parent;
     }
-    return join(
-      bunModules,
-      best.name,
-      "node_modules/@earendil-works/pi-coding-agent/package.json",
-    );
   }
+  // Resolve the pinned development dependency; never choose a stale Bun cache entry.
+  return createRequire(join(REPO_ROOT, "packages/pi-plugin/package.json")).resolve(
+    "@earendil-works/pi-coding-agent/package.json",
+  );
 }
 
 export const PI_PACKAGE_JSON = resolvePiPackageJson();
-export const PI_CLI = join(dirname(PI_PACKAGE_JSON), "dist/cli.js");
+export const PI_VERSION: string = JSON.parse(readFileSync(PI_PACKAGE_JSON, "utf8")).version;
+export const PI_CLI = process.env.E2E_PI_CLI
+  ? resolve(process.env.E2E_PI_CLI)
+  : join(dirname(PI_PACKAGE_JSON), "dist/cli.js");
+export const PI_RUNTIME = process.env.E2E_PI_RUNTIME ?? "node";
 
 export interface PiIsolatedEnv {
   baseDir: string;
@@ -71,6 +59,10 @@ export interface PiRunnerOptions {
   env?: PiIsolatedEnv;
   magicContextConfig?: Record<string, unknown>;
   piSettingsExtra?: Record<string, unknown>;
+  /** Explicit test companion extensions, loaded even with --no-extensions. */
+  extraExtensions?: string[];
+  /** Reopen a persisted session in a fresh Pi process. */
+  sessionPath?: string;
   modelContextLimit?: number;
   /** Compatibility option from the old spawn-per-turn runner. RPC sessions persist naturally. */
   continueSession?: boolean;
@@ -149,8 +141,7 @@ export function writeConfigs(env: PiIsolatedEnv, opts: PiRunnerOptions): void {
   writeFileSync(join(env.agentDir, "models.json"), JSON.stringify(models, null, 2));
 
   const magicContext = {
-    $schema:
-      "https://raw.githubusercontent.com/ufoq/mini-magic-context/master/assets/magic-context.schema.json",
+    $schema: "https://raw.githubusercontent.com/ufoq/mini-magic-context/master/assets/magic-context.schema.json",
     enabled: true,
     protected_tags: 1,
     execute_threshold_percentage: 40,
@@ -169,10 +160,7 @@ export function writeConfigs(env: PiIsolatedEnv, opts: PiRunnerOptions): void {
   };
   const cortexKitConfigDir = join(env.configDir, "cortexkit");
   mkdirSync(cortexKitConfigDir, { recursive: true });
-  writeFileSync(
-    join(cortexKitConfigDir, "mini-magic-context.jsonc"),
-    JSON.stringify(magicContext, null, 2),
-  );
+  writeFileSync(join(cortexKitConfigDir, "mini-magic-context.jsonc"), JSON.stringify(magicContext, null, 2));
 }
 
 export function childEnv(env: PiIsolatedEnv): Record<string, string> {

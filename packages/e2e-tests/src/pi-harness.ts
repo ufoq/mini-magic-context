@@ -8,6 +8,7 @@ import { createPiIsolatedEnv, type PiIsolatedEnv, type PiRunResult } from "./pi-
 import {
   PiRpcClient,
   type PiMessage,
+  type PiRpcClientOptions,
   type PiRpcEvent,
   type PiSessionStats,
   type PiState,
@@ -17,6 +18,7 @@ import {
 export interface PiTestHarnessOptions {
   magicContextConfig?: Record<string, unknown>;
   piSettingsExtra?: Record<string, unknown>;
+  extraExtensions?: string[];
   modelContextLimit?: number;
   mockDefault?: MockResponse;
   /** Share the cortexkit DB with another harness. */
@@ -39,11 +41,13 @@ export class PiTestHarness {
   readonly mock: MockProvider;
   readonly env: PiIsolatedEnv;
 
-  private readonly rpc: PiRpcClient;
+  private rpc: PiRpcClient;
+  private readonly runnerOptions: PiRpcClientOptions;
   private contextDbCached: Database | null = null;
   private turns: PiRunResult[] = [];
 
-  private constructor(mock: MockProvider, rpc: PiRpcClient) {
+  private constructor(mock: MockProvider, rpc: PiRpcClient, runnerOptions: PiRpcClientOptions) {
+    this.runnerOptions = runnerOptions;
     this.mock = mock;
     this.rpc = rpc;
     this.env = rpc.env;
@@ -55,13 +59,15 @@ export class PiTestHarness {
     mock.setDefault(options.mockDefault ?? DEFAULT_MOCK_RESPONSE);
     const env = createPiIsolatedEnv(options.sharedDataDir);
     if (options.workdir) env.workdir = options.workdir;
-    const rpc = new PiRpcClient({
+    const runnerOptions: PiRpcClientOptions = {
       env,
       mockProviderURL: PiTestHarness.mockBaseURL(mock),
       magicContextConfig: options.magicContextConfig,
       piSettingsExtra: options.piSettingsExtra,
       modelContextLimit: options.modelContextLimit,
-    });
+      extraExtensions: options.extraExtensions,
+    };
+    const rpc = new PiRpcClient(runnerOptions);
 
     try {
       await rpc.start();
@@ -70,7 +76,7 @@ export class PiTestHarness {
       throw error;
     }
 
-    return new PiTestHarness(mock, rpc);
+    return new PiTestHarness(mock, rpc, runnerOptions);
   }
 
   /**
@@ -82,10 +88,29 @@ export class PiTestHarness {
    */
   ballast(tokens: number): string {
     const words = [
-      "boundary", "historian", "compartment", "schedule", "pressure",
-      "tokens", "window", "publish", "transform", "session", "marker",
-      "budget", "eligible", "protected", "ordinal", "snapshot", "replay",
-      "decision", "threshold", "baseline", "measure", "archive", "deliver",
+      "boundary",
+      "historian",
+      "compartment",
+      "schedule",
+      "pressure",
+      "tokens",
+      "window",
+      "publish",
+      "transform",
+      "session",
+      "marker",
+      "budget",
+      "eligible",
+      "protected",
+      "ordinal",
+      "snapshot",
+      "replay",
+      "decision",
+      "threshold",
+      "baseline",
+      "measure",
+      "archive",
+      "deliver",
     ];
     const target = Math.max(0, Math.round(tokens * 4)); // ~4 chars/token
     const parts: string[] = [];
@@ -102,7 +127,11 @@ export class PiTestHarness {
 
   async sendPrompt(
     text: string,
-    options: { timeoutMs?: number; continueSession?: boolean; images?: unknown[] } = {},
+    options: {
+      timeoutMs?: number;
+      continueSession?: boolean;
+      images?: unknown[];
+    } = {},
   ): Promise<PiRunResult> {
     // Default bumped from 60s → 180s. Pi historian + ctx_search work spawn a
     // `pi --print` subprocess that calls the mock provider over HTTP, which on
@@ -116,15 +145,18 @@ export class PiTestHarness {
       if (event.type === "agent_start") capturing = true;
       if (capturing) events.push(event);
     });
-    const agentEnd = this.rpc.waitForEvent(
-      (event) => capturing && event.type === "agent_end",
-      { timeoutMs, label: "agent_end" },
-    );
+    const agentEnd = this.rpc.waitForEvent((event) => capturing && event.type === "agent_end", {
+      timeoutMs,
+      label: "agent_end",
+    });
 
     try {
       const promptResponse = await this.rpc.sendCommand(
         "prompt",
-        { message: text, ...(options.images ? { images: options.images } : {}) },
+        {
+          message: text,
+          ...(options.images ? { images: options.images } : {}),
+        },
         { timeoutMs, label: "prompt response" },
       );
       requireSuccessfulResponse(promptResponse);
@@ -160,6 +192,21 @@ export class PiTestHarness {
     return `http://127.0.0.1:${port}`;
   }
 
+  async command<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    return requireSuccessfulResponse(await this.rpc.sendCommand<T>(method, params));
+  }
+
+  async restart(): Promise<void> {
+    const state = await this.getState();
+    if (typeof state.sessionFile !== "string") throw new Error("No persisted session to reopen");
+    await this.rpc.shutdown();
+    this.rpc = new PiRpcClient({
+      ...this.runnerOptions,
+      sessionPath: state.sessionFile,
+    });
+    await this.rpc.start();
+  }
+
   async getState(): Promise<PiState> {
     const response = await this.rpc.sendCommand<PiState>("get_state");
     return requireSuccessfulResponse(response);
@@ -191,7 +238,7 @@ export class PiTestHarness {
   }
 
   contextDbPath(): string {
-        return join(this.env.dataDir, "cortexkit", "mini-magic-context", "context.db");
+    return join(this.env.dataDir, "cortexkit", "mini-magic-context", "context.db");
   }
 
   contextDb(): Database {

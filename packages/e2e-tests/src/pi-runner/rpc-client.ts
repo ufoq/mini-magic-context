@@ -18,6 +18,7 @@ import {
   childEnv,
   createPiIsolatedEnv,
   PI_CLI,
+  PI_RUNTIME,
   type PiIsolatedEnv,
   type PiRunnerOptions,
   writeConfigs,
@@ -50,10 +51,7 @@ export function serializeRpcMessage(value: Record<string, unknown>): string {
   return `${JSON.stringify(value)}\n`;
 }
 
-export function attachStrictJsonlReader(
-  stream: NodeJS.ReadableStream,
-  onLine: (line: string) => void,
-): () => void {
+export function attachStrictJsonlReader(stream: NodeJS.ReadableStream, onLine: (line: string) => void): () => void {
   const decoder = new StringDecoder("utf8");
   let buffer = "";
   const emitLine = (line: string) => {
@@ -123,10 +121,7 @@ export class PiRpcProtocol {
     });
   }
 
-  waitForEvent(
-    predicate: (event: PiRpcEvent) => boolean,
-    opts: PiRpcWaitOptions = {},
-  ): Promise<PiRpcEvent> {
+  waitForEvent(predicate: (event: PiRpcEvent) => boolean, opts: PiRpcWaitOptions = {}): Promise<PiRpcEvent> {
     const timeoutMs = opts.timeoutMs ?? 60_000;
     const label = opts.label ? ` (${opts.label})` : "";
     return new Promise((resolve, reject) => {
@@ -225,7 +220,7 @@ export class PiRpcClient {
     writeConfigs(this.env, this.options);
 
     this.process = spawn(
-      "bun",
+      PI_RUNTIME,
       [
         PI_CLI,
         "--mode",
@@ -233,6 +228,8 @@ export class PiRpcClient {
         "--no-extensions",
         "--extension",
         this.env.pluginDir,
+        ...(this.options.extraExtensions ?? []).flatMap((path) => ["--extension", path]),
+        ...(this.options.sessionPath ? ["--session", this.options.sessionPath] : []),
         "--no-skills",
         "--no-prompt-templates",
         "--no-themes",
@@ -241,7 +238,11 @@ export class PiRpcClient {
         "--api-key",
         "test-key-not-real",
       ],
-      { cwd: this.env.workdir, env: childEnv(this.env), stdio: ["pipe", "pipe", "pipe"] },
+      {
+        cwd: this.env.workdir,
+        env: childEnv(this.env),
+        stdio: ["pipe", "pipe", "pipe"],
+      },
     );
 
     this.process.stderr?.on("data", (chunk: Buffer) => {
@@ -266,10 +267,7 @@ export class PiRpcClient {
     return this.protocol.onEvent(listener);
   }
 
-  waitForEvent(
-    predicate: (event: PiRpcEvent) => boolean,
-    opts: PiRpcWaitOptions = {},
-  ): Promise<PiRpcEvent> {
+  waitForEvent(predicate: (event: PiRpcEvent) => boolean, opts: PiRpcWaitOptions = {}): Promise<PiRpcEvent> {
     return this.protocol.waitForEvent(predicate, opts);
   }
 
@@ -281,12 +279,7 @@ export class PiRpcClient {
     if (!this.process?.stdin || this.process.killed) {
       throw new Error("Pi RPC process is not running");
     }
-    return this.protocol.sendCommand<T>(
-      (line) => this.process!.stdin!.write(line),
-      method,
-      params,
-      opts,
-    );
+    return this.protocol.sendCommand<T>((line) => this.process!.stdin!.write(line), method, params, opts);
   }
 
   getStderr(): string {
