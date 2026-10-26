@@ -1,6 +1,6 @@
 {
   "name": "@ufoq/mini-magic-context-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Shared core for Mini Magic Context — historian-backed context management, tagging, and search",
   "author": "ualtinok",

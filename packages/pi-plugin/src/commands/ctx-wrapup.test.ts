@@ -1,6 +1,7 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	acquireCompartmentLease,
 	releaseCompartmentLease,
@@ -13,12 +14,18 @@ import {
 import { updateSessionMeta } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import { initializeDatabase } from "@ufoq/mini-magic-context-core/features/magic-context/storage-db";
 import {
+	acquireWrapupInProgress,
 	getOverflowState,
 	getPendingPiCompactionMarkerState,
 	getWrapupInProgressState,
 	recordOverflowDetected,
 	setPendingPiCompactionMarkerState,
 } from "@ufoq/mini-magic-context-core/features/magic-context/storage-meta-persisted";
+import {
+	readRawSessionMessages,
+	setRawMessageProvider,
+	withRawMessageProvider,
+} from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
 import { Database } from "@ufoq/mini-magic-context-core/shared/sqlite";
 import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import {
@@ -26,8 +33,10 @@ import {
 	consumeDeferredMaterialization,
 } from "../context-handler";
 import {
+	needsPiHistoryCatchup,
 	parseWrapupArgs,
 	type RegisterCtxWrapupDeps,
+	registerCtxWrapupCommand,
 	runPiWrapup,
 } from "./ctx-wrapup";
 
@@ -53,14 +62,15 @@ function ctx(sessionId: string, source: number | unknown[] = 8) {
 	const entries = typeof source === "number" ? branch(source) : source;
 	return {
 		cwd: "/tmp/pi-wrapup",
+		hasUI: true,
 		model: { provider: "anthropic", id: "claude" },
 		sessionManager: {
 			getSessionId: () => sessionId,
 			getBranch: () => entries,
 		},
 		getContextUsage: () => ({ contextWindow: 20, tokens: 1, percent: 1 }),
-		ui: { setStatus() {} },
-	} as never;
+		ui: { setStatus() {}, notify() {} },
+	} as unknown as ExtensionCommandContext;
 }
 
 function fencedToolArcBranch(): unknown[] {
@@ -186,6 +196,317 @@ function deps(
 }
 
 describe("Pi /ctx-wrapup", () => {
+	it("keeps the outer raw provider registered after the nested async historian scope", async () => {
+		const sessionId = "nested-wrapup-provider";
+		const provider = {
+			readMessages: () => [
+				{
+					ordinal: 1,
+					id: "m-1",
+					role: "user",
+					parts: [{ type: "text", text: "original" }],
+				},
+			],
+		};
+		const unregister = setRawMessageProvider(sessionId, provider);
+		try {
+			const releaseBorrowedRegistration = setRawMessageProvider(
+				sessionId,
+				provider,
+			);
+			releaseBorrowedRegistration();
+			expect(readRawSessionMessages(sessionId)).toHaveLength(1);
+			await withRawMessageProvider(sessionId, provider, async () => {
+				await Promise.resolve();
+				expect(readRawSessionMessages(sessionId)).toHaveLength(1);
+			});
+			expect(readRawSessionMessages(sessionId)).toHaveLength(1);
+			await expect(
+				withRawMessageProvider(sessionId, provider, async () => {
+					throw new Error("interrupted chunk");
+				}),
+			).rejects.toThrow("interrupted chunk");
+			expect(readRawSessionMessages(sessionId)).toHaveLength(1);
+		} finally {
+			unregister();
+		}
+		expect(readRawSessionMessages(sessionId)).toHaveLength(0);
+	});
+	function nativeBranch(count = 80): unknown[] {
+		return [
+			...branch(count),
+			{
+				id: "native",
+				type: "compaction",
+				firstKeptEntryId: "m-50",
+				summary: "native summary",
+			},
+		];
+	}
+
+	function activation(
+		db: Database,
+		overrides: Partial<RegisterCtxWrapupDeps> = {},
+	) {
+		let start!: (
+			_event: never,
+			context: ExtensionCommandContext,
+		) => Promise<void>;
+		const api = {
+			on(event: string, handler: typeof start) {
+				if (event === "session_start") start = handler;
+			},
+			registerCommand() {},
+			appendEntry() {},
+		};
+		registerCtxWrapupCommand(api as never, deps(db, overrides));
+		return (context: ExtensionCommandContext) => start({} as never, context);
+	}
+
+	it("detects uncovered native history using IDs, including partial coverage", () => {
+		const entries = nativeBranch();
+		expect(needsPiHistoryCatchup(branch(80))).toBe(false);
+		expect(needsPiHistoryCatchup(entries)).toBe(true);
+		expect(
+			needsPiHistoryCatchup(entries, { endMessage: 10, endMessageId: "m-10" }),
+		).toBe(true);
+		expect(
+			needsPiHistoryCatchup(entries, { endMessage: 49, endMessageId: "m-49" }),
+		).toBe(false);
+		expect(
+			needsPiHistoryCatchup(entries, { endMessage: 50, endMessageId: "m-50" }),
+		).toBe(false);
+		expect(
+			needsPiHistoryCatchup(entries, {
+				endMessage: 10,
+				endMessageId: "different-branch",
+			}),
+		).toBe(false);
+		expect(
+			needsPiHistoryCatchup([
+				...entries,
+				{ type: "compaction", firstKeptEntryId: "missing" },
+			]),
+		).toBe(false);
+		expect(
+			needsPiHistoryCatchup([
+				...entries,
+				{
+					type: "compaction",
+					firstKeptEntryId: "m-60",
+					details: { source: "magic-context" },
+				},
+			]),
+		).toBe(false);
+	});
+
+	it("uses canonical ordinals when system messages and folded tools exist", () => {
+		const entries = [
+			{
+				id: "sys",
+				type: "message",
+				message: { role: "system", content: "scaffolding" },
+			},
+			...fencedToolArcBranch(),
+			{ type: "compaction", firstKeptEntryId: "m-6" },
+		];
+		// First uncovered ordinal is a synthetic folded tool result, not an entry ID.
+		expect(
+			needsPiHistoryCatchup(entries, { endMessage: 3, endMessageId: "m-3" }),
+		).toBe(true);
+		expect(
+			needsPiHistoryCatchup(entries, { endMessage: 5, endMessageId: "m-5" }),
+		).toBe(false);
+	});
+
+	it("awaits startup catch-up, notifies first, and resumes partial progress", async () => {
+		const db = createDb();
+		try {
+			const sid = "activation-catchup";
+			const entries = nativeBranch();
+			appendRange(db, sid, 1, 10);
+			const context = ctx(sid, entries);
+			context.getContextUsage = () => ({
+				contextWindow: 256_000,
+				tokens: 1,
+				percent: 1,
+			});
+			const notices: string[] = [];
+			context.ui.notify = (text) => {
+				notices.push(text);
+			};
+			let calls = 0;
+			let fail = true;
+			const starts: number[] = [];
+			const start = activation(db, {
+				runPiHistorianForWrapup: mock(async (args) => {
+					expect(notices[0]).toContain("Pi will wait");
+					expect(getWrapupInProgressState(db, sid)).not.toBeNull();
+					expect(args.forceDrainQuota).toBe(true);
+					expect(args.readBranchEntries?.()).toEqual(entries);
+					const snapshot = args.boundarySnapshot;
+					if (!snapshot) throw new Error("Missing wrapup snapshot");
+					const first = snapshot.offset;
+					starts.push(first);
+					if (++calls === 2 && fail) return;
+					appendRange(
+						db,
+						sid,
+						first,
+						Math.min(first + 9, snapshot.eligibleEndOrdinal - 1),
+					);
+					args.onPublished?.();
+				}),
+			});
+			await start(context);
+			expect(getLastCompartmentEndMessage(db, sid)).toBe(20);
+			expect(notices.at(-1)).toContain("Partial");
+			expect(getWrapupInProgressState(db, sid)).toBeNull();
+			fail = false;
+			await start(context);
+			expect(starts[2]).toBe(21);
+			expect(getLastCompartmentEndMessage(db, sid)).toBe(60);
+			expect(getCompartments(db, sid)[0].endMessage).toBe(10);
+			expect(entries.at(-1)).toEqual(
+				expect.objectContaining({ summary: "native summary" }),
+			);
+			const previousCalls = calls;
+			await start(context);
+			expect(calls).toBe(previousCalls);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not initialize fresh sessions, subagents, or disabled historians", async () => {
+		const db = createDb();
+		try {
+			const run = mock(async () => {});
+			await activation(db, { runPiHistorianForWrapup: run })(ctx("fresh", 80));
+			updateSessionMeta(db, "child", { isSubagent: true });
+			await activation(db, { runPiHistorianForWrapup: run })(
+				ctx("child", nativeBranch()),
+			);
+			await activation(db, {
+				historianModel: undefined,
+				runPiHistorianForWrapup: run,
+			})(ctx("disabled", nativeBranch()));
+			expect(run).not.toHaveBeenCalled();
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("keeps a fixed target when new messages arrive and rejects changed source history", async () => {
+		const db = createDb();
+		try {
+			const sid = "wrapup-fixed-target";
+			const entries: unknown[] = branch(80);
+			let calls = 0;
+			const result = await runPiWrapup(
+				pi().api,
+				deps(db, {
+					runPiHistorianForWrapup: mock(async (args) => {
+						const snapshot = args.boundarySnapshot;
+						if (!snapshot) throw new Error("Missing wrapup snapshot");
+						const first = snapshot.offset;
+						appendRange(
+							db,
+							sid,
+							first,
+							Math.min(first + 9, snapshot.eligibleEndOrdinal - 1),
+						);
+						if (++calls === 1)
+							entries.push(
+								...branch(20).map((entry, i) => ({
+									...entry,
+									id: `appended-${i}`,
+								})),
+							);
+					}),
+				}),
+				ctx(sid, entries),
+				sid,
+				20,
+			);
+			expect(result).not.toContain("Partial");
+			expect(getLastCompartmentEndMessage(db, sid)).toBe(60);
+
+			const changed = branch(80);
+			await expect(
+				runPiWrapup(
+					pi().api,
+					deps(db, {
+						runPiHistorianForWrapup: mock(async () => {
+							appendRange(db, "changed", 1, 10);
+							changed[0].message.content = "edited history";
+						}),
+					}),
+					ctx("changed", changed),
+					"changed",
+					20,
+				),
+			).rejects.toThrow("Pi history changed");
+			expect(getLastCompartmentEndMessage(db, "changed")).toBe(10);
+			expect(getWrapupInProgressState(db, "changed")).toBeNull();
+		} finally {
+			closeQuietly(db);
+		}
+	});
+	it("reports headless progress without suggesting retries for a successful protected tail", async () => {
+		const db = createDb();
+		const stderr = spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const entries: unknown[] = [
+				...branch(80),
+				{ type: "compaction", firstKeptEntryId: "m-75" },
+			];
+			const context = ctx("short-native-tail", entries);
+			Object.assign(context, { hasUI: false });
+			const notices: string[] = [];
+			context.ui.notify = (text) => {
+				notices.push(text);
+			};
+			await activation(db)(context);
+			expect(getLastCompartmentEndMessage(db, "short-native-tail")).toBe(60);
+			expect(notices.at(-1)).not.toContain("continue");
+			expect(notices.at(-1)).not.toContain("Partial");
+			expect(stderr.mock.calls[0]?.[0]).toContain("Pi will wait");
+		} finally {
+			stderr.mockRestore();
+			closeQuietly(db);
+		}
+	});
+
+	it("waits for stale startup ownership to expire, then resumes", async () => {
+		const db = createDb();
+		try {
+			const sid = "crashed-wrapup";
+			appendRange(db, sid, 1, 10);
+			const acquired = acquireWrapupInProgress(db, sid, {
+				holderId: "crashed-process",
+				messagesToKeep: 20,
+				anchorRawMessageCount: 80,
+				targetEligibleEndOrdinal: 61,
+				lastCompartmentEnd: 10,
+				chunkIndex: 1,
+				expectedChunks: 5,
+			});
+			if (!acquired.ok) throw new Error("Failed to seed owner");
+			db.prepare(
+				"UPDATE session_meta SET wrapup_in_progress_state = ? WHERE session_id = ?",
+			).run(
+				JSON.stringify({ ...acquired.state, expiresAt: Date.now() + 20 }),
+				sid,
+			);
+			await activation(db)(ctx(sid, nativeBranch()));
+			expect(getLastCompartmentEndMessage(db, sid)).toBe(60);
+			expect(getWrapupInProgressState(db, sid)).toBeNull();
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
 	it("parses optional positive messages_to_keep", () => {
 		expect(parseWrapupArgs("")).toEqual({ ok: true, messagesToKeep: 20 });
 		expect(parseWrapupArgs(" 7 ")).toEqual({ ok: true, messagesToKeep: 7 });

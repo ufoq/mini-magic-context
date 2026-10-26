@@ -1029,6 +1029,23 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				return;
 			}
 
+			// The model call can outlive a branch edit or a competing publication.
+			// Recheck immediately before publishing, not just before dispatch.
+			if (boundarySnapshot.rawRangeFingerprint.length > 0) {
+				const stillValid = validateBoundarySnapshot({
+					db,
+					snapshot: boundarySnapshot,
+				});
+				if (!stillValid.ok) {
+					sessionLog(
+						sessionId,
+						`historian publish skipped: ${stillValid.detail ?? stillValid.reason}`,
+					);
+					rollbackDrainReservation();
+					return;
+				}
+			}
+
 			const markerSummary = buildPiCompactionSummary(newCompartments);
 			const lastNewEndMessageId =
 				newCompartments[newCompartments.length - 1]?.endMessageId;

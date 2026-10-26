@@ -14,6 +14,7 @@ import {
 	reserveProtectedTailDrainTokens,
 } from "@ufoq/mini-magic-context-core/features/magic-context/storage";
 import type { ProtectedTailBoundarySnapshot } from "@ufoq/mini-magic-context-core/hooks/magic-context/protected-tail-boundary";
+import { computeRawRangeFingerprint } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-true-raw-tokens";
 import { closeQuietly } from "@ufoq/mini-magic-context-core/shared/sqlite-helpers";
 import type {
 	SubagentRunner,
@@ -212,6 +213,36 @@ async function runHistorianWith(args: {
 }
 
 describe("runPiHistorian", () => {
+	it("does not publish a response if source history changed while the model ran", async () => {
+		const messages = rawMessages();
+		const boundary = makeBoundarySnapshot({
+			protectedTailStart: 3,
+			protectedTailStartMessageId: "m3",
+			eligibleEndOrdinal: 3,
+			eligibleEndMessageId: "m2",
+			rawRangeFingerprint: computeRawRangeFingerprint(messages, 1, 3),
+		});
+		const runner = {
+			harness: "pi",
+			run: mock(async () => {
+				messages[0].parts[0].text = "changed while awaiting model";
+				return okRun(successXml());
+			}),
+		} as unknown as SubagentRunner;
+		const { db } = await runHistorianWith({
+			runner,
+			providerMessages: messages,
+			boundarySnapshot: boundary,
+		});
+		try {
+			expect(runner.run).toHaveBeenCalledTimes(1);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(0);
+			expect(getPendingPiCompactionMarkerState(db, "ses-historian")).toBeNull();
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
 	it("clears emergency recovery on protected-tail-only no-op", async () => {
 		const db = createTestDb();
 		const runner = runnerReturning([successXml()]);

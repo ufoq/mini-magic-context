@@ -112,6 +112,9 @@ const sessionProviders = new Map<string, RawMessageProvider>();
  * historian.
  */
 export function setRawMessageProvider(sessionId: string, provider: RawMessageProvider): () => void {
+    // Nested trigger/historian scopes borrow the outer registration. They must
+    // not unregister its source when their shorter-lived work finishes.
+    if (sessionProviders.get(sessionId) === provider) return () => {};
     sessionProviders.set(sessionId, provider);
     return () => {
         const current = sessionProviders.get(sessionId);

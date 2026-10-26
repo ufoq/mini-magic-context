@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import type {
 	ExtensionAPI,
-	ExtensionCommandContext,
+	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
 	acquireCompartmentLease,
@@ -28,6 +28,7 @@ import {
 	resolveWrapupProtectedTailBoundary,
 } from "@ufoq/mini-magic-context-core/hooks/magic-context/protected-tail-boundary";
 import { setRawMessageProvider } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-chunk";
+import { computeRawRangeFingerprint } from "@ufoq/mini-magic-context-core/hooks/magic-context/read-session-true-raw-tokens";
 import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 import {
 	signalPiDeferredHistoryRefresh,
@@ -36,7 +37,11 @@ import {
 import { ensureProjectRegisteredFromPiDirectory } from "../embedding-bootstrap";
 import { runPiHistorian } from "../pi-historian-runner";
 import { isPiRecompInFlight } from "../pi-recomp-runner";
-import { readPiSessionMessages } from "../read-session-pi";
+import {
+	convertEntriesToRawMessages,
+	readPiSessionMessages,
+	SYNTH_USER_ID_PREFIX,
+} from "../read-session-pi";
 import { updateStatusLine } from "../status-line";
 import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
 
@@ -111,6 +116,64 @@ export function registerCtxWrapupCommand(
 	pi: ExtensionAPI,
 	deps: RegisterCtxWrapupDeps,
 ): void {
+	// Await the normal wrapup worker once on activation, not on every model turn.
+	// index.ts registers clone reconciliation before this session_start handler.
+	pi.on("session_start", async (_event, ctx) => {
+		const current = deps.resolveRuntimeDeps?.(ctx) ?? deps;
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (
+			!current.historianModel ||
+			getOrCreateSessionMeta(current.db, sessionId).isSubagent ||
+			!needsPiHistoryCatchup(
+				readBranchEntries(ctx),
+				getCompartments(current.db, sessionId).at(-1),
+			)
+		)
+			return;
+
+		const notify = (text: string, level: "info" | "warning") => {
+			ctx.ui.notify(text, level);
+			if (!ctx.hasUI) console.error(`[Magic Context] ${text}`);
+		};
+		notify(
+			"Magic Context is preparing older history with /ctx-wrapup. Pi will wait; this may take several minutes.",
+			"info",
+		);
+		try {
+			// A killed process leaves renewable ownership until its TTL expires.
+			// Wait rather than steal it from a possibly still-running worker.
+			const deadline = Date.now() + resolveWrapupLeaseWaitTimeout(current);
+			while (
+				getWrapupInProgressState(current.db, sessionId) &&
+				Date.now() < deadline
+			) {
+				await new Promise((resolve) => setTimeout(resolve, LEASE_WAIT_MS));
+			}
+			const result = await runPiWrapup(
+				pi,
+				current,
+				ctx,
+				sessionId,
+				DEFAULT_MESSAGES_TO_KEEP,
+			);
+			sendCtxStatusMessage(pi, {
+				title: "Magic Context initialization",
+				text: result,
+			});
+			notify(
+				result,
+				result.includes("Partial") || result.includes("Skipped")
+					? "warning"
+					: "info",
+			);
+		} catch (error) {
+			notify(
+				`Magic Context initialization stopped: ${error instanceof Error ? error.message : String(error)}. Published progress is preserved; use /ctx-wrapup to continue.`,
+				"warning",
+			);
+		}
+	});
+
 	pi.registerCommand("ctx-wrapup", {
 		description:
 			"Compact older Magic Context history while keeping the newest messages raw",
@@ -177,7 +240,7 @@ export function registerCtxWrapupCommand(
 export async function runPiWrapup(
 	pi: ExtensionAPI,
 	deps: RegisterCtxWrapupDeps,
-	ctx: ExtensionCommandContext,
+	ctx: ExtensionContext,
 	sessionId: string,
 	messagesToKeep: number,
 ): Promise<string> {
@@ -188,7 +251,26 @@ export async function runPiWrapup(
 		return "## Magic Wrapup — Skipped\n\nA recomp or upgrade is already running for this session. Wait for it to finish, then try `/ctx-wrapup` again.";
 	}
 
-	const provider = { readMessages: () => readPiSessionMessages(ctx) };
+	const sourceMessages = readPiSessionMessages(ctx);
+	let protectedStart: number | undefined;
+	let sourceFingerprint: string | undefined;
+	const provider = {
+		readMessages: () => {
+			if (
+				protectedStart !== undefined &&
+				computeRawRangeFingerprint(
+					readPiSessionMessages(ctx),
+					1,
+					protectedStart,
+				) !== sourceFingerprint
+			) {
+				throw new Error(
+					"Pi history changed during wrapup; retry on the current branch",
+				);
+			}
+			return sourceMessages;
+		},
+	};
 	const unregister = setRawMessageProvider(sessionId, provider);
 	let holderId = "";
 	try {
@@ -224,6 +306,13 @@ export async function runPiWrapup(
 		if (!hasRunnableCompartmentWindow(initialPlan.snapshot)) {
 			return `## Magic Wrapup — Partial\n\nNo runnable wrapup boundary is available yet; wrapped up 0 messages into 0 compartments. Run /ctx-wrapup again to continue.`;
 		}
+
+		protectedStart = initialPlan.targetEligibleEndOrdinal;
+		sourceFingerprint = computeRawRangeFingerprint(
+			sourceMessages,
+			1,
+			protectedStart,
+		);
 
 		holderId = crypto.randomUUID();
 		const acquired = acquireWrapupInProgress(deps.db, sessionId, {
@@ -310,6 +399,8 @@ export async function runPiWrapup(
 					break;
 				}
 
+				lastEnd = getLastCompartmentEndMessage(deps.db, sessionId);
+				if (lastEnd + 1 >= initialPlan.targetEligibleEndOrdinal) break;
 				const plan = resolveWrapupProtectedTailBoundary({
 					db: deps.db,
 					sessionId,
@@ -477,7 +568,7 @@ export async function runPiWrapup(
 	}
 }
 
-function resolvePiContextLimit(ctx: ExtensionCommandContext): number {
+function resolvePiContextLimit(ctx: ExtensionContext): number {
 	const usage = ctx.getContextUsage?.();
 	if (typeof usage?.contextWindow === "number" && usage.contextWindow > 0) {
 		return usage.contextWindow;
@@ -527,13 +618,48 @@ function formatExistingWrapup(
 	return `## Magic Wrapup — Skipped\n\nAnother /ctx-wrapup is already compacting this session (chunk ${state.chunkIndex}/${Math.max(state.chunkIndex, state.expectedChunks)}, wrapped through message ${state.lastCompartmentEnd}). Wait for it to finish, then try again.`;
 }
 
-function readBranchEntries(ctx: ExtensionCommandContext): unknown[] {
-	const getBranch = (ctx.sessionManager as { getBranch?: () => unknown })
-		.getBranch;
-	if (typeof getBranch !== "function") return [];
-	const branch = getBranch.call(ctx.sessionManager) as
-		| { entries?: unknown }
-		| null
-		| undefined;
-	return Array.isArray(branch?.entries) ? branch.entries : [];
+function readBranchEntries(ctx: ExtensionContext): unknown[] {
+	const branch = ctx.sessionManager.getBranch();
+	return Array.isArray(branch) ? branch : [];
+}
+
+/** Only the latest effective compaction matters; MC markers supersede native ones. */
+export function needsPiHistoryCatchup(
+	entries: unknown[],
+	last?: { endMessage: number; endMessageId: string },
+): boolean {
+	const records = entries as Array<{
+		id?: string;
+		type?: string;
+		firstKeptEntryId?: string;
+		details?: { source?: string };
+	}>;
+	const compaction = [...records]
+		.reverse()
+		.find((entry) => entry?.type === "compaction");
+	if (
+		!compaction?.firstKeptEntryId ||
+		compaction.details?.source === "magic-context"
+	)
+		return false;
+	const keptIndex = records.findIndex(
+		(entry) => entry?.id === compaction.firstKeptEntryId,
+	);
+	if (keptIndex < 0) return false;
+	const raw = convertEntriesToRawMessages(entries);
+	if (
+		last &&
+		raw.find((message) => message.ordinal === last.endMessage)?.id !==
+			last.endMessageId
+	)
+		return false;
+	const next = raw.find(
+		(message) => message.ordinal === (last ? last.endMessage + 1 : 1),
+	);
+	if (!next) return false;
+	const realId = next.id.startsWith(SYNTH_USER_ID_PREFIX)
+		? next.id.slice(SYNTH_USER_ID_PREFIX.length)
+		: next.id;
+	const nextIndex = records.findIndex((entry) => entry?.id === realId);
+	return nextIndex >= 0 && nextIndex < keptIndex;
 }

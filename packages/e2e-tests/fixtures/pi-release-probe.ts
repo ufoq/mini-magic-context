@@ -23,6 +23,19 @@ export default function (pi: ExtensionAPI) {
       await ctx.navigateTree(target.trim(), { summarize: false });
     },
   });
+  pi.registerCommand("release-native-compaction", {
+    description: "Seed a pre-MC native compaction for late-adoption testing",
+    handler: async (_args, ctx) => {
+      const messages = ctx.sessionManager.getBranch().filter(
+        (e) => e.type === "message" && e.message.role === "user",
+      );
+      const kept = messages[10];
+      if (!kept) throw new Error("Need at least 11 user turns");
+      (ctx.sessionManager as unknown as {
+        appendCompaction(summary: string, firstKeptEntryId: string, tokens: number): string;
+      }).appendCompaction("NATIVE ADOPTION SUMMARY: archivecanary port 47319", kept.id, 1000);
+    },
+  });
   pi.registerCommand("release-snapshot", {
     description: "Record the host runtime, branch, and tool loadout",
     handler: async (_args, ctx) => {

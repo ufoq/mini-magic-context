@@ -42,6 +42,17 @@ Pi versions before 1.2.0 have a known host bug that can drop extension-added
 system guidance during custom-message-triggered runs. Ordinary user turns work
 on 0.85.1; Pi 1.4.0 is the recommended host for all tested paths.
 
+## Previously compacted sessions
+
+When enabled on a session Pi already compacted, MC runs its existing wrapup
+worker at session startup if older raw history still needs summarizing. A notice
+appears first; **Pi waits for catch-up**, which can take several minutes on large
+sessions. Existing compartments are retained, recent messages stay protected,
+and native summarization remains disabled while MC owns context management.
+Successful chunks survive interruption. On failure, startup returns control;
+use `/ctx-wrapup` to continue, or resume the session later. A crashed worker's
+ownership may take up to five minutes to expire before catch-up can resume.
+
 ## Configuration
 
 Two config files (merged, project overrides user):

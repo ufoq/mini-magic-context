@@ -145,6 +145,65 @@ describe("Pi release compatibility", () => {
     }
   }, 90000);
 
+  it("awaits wrapup on late adoption and replaces the native boundary safely", async () => {
+    // Seed without a historian so no detached incremental run can race adoption.
+    const config = { execute_threshold_percentage: 99, historian: { model: "" } };
+    const h = await PiTestHarness.create({
+      extraExtensions: [fixture],
+      magicContextConfig: config,
+    });
+    try {
+      h.mock.setDefault({ text: "ordinary reply", usage });
+      const turns = 250;
+      for (let i = 1; i <= turns; i++) await h.sendPrompt(`archivecanary turn ${i}: port 47319. ${h.ballast(500)}`);
+      const state = await h.getState();
+      expect((h.contextDb().prepare("SELECT COUNT(*) AS n FROM compartments WHERE session_id = ?").get(state.sessionId) as { n: number }).n).toBe(0);
+      await h.command("prompt", { message: "/release-native-compaction" });
+      config.historian.model = "anthropic/claude-haiku-4-5";
+      let historianCalls = 0;
+      const chunkStarts = new Set<number>();
+      h.mock.addMatcher((body) => {
+        if (!isHistorian(body)) return null;
+        historianCalls++;
+        const bounds = range(body);
+        chunkStarts.add(bounds.start);
+        return { text: buildMockHistorianPayload({ ...bounds, title: "Adopted archive", body: "archivecanary port 47319" }), usage };
+      });
+      await h.restart();
+      await h.getState(); // startup must finish before the RPC loop accepts commands
+      expect(chunkStarts.size).toBeGreaterThanOrEqual(2);
+      const compartments = h.contextDb().prepare("SELECT start_message, end_message FROM compartments WHERE session_id = ? ORDER BY sequence").all(state.sessionId) as Array<{ start_message: number; end_message: number }>;
+      expect(compartments[0]!.start_message).toBe(1);
+      expect(compartments.at(-1)!.end_message).toBeGreaterThanOrEqual(turns * 2 - 20);
+      expect(compartments.at(-1)!.end_message).toBeLessThanOrEqual(turns * 2 - 18);
+      for (let i = 1; i < compartments.length; i++) expect(compartments[i]!.start_message).toBe(compartments[i - 1]!.end_message + 1);
+      const pending = h.contextDb().prepare("SELECT pending_pi_compaction_marker_state AS marker FROM session_meta WHERE session_id = ?").get(state.sessionId) as { marker: string | null };
+      expect(pending.marker).not.toBeNull();
+      await h.command("prompt", { message: "/ctx-flush" });
+      await h.sendPrompt("after adoption");
+      await h.command("prompt", { message: "/release-snapshot" });
+      const snapshot = JSON.parse(readFileSync(join(h.env.workdir, "release-snapshot.json"), "utf8"));
+      const latest = snapshot.branch.filter((e: { type: string }) => e.type === "compaction").at(-1);
+      expect(latest.details.source).toBe("magic-context");
+      const wire = JSON.stringify(h.requests().filter((r) => !isHistorian(r.body)).at(-1)!.body.messages);
+      expect(wire).toContain("Adopted archive");
+      expect(wire).toContain(`archivecanary turn ${turns}`);
+      expect(wire).not.toContain("archivecanary turn 1:");
+      h.mock.script([
+        { content: [{ type: "tool_use", id: "adoption-expand", name: "ctx_expand", input: { message: 1 } }], stop_reason: "tool_use", usage },
+        { text: "original archive recovered", usage },
+      ]);
+      await h.sendPrompt("recover the original archived message");
+      const expanded = toolResult(h.requests().filter((r) => !isHistorian(r.body)).at(-1)!.body, "adoption-expand");
+      expect(expanded).toContain("archivecanary turn 1:");
+      expect(expanded).not.toContain('"is_error":true');
+      const previousCalls = historianCalls;
+      await h.restart();
+      await h.getState();
+      expect(historianCalls).toBe(previousCalls);
+    } finally { await h.dispose(); }
+  }, 120000);
+
   it("publishes through fallback after a real provider 429 and materializes on the wire", async () => {
     const h = await PiTestHarness.create({
       magicContextConfig: {
