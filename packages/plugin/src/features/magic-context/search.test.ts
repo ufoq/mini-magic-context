@@ -131,6 +131,21 @@ describe("unifiedSearch", () => {
         ).toEqual([]);
     });
 
+    it("searches session FTS with an empty project path", async () => {
+        db.prepare(
+            "INSERT INTO message_history_fts (session_id, message_ordinal, message_id, role, content) VALUES (?, ?, ?, ?, ?)",
+        ).run("ses-home", 5, "home-m5", "user", "workers ssh remote test machines use port 47001");
+
+        const results = await unifiedSearch(db, "ses-home", "", "workers ssh", {
+            embeddingEnabled: false,
+            sources: ["message"],
+        });
+
+        expect(
+            results.some((result) => result.source === "message" && result.messageId === "home-m5"),
+        ).toBe(true);
+    });
+
     it("returns empty message results until async indexing populates FTS", async () => {
         rawMessagesBySession.set("ses-2", [
             {

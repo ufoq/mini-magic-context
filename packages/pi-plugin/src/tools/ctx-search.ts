@@ -152,23 +152,23 @@ export function createCtxSearchTool(
 
 			const sessionId = ctx.sessionManager.getSessionId();
 			const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
-			if (!projectIdentity) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: "Error: Could not resolve project identity for search.",
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
+			// $HOME is deliberately not a project identity. Raw message FTS is
+			// session-scoped, so keep that lane available there; only semantic
+			// (project-scoped) compartment search needs an identity.
+			if (projectIdentity) {
+				await deps.ensureProjectRegistered?.(ctx.cwd, deps.db);
 			}
-			await deps.ensureProjectRegistered?.(ctx.cwd, deps.db);
-			const snapshot = getProjectEmbeddingSnapshot(projectIdentity);
-			const embeddingEnabled = snapshot
-				? snapshot.enabled || snapshot.gitCommitEnabled
-				: deps.embeddingEnabled;
+			const snapshot = projectIdentity
+				? getProjectEmbeddingSnapshot(projectIdentity)
+				: undefined;
+			let embeddingEnabled: boolean | undefined;
+			if (projectIdentity) {
+				embeddingEnabled = snapshot
+					? snapshot.enabled || snapshot.gitCommitEnabled
+					: deps.embeddingEnabled;
+			} else {
+				embeddingEnabled = false;
+			}
 
 			// Only search message history up to the last compartment boundary —
 			// anything after that (the live tail, including the current turn) is
@@ -185,15 +185,8 @@ export function createCtxSearchTool(
 			const messageOrdinalCutoff =
 				lastCompartmentEnd >= 0 ? lastCompartmentEnd : 0;
 
-			const results = await unifiedSearch(
-				deps.db,
-				sessionId,
-				projectIdentity,
-				query,
-				{
-					limit: normalizeLimit(params.limit),
-					embeddingEnabled,
-					embedQuery: async (text, signal) => {
+			const embedQuery = projectIdentity
+				? async (text: string, signal?: AbortSignal) => {
 						const result = await embedTextForProject(
 							projectIdentity,
 							text,
@@ -201,7 +194,17 @@ export function createCtxSearchTool(
 							"query",
 						);
 						return result;
-					},
+					}
+				: undefined;
+			const results = await unifiedSearch(
+				deps.db,
+				sessionId,
+				projectIdentity ?? "",
+				query,
+				{
+					limit: normalizeLimit(params.limit),
+					embeddingEnabled,
+					embedQuery,
 					isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
 					maxMessageOrdinal: messageOrdinalCutoff,
 					sources: params.sources ?? ["message"],
