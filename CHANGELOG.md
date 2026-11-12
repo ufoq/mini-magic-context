@@ -28,6 +28,10 @@ Reliability fixes for historian children and recomp publication:
 - Correct Pi-native retry classification for network errors, account limits and bounded HTTP statuses.
 - Filter ambient MCP tools by default in historian children.
 
+## 0.1.4
+
+`ctx_search` no longer fails in a session started at `$HOME`. Home remains unbound as a project, so project-scoped semantic compartment search is still unavailable there; the tool now searches the session's raw message history instead of returning "Could not resolve project identity for search." A session that later moves into a project gets the normal semantic lane back.
+
 ## 0.1.0
 
 Initial Mini Magic Context line based on Magic Context `0.33.1`, with the retained surface narrowed to historian-managed context, journal search, compartment embeddings, `ctx_search`, `ctx_expand`, retained context commands, and `/mc-import-context`.
