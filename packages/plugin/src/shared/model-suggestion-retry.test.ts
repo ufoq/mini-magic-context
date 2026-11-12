@@ -162,6 +162,46 @@ describe("promptSyncWithModelSuggestionRetry", () => {
         expect(prompt).toHaveBeenCalledTimes(1);
     });
 
+    test("keeps a cleanup-unconfirmed failure even after our timer fired", async () => {
+        const cleanupError = Object.assign(new Error("historian cleanup unconfirmed"), {
+            piRetryObserved: true,
+        });
+        const prompt = mock(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            throw cleanupError;
+        });
+        const client = createClient(prompt);
+
+        await expect(
+            promptSyncWithModelSuggestionRetry(client, createArgs(), {
+                timeoutMs: 5,
+                fallbackModels: ["anthropic/claude-sonnet-4-6"],
+            }),
+        ).rejects.toBe(cleanupError);
+        expect(prompt).toHaveBeenCalledTimes(1);
+    });
+
+    test("copies ownership onto the timeout backstop instead of bypassing it", async () => {
+        const providerAbort = Object.assign(new Error("aborted"), {
+            piRetryObserved: true,
+        });
+        const prompt = mock(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            throw providerAbort;
+        });
+        const client = createClient(prompt);
+
+        const failure = promptSyncWithModelSuggestionRetry(client, createArgs(), {
+            timeoutMs: 5,
+            fallbackModels: ["anthropic/claude-sonnet-4-6"],
+        });
+        await expect(failure).rejects.toMatchObject({
+            message: "prompt timed out after 5ms",
+            piRetryObserved: true,
+        });
+        expect(prompt).toHaveBeenCalledTimes(1);
+    });
+
     test("context overflow short-circuits", async () => {
         const overflowError = new Error("prompt is too long: 50000 tokens > 32000");
         const prompt = mock(async () => {

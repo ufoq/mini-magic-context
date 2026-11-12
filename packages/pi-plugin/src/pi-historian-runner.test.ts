@@ -537,13 +537,103 @@ describe("runPiHistorian", () => {
 		}
 	});
 
-	it("retries the same model when Pi surfaces a provider 429 as model_failed", async () => {
-		// Regression: subagent-runner used to settle a terminal stopReason=error
-		// (empty text) as no_assistant with a generic "pi assistant produced
-		// empty text" error, which is NOT transient-classified — so a provider
-		// 429 quota escalation skipped same-model retries and escalated straight
-		// to the session model. With the stopReason-first classification fix,
-		// the real 429 text survives in result.error and is transient.
+	it("retries a provider ECONNRESET as transient", async () => {
+		const runner = runnerWithSteps([
+			new Error("read ECONNRESET"),
+			successXml("ECONNRESET retry recovered Pi history."),
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model", "test/model"]);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(1);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("escalates to fallback after a repair that still fails validation", async () => {
+		const runner = runnerWithSteps([
+			"not xml",
+			"still not xml",
+			successXml("Fallback recovered after repair."),
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			fallbackModels: ["fallback/model"],
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual([
+				"test/model",
+				"test/model",
+				"fallback/model",
+			]);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(1);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("reports the fallback validation failure, not the discarded primary error", async () => {
+		const runner = runnerWithSteps([
+			{
+				ok: false,
+				reason: "model_failed",
+				error: "429: primary unavailable",
+				durationMs: 1,
+				meta: { piRetryObserved: true },
+			},
+			"fallback returned conversational prose instead of compartments",
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			fallbackModels: ["fallback/model"],
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model", "fallback/model"]);
+			expect(getCompartments(db, "ses-historian")).toEqual([]);
+			const failure = getHistorianFailureState(db, "ses-historian");
+			expect(failure.failureCount).toBe(1);
+			expect(failure.lastError).toContain("no usable compartments");
+			expect(failure.lastError).not.toContain("429");
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not enter fallback after an unconfirmed repair child", async () => {
+		const runner = runnerWithSteps([
+			"not xml",
+			{
+				ok: false,
+				reason: "model_failed",
+				error: "historian cleanup unconfirmed",
+				durationMs: 1,
+				meta: { cleanupFailure: "live_child_unconfirmed" },
+			},
+			successXml("Must not be reached."),
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			fallbackModels: ["fallback/model"],
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model", "test/model"]);
+			expect(getCompartments(db, "ses-historian")).toEqual([]);
+			expect(getHistorianFailureState(db, "ses-historian").failureCount).toBe(
+				1,
+			);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not retry an account-limit 429 on the same model", async () => {
 		const runner = runnerWithSteps([
 			{
 				ok: false,
@@ -553,19 +643,87 @@ describe("runPiHistorian", () => {
 				durationMs: 2000,
 				meta: { sawProtocolOutput: true },
 			},
-			successXml("Rate-limit retry recovered Pi history."),
+			successXml("Configured fallback recovered Pi history."),
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			fallbackModels: ["fallback/model"],
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model", "fallback/model"]);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(1);
+			expect(getHistorianFailureState(db, "ses-historian").failureCount).toBe(
+				0,
+			);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not retry a timeout whose milliseconds contain a 500 token", async () => {
+		const runner = runnerWithSteps([
+			{
+				ok: false,
+				reason: "timeout",
+				error: "prompt timed out after 150000ms",
+				durationMs: 150_000,
+			},
 		]);
 		const { db } = await runHistorianWith({
 			runner,
 			retryBackoffMs: () => 0,
 		});
 		try {
-			expect(attemptedModels(runner)).toEqual(["test/model", "test/model"]);
+			expect(attemptedModels(runner)).toEqual(["test/model"]);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(0);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not advance to a fallback when the child exit is unconfirmed", async () => {
+		const runner = runnerWithSteps([
+			{
+				ok: false,
+				reason: "timeout",
+				error: "pi subagent timed out after 300000ms",
+				durationMs: 300_000,
+				meta: { cleanupFailure: "live_child_unconfirmed" },
+			},
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			fallbackModels: ["fallback/model"],
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model"]);
+			expect(getCompartments(db, "ses-historian")).toHaveLength(0);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not repeat the model Pi already retried but still tries the configured fallback once", async () => {
+		const runner = runnerWithSteps([
+			{
+				ok: false,
+				reason: "model_failed",
+				error: "provider failed after retry",
+				durationMs: 2_000,
+				meta: { piRetryObserved: true },
+			},
+			successXml("Fallback model recovered after primary retry exhaustion."),
+		]);
+		const { db } = await runHistorianWith({
+			runner,
+			fallbackModels: ["fallback/model"],
+			retryBackoffMs: () => 0,
+		});
+		try {
+			expect(attemptedModels(runner)).toEqual(["test/model", "fallback/model"]);
 			expect(getCompartments(db, "ses-historian")).toHaveLength(1);
-			// The transient path must not record a historian failure.
-			expect(getHistorianFailureState(db, "ses-historian").failureCount).toBe(
-				0,
-			);
 		} finally {
 			closeQuietly(db);
 		}

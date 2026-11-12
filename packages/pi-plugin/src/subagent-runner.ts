@@ -9,7 +9,7 @@ import {
 	join,
 	resolve as resolvePath,
 } from "node:path";
-import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import {
 	piModelRefToCanonical,
 	resolveModelRefForPi,
@@ -123,17 +123,18 @@ function resolvePiInvocation(): PiInvocation {
 }
 
 /**
- * Grace period (ms) after we detect the terminal assistant message_end
- * before we SIGTERM the Pi child. Pi's print mode often finishes the agent
- * loop and emits agent_end / a clean stopReason but doesn't actually exit
- * the process for many seconds (sometimes never on its own). Without this
- * drain, every successful run would wait the full configured timeoutMs.
- *
- * 2s gives the child enough time to flush remaining stdout buffers and
- * shut down its stdio writers cleanly on the happy path; on the (frequent)
- * unhappy path we SIGTERM and recover the assembled result we already have.
+ * Quiescence after Pi's final settlement before terminating a child that stays
+ * alive. Settlement means no further retry/compaction is pending; the short
+ * grace only lets buffered stdout drain. The old 2 s drain after an assistant
+ * message_end was unsafe: Pi can still schedule a retry or a post-stop
+ * continuation after a clean-looking stop.
  */
 const TERMINAL_DRAIN_GRACE_MS = 2_000;
+const TERMINATION_GRACE_MS = 2_000;
+const TERMINATION_KILL_WAIT_MS = 2_000;
+const TERMINATION_CONFIRM_MS = 1_000;
+const TERMINATION_BUDGET_MS =
+	TERMINATION_GRACE_MS + TERMINATION_KILL_WAIT_MS + TERMINATION_CONFIRM_MS;
 
 export const MAGIC_CONTEXT_PI_SUBAGENT_ENV = "MAGIC_CONTEXT_PI_SUBAGENT";
 
@@ -162,7 +163,14 @@ function resolveSubagentExtensionEntry(entry: string): string {
 }
 
 const PI_READ_ONLY_BUILTINS = ["read", "grep", "find", "ls"] as const;
-const PI_HISTORIAN_TOOLS = [...PI_READ_ONLY_BUILTINS, "aft_search"] as const;
+const PI_HISTORIAN_TOOLS = [
+	...PI_READ_ONLY_BUILTINS,
+	"aft_search",
+	// MCP tools are exposed under an `mcp__` namespace. Pi's named-tools
+	// allowlist does not imply `mcp__`, so without this selector ambient MCP
+	// tools remain callable in historian children.
+	"mcp__",
+] as const;
 
 /**
  * Agents that must run under a HARD tool allow-list (`pi --tools <names>`), not
@@ -343,6 +351,10 @@ export class PiSubagentRunner implements SubagentRunner {
 	}
 
 	async run(options: SubagentRunOptions): Promise<SubagentRunResult> {
+		const deadlineAt =
+			typeof options.totalTimeoutMs === "number" && options.totalTimeoutMs > 0
+				? Date.now() + options.totalTimeoutMs
+				: undefined;
 		const providerAttempt = resolveProviderModelAttempt(options.model);
 		const firstOptions = providerAttempt
 			? { ...options, model: providerAttempt.canonicalRef }
@@ -350,6 +362,7 @@ export class PiSubagentRunner implements SubagentRunner {
 		const firstRun = await this.runWithExtensionRetry(
 			firstOptions,
 			providerAttempt?.modelRef,
+			deadlineAt,
 		);
 		if (!providerAttempt) return firstRun.result;
 		if (firstRun.result.ok) {
@@ -370,18 +383,26 @@ export class PiSubagentRunner implements SubagentRunner {
 			...options,
 			model: providerAttempt.canonicalRef,
 		};
+		if (
+			deadlineAt !== undefined &&
+			deadlineAt - Date.now() <= TERMINATION_BUDGET_MS
+		) {
+			return firstRun.result;
+		}
 		const fallbackRun: ExtensionRetryResult = firstRun.extensionRetryUsed
 			? {
 					result: await this.runModelChain(
 						fallbackOptions,
 						{ disableDiscoveredExtensions: true },
 						providerAttempt.canonicalRef,
+						deadlineAt,
 					),
 					extensionRetryUsed: true,
 				}
 			: await this.runWithExtensionRetry(
 					fallbackOptions,
 					providerAttempt.canonicalRef,
+					deadlineAt,
 				);
 		if (fallbackRun.result.ok) {
 			PI_PROVIDER_FORM_CACHE.set(
@@ -395,16 +416,20 @@ export class PiSubagentRunner implements SubagentRunner {
 	private async runWithExtensionRetry(
 		options: SubagentRunOptions,
 		modelRefOverride?: string,
+		deadlineAt?: number,
 	): Promise<ExtensionRetryResult> {
 		const primaryRunMode: PiRunMode = { disableDiscoveredExtensions: false };
 		const primaryResult = await this.runModelChain(
 			options,
 			primaryRunMode,
 			modelRefOverride,
+			deadlineAt,
 		);
 		if (
 			this.spawnUsesNoExtensions(primaryRunMode) ||
-			!isIsolatedRetryTrigger(primaryResult)
+			!isIsolatedRetryTrigger(primaryResult) ||
+			(deadlineAt !== undefined &&
+				deadlineAt - Date.now() <= TERMINATION_BUDGET_MS)
 		) {
 			return { result: primaryResult, extensionRetryUsed: false };
 		}
@@ -415,6 +440,7 @@ export class PiSubagentRunner implements SubagentRunner {
 			options,
 			{ disableDiscoveredExtensions: true },
 			modelRefOverride,
+			deadlineAt,
 		);
 		if (!isolatedResult.ok && isIsolatedRetryModelUnavailable(isolatedResult)) {
 			sessionLog(sessionId, ISOLATED_RETRY_MODEL_UNAVAILABLE_MESSAGE);
@@ -430,6 +456,7 @@ export class PiSubagentRunner implements SubagentRunner {
 		options: SubagentRunOptions,
 		runMode: PiRunMode,
 		primaryModelRef?: string,
+		deadlineAt?: number,
 	): Promise<SubagentRunResult> {
 		const models = [options.model, ...(options.fallbackModels ?? [])].filter(
 			(model): model is string => typeof model === "string" && model.length > 0,
@@ -437,6 +464,20 @@ export class PiSubagentRunner implements SubagentRunner {
 		const attempts = models.length > 0 ? models : [undefined];
 		let lastResult: SubagentRunResult | null = null;
 		for (let index = 0; index < attempts.length; index += 1) {
+			if (
+				index > 0 &&
+				deadlineAt !== undefined &&
+				deadlineAt - Date.now() <= TERMINATION_BUDGET_MS
+			) {
+				return (
+					lastResult ?? {
+						ok: false,
+						reason: "timeout",
+						error: "pi subagent deadline exhausted",
+						durationMs: 0,
+					}
+				);
+			}
 			const model = attempts[index];
 			const attemptOptions = {
 				...options,
@@ -447,6 +488,7 @@ export class PiSubagentRunner implements SubagentRunner {
 				attemptOptions,
 				runMode,
 				index === 0 ? primaryModelRef : undefined,
+				deadlineAt,
 			);
 			if (result.ok) return result;
 			lastResult = result;
@@ -496,8 +538,25 @@ export class PiSubagentRunner implements SubagentRunner {
 		options: SubagentRunOptions,
 		runMode: PiRunMode,
 		modelRefOverride?: string,
+		deadlineAt?: number,
 	): Promise<SubagentRunResult> {
 		const startTime = Date.now();
+		const configuredTimeoutMs =
+			typeof options.timeoutMs === "number" && options.timeoutMs > 0
+				? options.timeoutMs
+				: 0;
+		const effectiveTimeoutMs =
+			deadlineAt === undefined
+				? configuredTimeoutMs
+				: Math.max(
+						1,
+						Math.min(
+							configuredTimeoutMs > 0
+								? configuredTimeoutMs
+								: Number.MAX_SAFE_INTEGER,
+							deadlineAt - Date.now() - TERMINATION_BUDGET_MS,
+						),
+					);
 		if (options.signal?.aborted) {
 			const result: SubagentRunResult = {
 				ok: false,
@@ -578,9 +637,16 @@ export class PiSubagentRunner implements SubagentRunner {
 			// during normal completion race" from "timeout actually decided
 			// the outcome."
 			let settled = false;
+			let exitDrainHandle: ReturnType<typeof setTimeout> | undefined;
+			const cancelExitDrain = () => {
+				if (!exitDrainHandle) return;
+				clearTimeout(exitDrainHandle);
+				exitDrainHandle = undefined;
+			};
 			const settle = (result: SubagentRunResult) => {
 				if (settled) return;
 				settled = true;
+				cancelExitDrain();
 				cleanupSystemPromptFile();
 				resolve(result);
 			};
@@ -705,11 +771,259 @@ export class PiSubagentRunner implements SubagentRunner {
 			// accumulated message_end messages.
 			let agentEndMessages: unknown[] | null = null;
 
-			// Terminal-drain state. Set when we detect the final assistant
-			// turn, used to short-circuit the full-timeout wait on Pi's
-			// often-doesn't-exit print-mode shutdown.
-			let drainTimerStarted = false;
-			let drainTimerHandle: ReturnType<typeof setTimeout> | undefined;
+			// Terminal-drain state. Completion is decided by Pi's settlement
+			// boundary, not by an assistant message_end: Pi may still schedule a
+			// retry or run a continuation after a clean-looking stop.
+			let childExited = false;
+			let finalizing = false;
+			let pendingFinalization: ((confirmed: boolean) => void) | null = null;
+			let pendingRetry = false;
+			let pendingCompaction = false;
+			let sawSettlement = false;
+			let settlementAborted = false;
+			let newerGenerationPending = false;
+			// A retry/continuation invalidates the completed candidate: it may only
+			// be returned if a later attempt completes or the continuation settles.
+			let continuationInvalidated = false;
+			let retryTerminalError: string | null = null;
+			let observedHostRetry = false;
+			let candidateCompleted = false;
+			let quiescenceHandle: ReturnType<typeof setTimeout> | undefined;
+			const terminationTimers: Array<ReturnType<typeof setTimeout>> = [];
+
+			// Track event progress so a timeout can report whether the
+			// subagent was actively producing output (model hung on a
+			// long generation) vs silent (auth/network/spawn problem).
+			let eventCount = 0;
+			let lastEventType: string | null = null;
+			let lastEventTimestamp = 0;
+			// Accumulate every assistant message we see. Pi's print mode in
+			// JSON output emits `message_end` events for both intermediate
+			// (tool-call) and terminal turns, with the final assistant
+			// message carrying stopReason="stop" and no toolCall content.
+			const accumulatedMessages: unknown[] = [];
+
+			const cancelQuiescence = () => {
+				if (!quiescenceHandle) return;
+				clearTimeout(quiescenceHandle);
+				quiescenceHandle = undefined;
+			};
+
+			const clearTerminationTimers = () => {
+				for (const handle of terminationTimers) clearTimeout(handle);
+				terminationTimers.length = 0;
+			};
+
+			const maybeArmQuiescence = () => {
+				if (settled || finalizing || childExited) return;
+				if (!sawSettlement) return;
+				if (pendingRetry || pendingCompaction || newerGenerationPending) return;
+				if (quiescenceHandle) return;
+				quiescenceHandle = setTimeout(() => {
+					quiescenceHandle = undefined;
+					finalizeWithTermination(false);
+				}, TERMINAL_DRAIN_GRACE_MS);
+			};
+
+			const outcomeAtTermination = (
+				timedOut: boolean,
+				confirmed: boolean,
+			): SubagentRunResult => {
+				const cleanupFailure = {
+					...(confirmed ? {} : { cleanupFailure: "live_child_unconfirmed" }),
+					...(observedHostRetry ? { piRetryObserved: true } : {}),
+				};
+				if (timedOut) {
+					const sinceLastEvent =
+						lastEventTimestamp > 0 ? Date.now() - lastEventTimestamp : -1;
+					const progressSuffix =
+						eventCount === 0
+							? " — no events received from child (silent hang: spawn/auth/network or model never started streaming)"
+							: ` — saw ${eventCount} events; last event type=${lastEventType ?? "?"} ${sinceLastEvent}ms before timeout (model was emitting events but no terminal stopReason reached)`;
+					return {
+						ok: false,
+						reason: "timeout",
+						error: `pi subagent timed out after ${effectiveTimeoutMs}ms${progressSuffix}${stderr.length > 0 ? ` | stderr: ${stderr.slice(0, 500)}` : ""}`,
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							eventCount,
+							lastEventType: lastEventType ?? undefined,
+							msSinceLastEvent: sinceLastEvent,
+							...cleanupFailure,
+						},
+					};
+				}
+				if (settlementAborted) {
+					return {
+						ok: false,
+						reason: "abort",
+						error: "pi agent settled aborted",
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							...cleanupFailure,
+						},
+					};
+				}
+				if (retryTerminalError) {
+					return {
+						ok: false,
+						reason: "model_failed",
+						error: retryTerminalError,
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							sawProtocolOutput: true,
+							...cleanupFailure,
+						},
+					};
+				}
+				if (continuationInvalidated) {
+					return {
+						ok: false,
+						reason: "model_failed",
+						error:
+							"pi started a retry or continuation that did not complete before the child exited",
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							sawProtocolOutput: true,
+							...cleanupFailure,
+						},
+					};
+				}
+				if (!confirmed) {
+					return {
+						ok: false,
+						reason: "model_failed",
+						error:
+							finalErrorMessage ??
+							"pi child did not exit after termination; cleanup unconfirmed",
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							sawProtocolOutput: true,
+							...cleanupFailure,
+						},
+					};
+				}
+				const trimmedAssistantText = finalAssistantText?.trim() ?? null;
+				if (candidateCompleted && trimmedAssistantText) {
+					return {
+						ok: true,
+						assistantText: trimmedAssistantText,
+						toolCallCount: countToolCalls(
+							agentEndMessages ?? accumulatedMessages,
+						),
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							...cleanupFailure,
+						},
+					};
+				}
+				if (finalStopReason === "length") {
+					return {
+						ok: false,
+						reason: "truncated",
+						error:
+							finalErrorMessage ?? 'pi assistant stopped with reason "length"',
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							sawProtocolOutput: true,
+							...cleanupFailure,
+						},
+					};
+				}
+				if (finalStopReason === "error" || finalStopReason === "aborted") {
+					return {
+						ok: false,
+						reason: "model_failed",
+						error:
+							finalErrorMessage ??
+							`pi assistant stopped with reason "${finalStopReason}"`,
+						durationMs: Date.now() - startTime,
+						meta: {
+							stderr: stderr.length > 0 ? stderr : undefined,
+							sawProtocolOutput: true,
+							...cleanupFailure,
+						},
+					};
+				}
+				return {
+					ok: false,
+					reason: "no_assistant",
+					error:
+						trimmedAssistantText === null
+							? "pi agent_end did not include an assistant message"
+							: "pi assistant produced empty text",
+					durationMs: Date.now() - startTime,
+					meta: {
+						stderr: stderr.length > 0 ? stderr : undefined,
+						sawProtocolOutput: eventCount > 0,
+						...cleanupFailure,
+					},
+				};
+			};
+
+			const finalizeWithTermination = (timedOut: boolean) => {
+				if (settled || finalizing) return;
+				finalizing = true;
+				cancelQuiescence();
+				cancelExitDrain();
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+					timeoutHandle = undefined;
+				}
+				const finish = (confirmed: boolean) => {
+					if (settled) return;
+					clearTerminationTimers();
+					child.stdout?.destroy();
+					child.stderr?.destroy();
+					settle(outcomeAtTermination(timedOut, confirmed));
+				};
+				if (
+					childExited ||
+					child.exitCode !== null ||
+					child.signalCode !== null
+				) {
+					finish(true);
+					return;
+				}
+				pendingFinalization = finish;
+				terminationTimers.push(
+					setTimeout(() => {
+						if (!childExited) child.kill("SIGTERM");
+					}, TERMINATION_GRACE_MS),
+				);
+				terminationTimers.push(
+					setTimeout(() => {
+						if (!childExited) child.kill("SIGKILL");
+					}, TERMINATION_GRACE_MS + TERMINATION_KILL_WAIT_MS),
+				);
+				terminationTimers.push(
+					setTimeout(
+						() => {
+							if (
+								childExited ||
+								child.exitCode !== null ||
+								child.signalCode !== null
+							) {
+								pendingFinalization = null;
+								finish(true);
+								return;
+							}
+							pendingFinalization = null;
+							finish(false);
+						},
+						TERMINATION_GRACE_MS +
+							TERMINATION_KILL_WAIT_MS +
+							TERMINATION_CONFIRM_MS,
+					),
+				);
+			};
 
 			// child.stdout/stderr can be null only when the corresponding stdio
 			// slot is "ignore"/"inherit"/<fd>. We always pass "pipe" for both
@@ -729,37 +1043,45 @@ export class PiSubagentRunner implements SubagentRunner {
 			// pipe (child died mid-stream) would rethrow as an unhandled exception.
 			// readline does not attach its own error listener to the input stream.
 			child.stdout.on("error", () => {});
-			const rl = createInterface({
-				input: child.stdout,
-				crlfDelay: Number.POSITIVE_INFINITY,
-			});
-
-			// Track event progress so a timeout can report whether the
-			// subagent was actively producing output (model hung on a
-			// long generation) vs silent (auth/network/spawn problem).
-			let eventCount = 0;
-			let lastEventType: string | null = null;
-			let lastEventTimestamp = 0;
-
-			// Accumulate every assistant message we see. Pi's print mode in
-			// JSON output emits `message_end` events for both intermediate
-			// (tool-call) and terminal turns, with the final assistant
-			// message carrying stopReason="stop" and no toolCall content.
-			//
-			// Why we accumulate instead of waiting for `agent_end`:
-			// Pi's print mode does NOT emit an `agent_end` event on stdout.
-			// That event exists in Pi's internal extension event channel
-			// only — the stdout JSON stream comes from `session.subscribe`,
-			// which receives only `message_start`/`message_end`/
-			// `tool_execution_*`/`compaction_*`/`session_info_changed`/
-			// `thinking_level_changed`/`queue_update`/`auto_retry_end`.
-			//
-			// We detect run completion the same way Pi itself does: watch
-			// `message_end` for the final assistant turn (stopReason="stop"
-			// + no toolCall content), then drain until natural child exit.
-			const accumulatedMessages: unknown[] = [];
-
-			rl.on("line", (line) => {
+			const decoder = new StringDecoder("utf8");
+			let lineBuffer = "";
+			const handleLine = (line: string) => {
+				if (settled) return;
+				if (finalizing) {
+					// The finalizer owns shutdown, but cancellation and a newly
+					// started generation still make the provisional answer stale.
+					const late = parsePiEventLine(line);
+					if (late.ok) {
+						const event = late.event as {
+							type?: unknown;
+							aborted?: unknown;
+							willRetry?: unknown;
+						};
+						const type = event.type;
+						if (type === "agent_settled" && event.aborted === true) {
+							settlementAborted = true;
+						} else if (
+							type === "agent_start" ||
+							type === "turn_start" ||
+							type === "auto_retry_start" ||
+							(type === "agent_end" && event.willRetry === true)
+						) {
+							continuationInvalidated = true;
+						}
+					}
+					return;
+				}
+				// Accumulate every assistant message we see. Pi's print mode in
+				// JSON output emits `message_end` events for both intermediate
+				// (tool-call) and terminal turns, with the final assistant
+				// message carrying stopReason="stop" and no toolCall content.
+				//
+				// Why we accumulate instead of waiting for `agent_end`:
+				// modern Pi does emit `agent_end` (with messages and willRetry)
+				// on stdout, but older print-mode streams may only emit
+				// `message_end`. Watch both: `message_end` carries the terminal
+				// assistant turn, while `agent_end`/`agent_settled` decide
+				// whether a retry or a continuation is still pending.
 				if (line.length === 0) return;
 				const parsed = parsePiEventLine(line);
 				if (!parsed.ok) {
@@ -807,9 +1129,9 @@ export class PiSubagentRunner implements SubagentRunner {
 					ms: elapsedMs,
 				});
 
-				// Backwards-compat: if Pi (or any pi-compatible runner) ever
-				// does emit `agent_end` with the full messages array, treat
-				// it as authoritative. Older Pi versions may have done this.
+				// Legacy Pi builds emitted agent_end with the full message array.
+				// Treat its candidate as authoritative, but never settle on it: a
+				// retry may still follow.
 				if (e.type === "agent_end" && Array.isArray(e.messages)) {
 					sawAgentEnd = true;
 					agentEndMessages = e.messages;
@@ -817,6 +1139,20 @@ export class PiSubagentRunner implements SubagentRunner {
 					finalAssistantText = result.text;
 					finalStopReason = result.stopReason;
 					finalErrorMessage = result.errorMessage;
+					candidateCompleted =
+						(result.stopReason === "stop" || result.stopReason === null) &&
+						(result.text?.trim().length ?? 0) > 0;
+					if (candidateCompleted) retryTerminalError = null;
+					if ((e as { willRetry?: unknown }).willRetry === true) {
+						observedHostRetry = true;
+						pendingRetry = true;
+						if (candidateCompleted) continuationInvalidated = true;
+						cancelQuiescence();
+					} else {
+						newerGenerationPending = false;
+						pendingRetry = false;
+						continuationInvalidated = false;
+					}
 					emitProgress({
 						type: "terminal",
 						stopReason: result.stopReason ?? undefined,
@@ -827,14 +1163,85 @@ export class PiSubagentRunner implements SubagentRunner {
 					return;
 				}
 
+				// A new generation means the previous completed candidate is only a
+				// fallback until this one finishes or fails.
+				if (
+					e.type === "agent_start" ||
+					e.type === "turn_start" ||
+					(e.type === "message_start" &&
+						typeof (e.message as { role?: unknown } | undefined)?.role ===
+							"string" &&
+						(e.message as { role: string }).role === "assistant")
+				) {
+					newerGenerationPending = true;
+					if (candidateCompleted) continuationInvalidated = true;
+					cancelQuiescence();
+				}
+
+				if (e.type === "auto_retry_start") {
+					observedHostRetry = true;
+					pendingRetry = true;
+					newerGenerationPending = true;
+					if (candidateCompleted) continuationInvalidated = true;
+					cancelQuiescence();
+					return;
+				}
+
+				if (e.type === "auto_retry_end") {
+					pendingRetry = false;
+					// An overflow compaction retry ends through the same retry
+					// cycle; no compaction is still pending once it settles.
+					pendingCompaction = false;
+					if ((e as { success?: unknown }).success === false) {
+						const finalError = (e as { finalError?: unknown }).finalError;
+						if (typeof finalError === "string" && finalError.length > 0) {
+							retryTerminalError = finalError;
+							newerGenerationPending = false;
+						}
+					}
+					maybeArmQuiescence();
+					return;
+				}
+
+				if (e.type === "compaction_start") {
+					pendingCompaction = true;
+					cancelQuiescence();
+					return;
+				}
+
+				if (e.type === "compaction_end") {
+					if ((e as { willRetry?: unknown }).willRetry === true) {
+						pendingCompaction = true;
+						pendingRetry = true;
+						// A retrying compaction guarantees another generation, so
+						// the pre-compaction answer is no longer a valid completion.
+						if (candidateCompleted) continuationInvalidated = true;
+						cancelQuiescence();
+						return;
+					}
+					pendingCompaction = false;
+					maybeArmQuiescence();
+					return;
+				}
+
+				if (e.type === "agent_settled") {
+					sawSettlement = true;
+					settlementAborted = (e as { aborted?: unknown }).aborted === true;
+					// Settlement is the end of the run: no retry or generation may
+					// follow it, including an aborted settlement.
+					pendingRetry = false;
+					// Overflow compaction retries continue the turn directly, so
+					// no second compaction_end follows; settlement ends that latch.
+					pendingCompaction = false;
+					newerGenerationPending = false;
+					maybeArmQuiescence();
+					return;
+				}
+
 				// Live path: accumulate every assistant/tool message Pi
-				// emits via session.subscribe. The terminal assistant turn
-				// is detected by Pi's stopReason vocabulary
-				// ("stop" | "length" | "toolUse" | "error" | "aborted")
-				// being a non-toolUse value AND no toolCall content in the
-				// assistant message body. "length" means the model hit its
-				// max-tokens cap mid-response — still terminal, but we
-				// surface it as model_failed so callers can react.
+				// emits via session.subscribe. A completed assistant turn is a
+				// candidate, not completion: retries, compaction and settlement
+				// still decide the outcome.
 				if (e.type === "message_end" && e.message) {
 					accumulatedMessages.push(e.message);
 					const m = e.message as {
@@ -859,11 +1266,17 @@ export class PiSubagentRunner implements SubagentRunner {
 								m.stopReason === "error" ||
 								m.stopReason === "aborted");
 						if (isTerminalStopReason && !hasToolCall) {
-							sawAgentEnd = true;
 							const result = extractFinalAssistant(accumulatedMessages);
 							finalAssistantText = result.text;
 							finalStopReason = result.stopReason;
 							finalErrorMessage = result.errorMessage;
+							candidateCompleted =
+								m.stopReason === "stop" &&
+								(result.text?.trim().length ?? 0) > 0;
+							continuationInvalidated = false;
+							newerGenerationPending = false;
+							pendingRetry = false;
+							if (candidateCompleted) retryTerminalError = null;
 							emitProgress({
 								type: "terminal",
 								stopReason: m.stopReason,
@@ -874,73 +1287,57 @@ export class PiSubagentRunner implements SubagentRunner {
 						}
 					}
 				}
+			};
 
-				// Pi's print mode finishes the agent loop but does NOT always
-				// exit the child process cleanly afterwards — observed
-				// pattern: assistant message_end with stopReason="stop"
-				// arrives at ~30s, then the child sits idle until killed.
-				// This isn't unique to one provider; it appears to be a
-				// generic Pi print-mode shutdown gap.
-				//
-				// To avoid waiting on the full timeoutMs (typically 5+
-				// minutes) every time, start a short drain timer the moment
-				// we detect a terminal assistant turn. Give the child 2s
-				// grace to flush + exit naturally; if it's still alive,
-				// SIGTERM it. This matches the upstream pi-subagents
-				// drain-after-stop pattern.
-				if (sawAgentEnd && !drainTimerStarted) {
-					drainTimerStarted = true;
-					if (timeoutHandle) {
-						clearTimeout(timeoutHandle);
-						timeoutHandle = undefined;
-					}
-					drainTimerHandle = setTimeout(() => {
-						if (settled) return;
-						terminateChild(child);
-					}, TERMINAL_DRAIN_GRACE_MS);
-					if (typeof drainTimerHandle.unref === "function") {
-						drainTimerHandle.unref();
-					}
+			// Pi's print mode is newline-delimited JSON and splits records on LF
+			// only. `readline` also treats U+2028/U+2029 as line boundaries and
+			// would split valid JSON strings containing them; decode UTF-8 across
+			// chunk boundaries and split on LF ourselves.
+			child.stdout.on("data", (chunk: Buffer) => {
+				lineBuffer += decoder.write(chunk);
+				let newlineIndex = lineBuffer.indexOf("\n");
+				while (newlineIndex >= 0) {
+					let line = lineBuffer.slice(0, newlineIndex);
+					lineBuffer = lineBuffer.slice(newlineIndex + 1);
+					if (line.endsWith("\r")) line = line.slice(0, -1);
+					handleLine(line);
+					newlineIndex = lineBuffer.indexOf("\n");
+				}
+			});
+			child.stdout.on("end", () => {
+				lineBuffer += decoder.end();
+				if (lineBuffer.length > 0) {
+					let line = lineBuffer;
+					lineBuffer = "";
+					if (line.endsWith("\r")) line = line.slice(0, -1);
+					handleLine(line);
 				}
 			});
 
-			// Hard timeout. We use SIGTERM first so the child can flush
-			// stdout cleanly, with SIGKILL as a backstop in case it hangs.
+			// Work deadline. Timeout keeps its identity and uses the bounded
+			// termination path; a settled answer is never returned as success.
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-			if (typeof options.timeoutMs === "number" && options.timeoutMs > 0) {
+			if (effectiveTimeoutMs > 0) {
 				timeoutHandle = setTimeout(() => {
-					if (settled) return;
-					terminateChild(child);
-					// Build a diagnostic suffix so callers can tell whether
-					// the subagent was hung silent (auth/network/no events)
-					// vs actively producing output but slow (model just
-					// taking too long). Without this, every timeout looks
-					// the same and operators can't distinguish them.
-					const sinceLastEvent =
-						lastEventTimestamp > 0 ? Date.now() - lastEventTimestamp : -1;
-					const progressSuffix =
-						eventCount === 0
-							? " — no events received from child (silent hang: spawn/auth/network or model never started streaming)"
-							: ` — saw ${eventCount} events; last event type=${lastEventType ?? "?"} ${sinceLastEvent}ms before timeout (model was emitting events but no terminal stopReason reached)`;
-					settle({
-						ok: false,
-						reason: "timeout",
-						error: `pi subagent timed out after ${options.timeoutMs}ms${progressSuffix}${stderr.length > 0 ? ` | stderr: ${stderr.slice(0, 500)}` : ""}`,
-						durationMs: Date.now() - startTime,
-						meta: {
-							stderr: stderr.length > 0 ? stderr : undefined,
-							eventCount,
-							lastEventType: lastEventType ?? undefined,
-							msSinceLastEvent: sinceLastEvent,
-						},
-					});
-				}, options.timeoutMs);
+					finalizeWithTermination(true);
+				}, effectiveTimeoutMs);
 			}
 
-			// Caller-driven abort (e.g. dreamer lease loss).
+			// Caller-driven abort (e.g. dreamer lease loss): cancellation is
+			// immediate and never waits for output or cleanup confirmation.
 			const onAbort = () => {
 				if (settled) return;
+				finalizing = true;
+				cancelQuiescence();
+				clearTerminationTimers();
+				pendingFinalization = null;
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+					timeoutHandle = undefined;
+				}
 				terminateChild(child);
+				child.stdout?.destroy();
+				child.stderr?.destroy();
 				settle({
 					ok: false,
 					reason: "abort",
@@ -951,9 +1348,14 @@ export class PiSubagentRunner implements SubagentRunner {
 			options.signal?.addEventListener("abort", onAbort, { once: true });
 
 			child.on("error", (error) => {
+				if (settled) return;
+				// Once shutdown has begun, a kill/stream error is cleanup noise,
+				// not a spawn failure: let exit confirmation decide the outcome.
+				if (finalizing) return;
 				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (drainTimerHandle) clearTimeout(drainTimerHandle);
+				cancelQuiescence();
 				options.signal?.removeEventListener("abort", onAbort);
+				childExited = true;
 				settle({
 					ok: false,
 					reason: "spawn_failed",
@@ -962,109 +1364,46 @@ export class PiSubagentRunner implements SubagentRunner {
 				});
 			});
 
+			child.on("exit", () => {
+				childExited = true;
+				// A descendant can inherit stdout/stderr and keep the pipe open
+				// after the direct child is gone. Drain briefly, then detach and
+				// settle instead of waiting for a close event that may never come.
+				if (settled || finalizing || exitDrainHandle) return;
+				exitDrainHandle = setTimeout(() => {
+					exitDrainHandle = undefined;
+					if (settled || finalizing) return;
+					finalizeWithTermination(false);
+				}, TERMINAL_DRAIN_GRACE_MS);
+			});
+
 			child.on("close", (code, signal) => {
 				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (drainTimerHandle) clearTimeout(drainTimerHandle);
+				cancelQuiescence();
+				cancelExitDrain();
 				options.signal?.removeEventListener("abort", onAbort);
+				childExited = true;
 				emitProgress({
 					type: "child_exit",
 					code,
 					signal,
 					ms: Date.now() - startTime,
 				});
+				if (pendingFinalization) {
+					const finish = pendingFinalization;
+					pendingFinalization = null;
+					finish(true);
+					return;
+				}
 				if (settled) return;
 
-				// Common case: terminal assistant message_end was observed.
-				// Pi print-mode often needs our drain SIGTERM after producing
-				// the final turn, so the captured stopReason/text is the source
-				// of truth; a signaled close here must not turn a valid answer
-				// into a fake subprocess failure.
-				if (sawAgentEnd) {
-					// Classify by stopReason FIRST. A provider failure (e.g. HTTP
-					// 429 quota) arrives as stopReason="error" with empty text; if
-					// the empty-text check ran first, this settled as no_assistant
-					// with a misleading "pi assistant produced empty text" error —
-					// defeating transient-retry classification and hiding the real
-					// cause from failure alerts.
-					if (
-						finalStopReason === "error" ||
-						finalStopReason === "aborted" ||
-						finalStopReason === "length"
-					) {
-						settle({
-							ok: false,
-							reason:
-								finalStopReason === "length" ? "truncated" : "model_failed",
-							error:
-								finalErrorMessage ??
-								`pi assistant stopped with reason "${finalStopReason}"`,
-							durationMs: Date.now() - startTime,
-							meta: {
-								stderr: stderr.length > 0 ? stderr : undefined,
-								sawProtocolOutput: true,
-							},
-						});
-						return;
-					}
-					const trimmedAssistantText = finalAssistantText?.trim() ?? null;
-					if (
-						trimmedAssistantText === null ||
-						trimmedAssistantText.length === 0
-					) {
-						settle({
-							ok: false,
-							reason: "no_assistant",
-							error:
-								trimmedAssistantText === null
-									? "pi agent_end did not include an assistant message"
-									: "pi assistant produced empty text",
-							durationMs: Date.now() - startTime,
-							// Pi machinery worked (agent_end / terminal message_end seen);
-							// the model just returned empty text. Mark protocol output as
-							// present so this legitimate empty response is NOT mistaken for
-							// the #238 silent failure and does not fire the isolated retry.
-							meta: {
-								stderr: stderr.length > 0 ? stderr : undefined,
-								sawProtocolOutput: true,
-							},
-						});
-						return;
-					}
-					if (
-						finalStopReason === "error" ||
-						finalStopReason === "aborted" ||
-						finalStopReason === "length"
-					) {
-						settle({
-							ok: false,
-							reason:
-								finalStopReason === "length" ? "truncated" : "model_failed",
-							error:
-								finalErrorMessage ??
-								`pi assistant stopped with reason "${finalStopReason}"`,
-							durationMs: Date.now() - startTime,
-							meta: { stderr: stderr.length > 0 ? stderr : undefined },
-						});
-						return;
-					}
-					settle({
-						ok: true,
-						assistantText: trimmedAssistantText,
-						// Prefer agent_end's authoritative full array; else the
-						// accumulated message_end stream. Counting toolCall content
-						// parts is event-name-independent (see countToolCalls).
-						toolCallCount: countToolCalls(
-							agentEndMessages ?? accumulatedMessages,
-						),
-						durationMs: Date.now() - startTime,
-						meta: { stderr: stderr.length > 0 ? stderr : undefined },
-					});
+				// A completed candidate survives a signaled close: Pi print mode
+				// often needs our SIGTERM after the final turn.
+				if (candidateCompleted || retryTerminalError) {
+					settle(outcomeAtTermination(false, true));
 					return;
 				}
 
-				// No agent_end. Either Pi crashed before completing the
-				// turn, or stdout was malformed. Distinguish based on
-				// exit code and parseError.
 				if (parseError !== null) {
 					settle({
 						ok: false,
@@ -1077,6 +1416,17 @@ export class PiSubagentRunner implements SubagentRunner {
 							signal,
 						},
 					});
+					return;
+				}
+
+				if (
+					finalStopReason === "error" ||
+					finalStopReason === "aborted" ||
+					finalStopReason === "length" ||
+					finalStopReason === "stop" ||
+					sawAgentEnd
+				) {
+					settle(outcomeAtTermination(false, true));
 					return;
 				}
 
@@ -1104,10 +1454,6 @@ export class PiSubagentRunner implements SubagentRunner {
 						stderr: stderr.length > 0 ? stderr : undefined,
 						exitCode: code,
 						signal,
-						// #238: distinguish the silent failure (zero JSON stdout lines,
-						// no agent_end) from a partial run that emitted some events but
-						// never completed a turn. Only the zero-output case fires the
-						// isolated retry; eventCount counts parsed protocol lines.
 						sawProtocolOutput: eventCount > 0,
 					},
 				});

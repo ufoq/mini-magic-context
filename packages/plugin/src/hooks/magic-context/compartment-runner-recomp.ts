@@ -24,7 +24,10 @@ import type { Database } from "../../shared/sqlite";
 import { updateCompactionMarkerAfterPublication } from "./compaction-marker-manager";
 import { buildCompartmentAgentPrompt } from "./compartment-prompt";
 import { queueDropsForCompartmentalizedMessages } from "./compartment-runner-drop-queue";
-import { runValidatedHistorianPass } from "./compartment-runner-historian";
+import {
+    classifyHistorianFailureMessage,
+    runValidatedHistorianPass,
+} from "./compartment-runner-historian";
 import { cleanupHistorianStateFile } from "./compartment-runner-incremental";
 import type { CandidateCompartment, CompartmentRunnerDeps } from "./compartment-runner-types";
 import {
@@ -395,6 +398,18 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
                 },
             });
             if (!validatedPass.ok) {
+                const failureClass = classifyHistorianFailureMessage(validatedPass.error);
+                if (failureClass !== null) {
+                    if (failureClass === "timeout") {
+                        const partial = await promoteAndFinalize(
+                            `historian timed out after messages ${chunk.startIndex}-${chunk.endIndex}: ${validatedPass.error}`,
+                        );
+                        if (partial) {
+                            return `## Magic Recomp — Partial\n\n${partial}`;
+                        }
+                    }
+                    return `## Magic Recomp — Failed\n\nRecomp stopped at messages ${chunk.startIndex}-${chunk.endIndex}: ${validatedPass.error}\n\nNothing was written.`;
+                }
                 const reducedBudget = getReducedRecompTokenBudget(currentTokenBudget);
                 if (reducedBudget !== null) {
                     const smallerChunk = readSessionChunk(

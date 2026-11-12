@@ -65,6 +65,13 @@ export interface SubagentRunOptions {
     model?: string | undefined;
     fallbackModels?: readonly string[];
     timeoutMs?: number | undefined;
+    /**
+     * Whole-invocation cap used by adapters that race a shorter outer deadline
+     * (for example the recomp prompt wrapper). Internal recovery attempts share
+     * this budget instead of restarting it. Pi-native calls leave it unset and
+     * keep per-fallback budgets.
+     */
+    totalTimeoutMs?: number | undefined;
     cwd?: string | undefined;
     signal?: AbortSignal | undefined;
     /**

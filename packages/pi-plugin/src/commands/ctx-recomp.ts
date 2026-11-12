@@ -179,7 +179,6 @@ export function registerCtxRecompCommand(
 									currentDeps.language,
 									{ preserveUserQuotes: true },
 								),
-								fallbackModels: currentDeps.historianFallbacks,
 								timeoutMs: currentDeps.historianTimeoutMs,
 								thinkingLevel: currentDeps.historianThinkingLevel,
 								directory: ctx.cwd,

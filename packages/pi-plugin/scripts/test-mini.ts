@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "bd335d4a49fcf98ac02dcd753a9115fcbed1df5999e0e7371cb9ac4fe0669d93";
+const KNOWN_TEST_INVENTORY_DIGEST = "5231ff7d3ccfa74396eb11fb6989d023767cbed210ca3b28751b6b44f525bee2";
 const NON_MINI_TESTS = new Set([] as const);
 // `*.test.ts` matches at every depth (git pathspec `*` crosses `/`), so this
 // covers root-level src tests as well as nested ones. Using `src/**/*.test.ts`

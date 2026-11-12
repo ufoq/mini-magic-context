@@ -818,7 +818,7 @@ export interface PiHistorianOptions {
 	fallbackModels?: readonly string[];
 	/** Historian context window — used to derive chunk token budget. */
 	historianChunkTokens: number;
-	/** Optional per-call timeout (default 120s). */
+	/** Optional per-call timeout (default 300s; DEFAULT_HISTORIAN_TIMEOUT_MS). */
 	timeoutMs?: number;
 	/** When true, run a second editor pass after a successful first pass to
 	 *  clean low-signal U: lines and cross-compartment duplicates. Mirrors
@@ -1721,7 +1721,6 @@ export function registerPiContextHandler(
 				!firstContextPassSeenBySession.has(sessionId);
 			firstContextPassSeenBySession.add(sessionId);
 			const piUsage = ctx.getContextUsage?.();
-			const tModelDetect = performance.now();
 			// Seed the in-memory model key from the JSONL on the first pass after a
 			// (re)start. liveModelBySession is volatile, so without this a model
 			// switch that happened while the process was DOWN would go undetected

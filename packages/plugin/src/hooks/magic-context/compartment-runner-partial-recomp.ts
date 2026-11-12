@@ -24,7 +24,10 @@ import { getErrorMessage } from "../../shared/error-message";
 import { log } from "../../shared/logger";
 import { updateCompactionMarkerAfterPublication } from "./compaction-marker-manager";
 import { buildCompartmentAgentPrompt } from "./compartment-prompt";
-import { runValidatedHistorianPass } from "./compartment-runner-historian";
+import {
+    classifyHistorianFailureMessage,
+    runValidatedHistorianPass,
+} from "./compartment-runner-historian";
 import { promoteRecompStagingWithM0Mutation } from "./compartment-runner-recomp";
 import type { CandidateCompartment, CompartmentRunnerDeps } from "./compartment-runner-types";
 import {
@@ -430,6 +433,9 @@ export async function executePartialRecompInternal(
                 },
             });
             if (!validatedPass.ok) {
+                if (classifyHistorianFailureMessage(validatedPass.error) !== null) {
+                    return `## Magic Recomp — Failed\n\nPartial recomp stopped at messages ${chunk.startIndex}-${chunk.endIndex}: ${validatedPass.error}\n\nOriginal state preserved (staging kept for retry).`;
+                }
                 const reducedBudget = getReducedRecompTokenBudget(currentTokenBudget);
                 if (reducedBudget !== null) {
                     const smallerChunk = readSessionChunk(

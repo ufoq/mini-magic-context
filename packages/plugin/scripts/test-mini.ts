@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 
-const KNOWN_TEST_INVENTORY_DIGEST = "b5029eea5a63b27f4d363c68f21e093d93c869cf7eb198b2029ecc889a77bead";
+const KNOWN_TEST_INVENTORY_DIGEST = "a0e2cd7f24b0edd26431532b7287a5e741b2a862eaffc2cf52b0f9f302b69998";
 
 const NON_MINI_TESTS: ReadonlySet<string> = new Set([] as const);
 

@@ -108,7 +108,7 @@ describe("pi subagent behavior", () => {
         );
         expect(historianOptions.env).not.toBe(process.env);
         expect(historianArgs).toContain("--no-session");
-        expect(historianArgs).toEqual(expect.arrayContaining(["--tools", "read,grep,find,ls,aft_search"]));
+        expect(historianArgs).toEqual(expect.arrayContaining(["--tools", "read,grep,find,ls,aft_search,mcp__"]));
         expect(historianArgs).not.toContain("--no-tools");
 
         const unknownRun = runner.run({

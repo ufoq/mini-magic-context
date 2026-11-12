@@ -216,7 +216,7 @@ describe("subagent-runner pure helpers", () => {
 			"--no-prompt-templates",
 			"--no-context-files",
 			"--tools",
-			"read,grep,find,ls,aft_search",
+			"read,grep,find,ls,aft_search,mcp__",
 			"--system-prompt",
 			TEST_SYSTEM_PROMPT_PATH,
 			"--model",
@@ -382,7 +382,10 @@ describe("subagent-runner pure helpers", () => {
 		]) {
 			const args = buildArgsForTest({ ...baseOptions, agent });
 			expect(args).toEqual(
-				expect.arrayContaining(["--tools", "read,grep,find,ls,aft_search"]),
+				expect.arrayContaining([
+					"--tools",
+					"read,grep,find,ls,aft_search,mcp__",
+				]),
 			);
 			expect(args).not.toContain("--no-tools");
 		}
@@ -1804,7 +1807,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			"--no-prompt-templates",
 			"--no-context-files",
 			"--tools",
-			"read,grep,find,ls,aft_search",
+			"read,grep,find,ls,aft_search,mcp__",
 			"--system-prompt",
 			expect.stringMatching(/system-prompt\.txt$/),
 			"--model",
@@ -1982,6 +1985,47 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		expect(spawnImpl).toHaveBeenCalledTimes(2);
 	});
 
+	it("does not return a pre-compaction answer when the child exits during retry", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 9_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "stale" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "compaction_end", willRetry: true });
+		child.emitExit(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toContain("retry or continuation");
+	}, 15_000);
+
+	it("settles a completed child whose descendant keeps stdout open", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 9_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.emitExit(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.assistantText).toBe("answer");
+	}, 15_000);
+
 	it("returns timeout and terminates a child that never closes", async () => {
 		const child = createMockChild();
 		const { runner } = runnerWith(child);
@@ -1992,10 +2036,11 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		if (!result.ok) {
 			expect(result.reason).toBe("timeout");
 			expect(result.error).toContain("20ms");
+			expect(result.meta?.cleanupFailure).toBe("live_child_unconfirmed");
 		}
 		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-		expect(child.killSignals).toEqual(["SIGTERM"]);
-	});
+		expect(child.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+	}, 10_000);
 
 	it("returns abort without spawning when caller signal is already aborted", async () => {
 		const child = createMockChild();
@@ -2056,5 +2101,446 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		await new Promise((resolve) => setTimeout(resolve, 2100));
 
 		expect(child.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+	});
+
+	it("frames a UTF-8 code point split across stdout chunks", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+		const text = "split 😀 marker \u2028 tail";
+		const record = Buffer.from(
+			`${JSON.stringify({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text }],
+					stopReason: "stop",
+				},
+			})}\n`,
+		);
+		const emoji = Buffer.from("😀");
+		const splitAt = record.indexOf(emoji) + 2;
+
+		const resultPromise = runner.run(baseOptions);
+		child.stdout?.write(record.subarray(0, splitAt));
+		child.stdout?.write(record.subarray(splitAt));
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.assistantText).toBe(text);
+	});
+
+	it("parses a final JSON record without a trailing newline", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+		const record = JSON.stringify({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "unterminated record" }],
+				stopReason: "stop",
+			},
+		});
+
+		const resultPromise = runner.run(baseOptions);
+		child.stdout?.write(record);
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.assistantText).toBe("unterminated record");
+	});
+
+	it("preserves U+2028 and U+2029 inside JSON string values", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+		const text = "line one\u2028line two\u2029line three";
+
+		const resultPromise = runner.run(baseOptions);
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({
+			type: "agent_settled",
+			aborted: false,
+		});
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.assistantText).toBe(text);
+	});
+
+	it("does not settle a clean message_end before Pi's settlement boundary", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+		let settled = false;
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		void resultPromise.then(() => {
+			settled = true;
+		});
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "first answer" }],
+				stopReason: "stop",
+			},
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 2200));
+		expect(settled).toBe(false);
+
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		child.emitClose(0);
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.assistantText).toBe("first answer");
+	}, 10_000);
+
+	it("uses a retry continuation that lands after the old 2s drain", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "provisional" }],
+				stopReason: "stop",
+			},
+		});
+		await new Promise((resolve) => setTimeout(resolve, 2200));
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "corrected" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.assistantText).toBe("corrected");
+			expect(result.meta?.piRetryObserved).toBeUndefined();
+		}
+	}, 10_000);
+
+	it("never reports success when a completed child cannot be confirmed dead", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.meta?.cleanupFailure).toBe("live_child_unconfirmed");
+		}
+	}, 15_000);
+
+	it("does not return a provisional answer when the child exits during a scheduled retry", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "provisional" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({
+			type: "auto_retry_start",
+			attempt: 1,
+			delayMs: 3_000,
+		});
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.error).toContain("retry or continuation");
+		}
+	});
+
+	it("does not return a provisional answer when agent_end schedules a retry", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "agent_end",
+			willRetry: true,
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "provisional" }],
+					stopReason: "stop",
+				},
+			],
+		});
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.error).toContain("retry or continuation");
+		}
+	});
+
+	it("returns model_failed when a retry is cancelled after a provisional answer", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "stale" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "auto_retry_start", attempt: 1 });
+		child.writeStdoutLine({
+			type: "auto_retry_end",
+			success: false,
+			finalError: "Retry cancelled",
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.error).toContain("Retry cancelled");
+			expect(result.meta?.piRetryObserved).toBe(true);
+		}
+	});
+
+	it("arms settlement cleanup after a terminal error turn", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 9_000 });
+		child.writeStdoutLine({
+			type: "message_start",
+			message: { role: "assistant" },
+		});
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				stopReason: "error",
+				errorMessage: "401 invalid request",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.error).toContain("401");
+		}
+	}, 15_000);
+
+	it("re-arms quiescence after a successful compaction retry", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 9_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "compaction_start" });
+		child.writeStdoutLine({ type: "compaction_end", willRetry: true });
+		// Real Pi continues the turn directly after overflow compaction; there
+		// is no auto-retry pair and no second compaction_end.
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.meta?.cleanupFailure).toBe("live_child_unconfirmed");
+		}
+	}, 15_000);
+
+	it("does not turn a shutdown error into a spawn failure", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 9_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		await new Promise((resolve) => setTimeout(resolve, 2_500));
+		child.emitError(new Error("kill EPERM"));
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toBe("model_failed");
+			expect(result.meta?.cleanupFailure).toBe("live_child_unconfirmed");
+		}
+	}, 15_000);
+
+	it("latches a settlement abort that arrives during completion finalization", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "provisional answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		await new Promise((resolve) => setTimeout(resolve, 2_500));
+		child.writeStdoutLine({ type: "agent_settled", aborted: true });
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toBe("abort");
+	}, 15_000);
+
+	it("honours caller cancellation during completion finalization", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+		const controller = new AbortController();
+
+		const resultPromise = runner.run({
+			...baseOptions,
+			timeoutMs: 30_000,
+			signal: controller.signal,
+		});
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "committed answer" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		await new Promise((resolve) => setTimeout(resolve, 2_500));
+		controller.abort();
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toBe("abort");
+	}, 15_000);
+
+	it("honours explicit settlement cancellation over a completed answer", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "do not publish" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: true });
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toBe("abort");
+	});
+
+	it("does not start a fallback attempt after the whole-invocation deadline", async () => {
+		const child = createMockChild();
+		const { runner, spawnImpl } = runnerWith(child);
+
+		const result = await runner.run({
+			...baseOptions,
+			model: "primary/model",
+			fallbackModels: ["fallback/model"],
+			timeoutMs: 30_000,
+			totalTimeoutMs: 6_000,
+		});
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toBe("timeout");
+		expect(spawnImpl).toHaveBeenCalledTimes(1);
+	}, 15_000);
+
+	it("waits for a pending compaction before terminating a settled run", async () => {
+		const child = createMockChild();
+		const { runner } = runnerWith(child);
+
+		const resultPromise = runner.run({ ...baseOptions, timeoutMs: 30_000 });
+		child.writeStdoutLine({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "before compaction" }],
+				stopReason: "stop",
+			},
+		});
+		child.writeStdoutLine({ type: "agent_settled", aborted: false });
+		child.writeStdoutLine({ type: "compaction_start" });
+		child.writeStdoutLine({ type: "compaction_end", willRetry: false });
+		child.emitClose(0);
+
+		const result = await resultPromise;
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.assistantText).toBe("before compaction");
 	});
 });

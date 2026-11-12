@@ -171,6 +171,8 @@ export interface HistorianRunResult {
     result?: string;
     error?: string;
     dumpPath?: string;
+    /** Raw failure for terminal classification (cleanup/ownership metadata). */
+    cause?: unknown;
 }
 
 export type ValidatedHistorianPassResult =

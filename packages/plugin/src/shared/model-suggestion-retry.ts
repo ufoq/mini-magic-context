@@ -198,12 +198,32 @@ async function promptWithTimeout(
             await abortChildRun(client, args.path.id);
             throw new Error("prompt aborted by external signal");
         }
+        // Terminal outcomes from the runner must keep their identity even if our
+        // own timer fired while cleanup was being reported. Otherwise a live
+        // child becomes a generic timeout and callers may retry or publish.
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+            message === "historian cleanup unconfirmed" ||
+            /^prompt timed out after \d+ms$/.test(message)
+        ) {
+            await abortChildRun(client, args.path.id);
+            throw error;
+        }
         if (controller.signal.aborted) {
             // Our timeout fired. Same problem: abort the server-side run loop, not
             // just our fetch, or the child keeps re-calling the LLM past the
             // timeout (uncancellable by the user's ESC — issue #154).
             await abortChildRun(client, args.path.id);
-            throw new Error(`prompt timed out after ${timeoutMs}ms`);
+            const timeoutError = new Error(`prompt timed out after ${timeoutMs}ms`);
+            if (typeof error === "object" && error !== null) {
+                for (const key of Object.keys(error)) {
+                    if (key === "message" || key === "stack" || key === "name") continue;
+                    Object.assign(timeoutError, {
+                        [key]: (error as Record<string, unknown>)[key],
+                    });
+                }
+            }
+            throw timeoutError;
         }
         throw error;
     } finally {
@@ -258,6 +278,7 @@ function isNonRetryable(error: unknown, externalSignal?: AbortSignal): boolean {
         // promptWithTimeout wraps both abort cases in plain `Error` with a
         // recognizable message.
         if (error.message === "prompt aborted by external signal") return true;
+        if (error.message === "historian cleanup unconfirmed") return true;
         if (/^prompt timed out after \d+ms$/.test(error.message)) return true;
     }
 

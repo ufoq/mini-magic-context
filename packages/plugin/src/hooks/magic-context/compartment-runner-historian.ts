@@ -79,6 +79,9 @@ export async function runValidatedHistorianPass(args: {
         agentId: args.agentId,
     });
     if (!firstRun.ok || !firstRun.result) {
+        if (isTerminalHistorianRun(firstRun)) {
+            return { ok: false, error: firstRun.error ?? "historian run failed" };
+        }
         return runFallbackHistorianPass({
             ...args,
             prompt: args.prompt,
@@ -121,6 +124,9 @@ export async function runValidatedHistorianPass(args: {
         agentId: args.agentId,
     });
     if (!repairRun.ok || !repairRun.result) {
+        if (isTerminalHistorianRun(repairRun)) {
+            return { ok: false, error: repairRun.error ?? "historian repair run failed" };
+        }
         return runFallbackHistorianPass({
             ...args,
             prompt: repairPrompt,
@@ -207,6 +213,9 @@ async function runEditorPassOrFallback(args: {
         shared.sessionLog(args.parentSessionId, "historian two-pass: editor call failed", {
             error: editorRun.error,
         });
+        if (isTerminalHistorianRun(editorRun)) {
+            return { ok: false, error: editorRun.error ?? "historian editor run failed" };
+        }
         // Editor failed → keep the validated draft; FK links to the draft run.
         return args.draftValidation;
     }
@@ -244,8 +253,6 @@ async function runHistorianPrompt(args: {
     /** Agent identifier to route the request to. Defaults to HISTORIAN_AGENT.
      *  Use HISTORIAN_EDITOR_AGENT for the second pass in two-pass mode. */
     agentId?: string;
-    /** Resolved historian fallback chain (forwarded to the prompt helper). */
-    fallbackModels?: readonly string[];
 }): Promise<HistorianRunResult> {
     const {
         client,
@@ -256,7 +263,6 @@ async function runHistorianPrompt(args: {
         dumpLabel,
         modelOverride,
         agentId = HISTORIAN_AGENT,
-        fallbackModels,
     } = args;
     let agentSessionId: string | null = null;
     // Keep FAILED historian child sessions for debugging (the model output, the
@@ -313,9 +319,6 @@ async function runHistorianPrompt(args: {
                     },
                     {
                         timeoutMs: timeoutMs ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
-                        // When modelOverride is set we're already in the last-ditch retry
-                        // path; iterating fallbacks again would be redundant.
-                        fallbackModels: modelOverride ? undefined : fallbackModels,
                         callContext:
                             agentId === HISTORIAN_EDITOR_AGENT ? "historian:editor" : "historian",
                     },
@@ -331,8 +334,18 @@ async function runHistorianPrompt(args: {
                     parentSessionId,
                     `historian: prompt attempt ${retryIndex + 1} failed: ${errorMsg}`,
                 );
+                const errorMeta =
+                    typeof error === "object" && error !== null
+                        ? (error as { cleanupFailure?: unknown; piRetryObserved?: unknown })
+                        : undefined;
+                const terminal =
+                    isTerminalHistorianErrorMessage(errorMsg) ||
+                    errorMeta?.cleanupFailure !== undefined ||
+                    errorMeta?.piRetryObserved === true;
                 const shouldRetry =
-                    retryIndex < MAX_HISTORIAN_RETRIES && isTransientHistorianPromptError(errorMsg);
+                    !terminal &&
+                    retryIndex < MAX_HISTORIAN_RETRIES &&
+                    isTransientHistorianPromptError(errorMsg);
                 if (!shouldRetry) {
                     throw error;
                 }
@@ -378,6 +391,7 @@ async function runHistorianPrompt(args: {
         return {
             ok: false,
             error: `Historian failed while processing this session: ${desc.brief}`,
+            cause: modelError,
         };
     } finally {
         // Delete the child session ONLY on success. On failure, keep it so the
@@ -482,6 +496,9 @@ async function runFallbackHistorianPass(args: {
         });
         if (!fallbackRun.ok || !fallbackRun.result) {
             lastError = fallbackRun.error ?? lastError;
+            if (isTerminalHistorianRun(fallbackRun)) {
+                return { ok: false, error: lastError };
+            }
             continue;
         }
 
@@ -523,7 +540,39 @@ function getHistorianRetryBackoffMs(retryIndex: number): number {
     return 6_000 + Math.floor(Math.random() * 2_001);
 }
 
+export type HistorianFailureClass = "timeout" | "unsafe" | null;
+
+export function classifyHistorianFailureMessage(message: string): HistorianFailureClass {
+    if (/prompt timed out after \d+ms/.test(message)) return "timeout";
+    if (
+        message.includes("prompt aborted by external signal") ||
+        message.includes("historian cleanup unconfirmed")
+    ) {
+        return "unsafe";
+    }
+    return null;
+}
+
+function isTerminalHistorianErrorMessage(message: string): boolean {
+    return classifyHistorianFailureMessage(message) !== null;
+}
+
+function isTerminalHistorianRun(run: HistorianRunResult): boolean {
+    if (run.ok) return false;
+    if (run.error && isTerminalHistorianErrorMessage(run.error)) return true;
+    if (typeof run.cause === "object" && run.cause !== null) {
+        const cause = run.cause as { cleanupFailure?: unknown; piRetryObserved?: unknown };
+        if (cause.cleanupFailure !== undefined) return true;
+    }
+    return false;
+}
+
+const NON_RETRYABLE_PROVIDER_LIMIT_PATTERN =
+    /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing|(?:weekly|monthly|daily).{0,20}(?:usage )?limit|subscription_sharing_usage_limit_exceeded|subscription_sharing_workplace_individual_usage_limit_exceeded|"code"\s*:\s*"?1308(?![0-9])/i;
+
 function isTransientHistorianPromptError(message: string): boolean {
+    if (isTerminalHistorianErrorMessage(message)) return false;
+    if (NON_RETRYABLE_PROVIDER_LIMIT_PATTERN.test(message)) return false;
     const normalized = message.toLowerCase();
     if (
         normalized.includes("invalid request") ||

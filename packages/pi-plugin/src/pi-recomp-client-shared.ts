@@ -1,3 +1,4 @@
+import { DEFAULT_HISTORIAN_TIMEOUT_MS } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
 import type { SubagentRunner } from "@ufoq/mini-magic-context-core/shared/subagent-runner";
 
 /**
@@ -13,7 +14,6 @@ export function createPiHistorianClient(args: {
 	runner: SubagentRunner;
 	model: string;
 	systemPrompt: string;
-	fallbackModels?: readonly string[];
 	timeoutMs?: number;
 	thinkingLevel?: string;
 	directory: string;
@@ -40,20 +40,48 @@ export function createPiHistorianClient(args: {
 		// override is present, let the override own the model and disable the
 		// runner-level chain for this call (the shared layer owns iteration).
 		const modelOverride = readBodyModel(body);
+		const configuredTimeoutMs = args.timeoutMs ?? DEFAULT_HISTORIAN_TIMEOUT_MS;
+		const signal = readInputSignal(input);
 		const result = await args.runner.run({
 			agent: "magic-context-historian",
 			systemPrompt: args.systemPrompt,
 			userMessage: promptText,
 			model: modelOverride ?? args.model,
-			fallbackModels: modelOverride ? undefined : args.fallbackModels,
-			timeoutMs: args.timeoutMs,
+			timeoutMs: configuredTimeoutMs,
+			// The outer recomp chain owns fallback iteration. A runner-level
+			// chain here would walk the same models twice.
+			fallbackModels: undefined,
+			totalTimeoutMs: Math.max(1, configuredTimeoutMs - 1000),
+			signal,
 			cwd: args.directory,
 			thinkingLevel: args.thinkingLevel,
 		});
 		if (!result.ok) {
-			throw new Error(
+			const cause = new Error(
 				`Pi recomp historian failed (${result.reason}): ${result.error}`,
 			);
+			const ownership =
+				result.meta?.piRetryObserved === true ? { piRetryObserved: true } : {};
+			if (result.meta?.cleanupFailure !== undefined) {
+				throw Object.assign(new Error("historian cleanup unconfirmed"), {
+					cause,
+					cleanupFailure: result.meta.cleanupFailure,
+					...ownership,
+				});
+			}
+			if (result.reason === "timeout") {
+				throw Object.assign(
+					new Error(`prompt timed out after ${configuredTimeoutMs}ms`),
+					{ cause, ...ownership },
+				);
+			}
+			if (result.reason === "abort") {
+				throw Object.assign(new Error("prompt aborted by external signal"), {
+					cause,
+					...ownership,
+				});
+			}
+			throw Object.assign(cause, ownership);
 		}
 		sessions.set(sessionId, [makeMessage("assistant", result.assistantText)]);
 		return {};
@@ -75,6 +103,9 @@ export function createPiHistorianClient(args: {
 				sessions.delete(readPathId(input));
 				return {};
 			},
+			// Pi has no separate server-side run loop to abort: forwarding the
+			// signal terminates the child, and the runner confirms its exit.
+			abort: async () => ({}),
 		},
 	};
 }
@@ -95,6 +126,14 @@ function readBody(input: unknown): {
 	return typeof body === "object" && body !== null
 		? (body as { noReply?: boolean; parts?: unknown; model?: unknown })
 		: {};
+}
+
+function readInputSignal(input: unknown): AbortSignal | undefined {
+	if (typeof input !== "object" || input === null) return undefined;
+	const signal = (input as { signal?: unknown }).signal;
+	return typeof signal === "object" && signal !== null && "aborted" in signal
+		? (signal as AbortSignal)
+		: undefined;
 }
 
 /**

@@ -39,6 +39,7 @@
 
 import * as crypto from "node:crypto";
 import { withContentLanguageDirective } from "@ufoq/mini-magic-context-core/agents/language-directive";
+import { DEFAULT_HISTORIAN_TIMEOUT_MS } from "@ufoq/mini-magic-context-core/config/schema/magic-context";
 import { embedAndStoreCompartmentChunks } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-embedding";
 import { isCompartmentLeaseHeld } from "@ufoq/mini-magic-context-core/features/magic-context/compartment-lease";
 import {
@@ -107,7 +108,6 @@ import {
 } from "./read-session-pi";
 
 const HISTORIAN_AGENT_NAME = "magic-context-historian";
-const DEFAULT_HISTORIAN_TIMEOUT_MS = 120_000;
 const MAX_HISTORIAN_RETRIES = 2;
 
 /** Keep historian alert noise to once per minute per session. */
@@ -122,40 +122,43 @@ function getHistorianRetryBackoffMs(retryIndex: number): number {
 	return 6_000 + Math.floor(Math.random() * 2_001);
 }
 
-function isTransientHistorianPromptError(message: string): boolean {
-	const normalized = message.toLowerCase();
-	if (
-		normalized.includes("invalid request") ||
-		normalized.includes("bad request") ||
-		normalized.includes("unauthorized") ||
-		normalized.includes("forbidden") ||
-		normalized.includes("authentication") ||
-		normalized.includes("auth") ||
-		normalized.includes(" 400") ||
-		normalized.startsWith("400")
-	) {
-		return false;
-	}
+const NON_RETRYABLE_PROVIDER_LIMIT_PATTERN =
+	/GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing|(?:weekly|monthly|daily).{0,20}(?:usage )?limit|subscription_sharing_usage_limit_exceeded|subscription_sharing_workplace_individual_usage_limit_exceeded|"code"\s*:\s*"?1308(?![0-9])/i;
 
-	return [
-		"429",
-		"rate limit",
-		"timeout",
-		"econnreset",
-		"etimedout",
-		"503",
-		"502",
-		"500",
-		"overloaded",
-	].some((token) => normalized.includes(token));
+const RETRYABLE_PROVIDER_ERROR_PATTERN =
+	/overloaded|server_busy|servers are currently busy|currently experiencing high demand|model is at capacity|rate.?limit|too many requests|\b(?:429|500|502|503|504|520|524)\b|service.?(?:is.?(?:temporarily.?)?)?unavailable|server.?error|internal.?error|provider.?returned.?(?:an.?)?error|exceeded request buffer limit while retrying upstream|unable to forward upstream|upstream.?request.?failed|upstream_stream_read_error|stream was interrupted|http\/?2 stream failed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|request to \S+ failed, reason:|getaddrinfo|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|stream disconnected before completion|cut short after the reply had begun|pending stream has been canceled|retry delay|you can retry your request|try your request again|please retry your request|ResourceExhausted|subscription_sharing_usage_unavailable|subscription_sharing_user_unavailable/i;
+
+function isTransientHistorianPromptError(message: string): boolean {
+	// Exact terminal sentinels first: a configurable timeout such as
+	// `150000ms` contains the substring `500` and must not look transient.
+	if (/^prompt timed out after \d+ms$/.test(message)) return false;
+	if (message === "historian cleanup unconfirmed") return false;
+	if (message === "prompt aborted by external signal") return false;
+	// Account/quota exhaustion resets over hours; retrying or falling through
+	// to a same-model attempt only burns the budget. This check must precede
+	// the generic 429/rate-limit hints.
+	if (NON_RETRYABLE_PROVIDER_LIMIT_PATTERN.test(message)) return false;
+	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(message);
 }
 
 function isTransientHistorianRunFailure(
 	result: Extract<SubagentRunResult, { ok: false }>,
 ): boolean {
-	if (result.reason === "abort") return false;
-	if (result.reason === "timeout") return true;
+	if (result.reason === "abort" || result.reason === "timeout") return false;
+	if (result.meta?.cleanupFailure) return false;
+	if (result.meta?.piRetryObserved) return false;
 	return isTransientHistorianPromptError(result.error);
+}
+
+function isTerminalSpawnResult(
+	result: SubagentRunResult,
+): result is Extract<SubagentRunResult, { ok: false }> {
+	// Ownership suppresses another same-model attempt, but not the configured
+	// fallback chain: a different model still gets its single validated chance.
+	return (
+		!result.ok &&
+		(result.reason === "abort" || result.meta?.cleanupFailure !== undefined)
+	);
 }
 
 function historianAbortResult(startedAt: number): SubagentRunResult {
@@ -339,7 +342,7 @@ export interface PiHistorianDeps {
 	refreshBoundarySnapshot?: () => ProtectedTailBoundarySnapshot;
 	/** Current resolved context limit used to reject stale snapshots after model switches. */
 	currentContextLimit?: number;
-	/** Optional per-call timeout (default 120s). */
+	/** Optional per-call timeout (default 300s; DEFAULT_HISTORIAN_TIMEOUT_MS). */
 	historianTimeoutMs?: number;
 	/** Optional cancellation signal for the historian run and retry backoff. */
 	signal?: AbortSignal;
@@ -778,6 +781,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				},
 			});
 
+			let latestSpawnResult: SubagentRunResult = firstResult;
 			let validatedPass = await validateHistorianResult(
 				firstResult,
 				sessionId,
@@ -826,6 +830,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 						onProgress: buildProgressLogger("repair"),
 					},
 				});
+				latestSpawnResult = repairResult;
 				validatedPass = await validateHistorianResult(
 					repairResult,
 					sessionId,
@@ -853,10 +858,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			);
 			if (
 				validatedPass.kind !== "ok" &&
-				!(
-					validatedPass.kind === "spawn-failed" &&
-					validatedPass.reason === "abort"
-				) &&
+				!isTerminalSpawnResult(latestSpawnResult) &&
 				fallbackChain.length > 0
 			) {
 				for (let i = 0; i < fallbackChain.length; i += 1) {
@@ -890,33 +892,15 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 						priorCompartments,
 						sequenceOffset,
 					);
+					latestSpawnResult = fbResult;
+					validatedPass = fbPass;
 					if (fbPass.kind === "ok") {
-						validatedPass = fbPass;
 						if (fbResult.ok) validatedDraftText = fbResult.assistantText;
 						break;
 					}
-					if (fbPass.kind === "spawn-failed" && fbPass.reason === "abort") {
-						validatedPass = fbPass;
-						break;
-					}
+					if (isTerminalSpawnResult(fbResult)) break;
 				}
 			}
-
-			if (validatedPass.kind !== "ok") {
-				const errorMsg =
-					validatedPass.kind === "validation-failed"
-						? validatedPass.error
-						: validatedPass.kind === "spawn-failed"
-							? `subagent run failed (${validatedPass.reason}): ${validatedPass.error}`
-							: "historian returned no usable text";
-				sessionLog(sessionId, `historian failure: ${errorMsg}`);
-				{
-					const failCount = incrementHistorianFailure(db, sessionId, errorMsg);
-					await notify(buildHistorianFailureNotice(failCount, errorMsg));
-				}
-				return;
-			}
-			retainDrainReservationForRetryThrottle = false;
 
 			// Optional two-pass editor refinement. Mirrors OpenCode's
 			// `runEditorPassOrFallback` in `compartment-runner-historian.ts`.
@@ -966,6 +950,15 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							`historian two-pass: editor accepted, replacing draft`,
 						);
 						validatedPass = editorPass;
+					} else if (
+						!editorResult.ok &&
+						(editorResult.reason === "abort" ||
+							editorResult.reason === "timeout" ||
+							editorResult.meta?.cleanupFailure !== undefined)
+					) {
+						// A cancelled/timed-out/unsafe editor must not publish the draft:
+						// the caller asked us to stop or the child may still be alive.
+						validatedPass = editorPass;
 					} else {
 						const editorErr =
 							editorPass.kind === "validation-failed"
@@ -981,6 +974,21 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					}
 				}
 			}
+
+			if (validatedPass.kind !== "ok") {
+				const errorMsg =
+					validatedPass.kind === "validation-failed"
+						? validatedPass.error
+						: validatedPass.kind === "spawn-failed"
+							? `subagent run failed (${validatedPass.reason}): ${validatedPass.error}`
+							: "historian returned no usable text";
+				sessionLog(sessionId, `historian failure: ${errorMsg}`);
+				const failCount = incrementHistorianFailure(db, sessionId, errorMsg);
+				await notify(buildHistorianFailureNotice(failCount, errorMsg));
+				return;
+			}
+
+			retainDrainReservationForRetryThrottle = false;
 
 			// Discard-last boundary healing (E6 parity with OpenCode): the LAST
 			// compartment of a greedy-consume run was decided WITHOUT lookahead,

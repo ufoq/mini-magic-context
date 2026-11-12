@@ -204,6 +204,73 @@ describe("Pi release compatibility", () => {
     } finally { await h.dispose(); }
   }, 120000);
 
+  it.skipIf(
+    Number(PI_VERSION.split(".")[0]) < 1 ||
+      (Number(PI_VERSION.split(".")[0]) === 1 && Number(PI_VERSION.split(".")[1]) < 4),
+  )("waits through Pi's scheduled retry during startup catch-up", async () => {
+    // Seed without a historian so no detached incremental run can race adoption.
+    const config = { execute_threshold_percentage: 99, historian: { model: "" } };
+    const h = await PiTestHarness.create({
+      extraExtensions: [fixture],
+      magicContextConfig: config,
+      piSettingsExtra: {
+        retry: { enabled: true, maxRetries: 1, baseDelayMs: 3_000 },
+      },
+    });
+    try {
+      h.mock.setDefault({ text: "ordinary reply", usage });
+      const turns = 120;
+      for (let i = 1; i <= turns; i++) {
+        await h.sendPrompt(`retrycanary turn ${i}: port 47319. ${h.ballast(400)}`);
+      }
+      const state = await h.getState();
+      await h.command("prompt", { message: "/release-native-compaction" });
+      config.historian.model = "anthropic/claude-haiku-4-5";
+
+      let historianCalls = 0;
+      let injectedRetry = false;
+      let retryDelayMs = 0;
+      const chunkStarts = new Set<number>();
+      let firstAttemptAt = 0;
+      h.mock.addMatcher((body) => {
+        if (!isHistorian(body)) return null;
+        historianCalls++;
+        if (!injectedRetry) {
+          injectedRetry = true;
+          firstAttemptAt = Date.now();
+          return {
+            error: {
+              status: 400,
+              type: "api_error",
+              message: "stream disconnected before completion",
+            },
+          };
+        }
+        if (firstAttemptAt > 0 && retryDelayMs === 0) {
+          retryDelayMs = Date.now() - firstAttemptAt;
+        }
+        const bounds = range(body);
+        chunkStarts.add(bounds.start);
+        return { text: buildMockHistorianPayload({ ...bounds, title: "Retried archive", body: "retrycanary port 47319" }), usage };
+      });
+
+      await h.restart();
+      await h.getState();
+
+      // The retry was deliberately delayed beyond the old 2 s drain. The run
+      // must still be alive to consume the successful retry.
+      expect(retryDelayMs).toBeGreaterThanOrEqual(2_800);
+      expect(chunkStarts.size).toBeGreaterThanOrEqual(1);
+      expect(historianCalls).toBeGreaterThanOrEqual(2);
+      const compartments = h.contextDb().prepare("SELECT start_message, end_message FROM compartments WHERE session_id = ? ORDER BY sequence").all(state.sessionId) as Array<{ start_message: number; end_message: number }>;
+      expect(compartments.length).toBeGreaterThan(0);
+      expect(compartments[0]!.start_message).toBe(1);
+      for (let i = 1; i < compartments.length; i++) {
+        expect(compartments[i]!.start_message).toBe(compartments[i - 1]!.end_message + 1);
+      }
+    } finally { await h.dispose(); }
+  }, 120000);
+
   it("publishes through fallback after a real provider 429 and materializes on the wire", async () => {
     const h = await PiTestHarness.create({
       magicContextConfig: {
